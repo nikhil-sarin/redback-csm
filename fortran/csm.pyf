@@ -1,0 +1,198 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module csm ! in 
+    interface  ! in :csm
+        module lc_mod ! in :csm:csm.f90
+            use constants, only: pi,year,clight
+            real(kind=8), public,allocatable,dimension(:) :: tarray
+            real(kind=8), public,allocatable,dimension(:) :: larray
+            real(kind=8), public,allocatable,dimension(:) :: temparray
+            real(kind=8), public,allocatable,dimension(:) :: rarray
+            real(kind=8), public,allocatable,dimension(:) :: varray
+            real(kind=8), public,allocatable,dimension(:) :: marray
+            real(kind=8), public,allocatable,dimension(:) :: ldiff
+            integer, private,parameter,optional :: ll=10000
+            real(kind=8), private,dimension(10000) :: t_array
+            real(kind=8), private,dimension(10000) :: l_array
+            real(kind=8), private,dimension(10000) :: temp_array
+            real(kind=8), private,dimension(10000) :: r_array
+            real(kind=8), private,dimension(10000) :: v_array
+            real(kind=8), private,dimension(10000) :: m_array
+            integer, private,dimension(10000) :: i_array
+            real(kind=8), private,optional :: t_start=1d1
+            real(kind=8), private,optional :: t_end=10d0*year
+            real(kind=8), private :: u
+            real(kind=8), private :: r
+            real(kind=8), private :: m
+            real(kind=8), private :: t
+            real(kind=8), private :: lum
+            real(kind=8), private :: dt
+            subroutine lightcurve_wind_exponential(mdotinput,tinput,vwindinput,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: mdotinput
+                real(kind=8), target,dimension(:),intent(in) :: tinput
+                real(kind=8) intent(in) :: vwindinput
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_wind_exponential
+            subroutine lightcurve_wind_explosion(mdotinput,tinput,vwindinput,rho_input,vinput,t_ref,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: mdotinput
+                real(kind=8), target,dimension(:),intent(in) :: tinput
+                real(kind=8) intent(in) :: vwindinput
+                real(kind=8), target,dimension(:),intent(in) :: rho_input
+                real(kind=8), target,dimension(:),intent(in) :: vinput
+                real(kind=8) intent(in) :: t_ref
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_wind_explosion
+            subroutine lightcurve_wind_bpl(mdotinput,tinput,vwindinput,inner_slope,outer_slope,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: mdotinput
+                real(kind=8), target,dimension(:),intent(in) :: tinput
+                real(kind=8) intent(in) :: vwindinput
+                real(kind=8) intent(in) :: inner_slope
+                real(kind=8) intent(in) :: outer_slope
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_wind_bpl
+            subroutine lightcurve_bpl_wind(inner_slope,outer_slope,mexp,eexp,mdotinput,tinput,vwindinput,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8) intent(in) :: inner_slope
+                real(kind=8) intent(in) :: outer_slope
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8), target,dimension(:),intent(in) :: mdotinput
+                real(kind=8), target,dimension(:),intent(in) :: tinput
+                real(kind=8) intent(in) :: vwindinput
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_bpl_wind
+            subroutine lightcurve_exponential_wind(mexp,eexp,mdotinput,tinput,vwindinput,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8), target,dimension(:),intent(in) :: mdotinput
+                real(kind=8), target,dimension(:),intent(in) :: tinput
+                real(kind=8) intent(in) :: vwindinput
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_exponential_wind
+            subroutine lightcurve_explosion_wind(rho_input,vinput,t_ref,mdotinput,tinput,vwindinput,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: rho_input
+                real(kind=8), target,dimension(:),intent(in) :: vinput
+                real(kind=8) intent(in) :: t_ref
+                real(kind=8), target,dimension(:),intent(in) :: mdotinput
+                real(kind=8), target,dimension(:),intent(in) :: tinput
+                real(kind=8) intent(in) :: vwindinput
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_explosion_wind
+            subroutine lightcurve_wind_wind(mdoto,tinputo,vwindo,mdoti,tinputi,vwindi,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: mdoto
+                real(kind=8), target,dimension(:),intent(in) :: tinputo
+                real(kind=8) intent(in) :: vwindo
+                real(kind=8), target,dimension(:),intent(in) :: mdoti
+                real(kind=8), target,dimension(:),intent(in) :: tinputi
+                real(kind=8) intent(in) :: vwindi
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_wind_wind
+            subroutine lightcurve_bpl_bpl(inner_slopeo,outer_slopeo,mexpo,eexpo,inner_slopei,outer_slopei,mexpi,eexpi,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8) intent(in) :: inner_slopeo
+                real(kind=8) intent(in) :: outer_slopeo
+                real(kind=8) intent(in) :: mexpo
+                real(kind=8) intent(in) :: eexpo
+                real(kind=8) intent(in) :: inner_slopei
+                real(kind=8) intent(in) :: outer_slopei
+                real(kind=8) intent(in) :: mexpi
+                real(kind=8) intent(in) :: eexpi
+                real(kind=8) intent(in) :: interval
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_bpl_bpl
+            subroutine lightcurve_exponential_exponential(mexpo,eexpo,mexpi,eexpi,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8) intent(in) :: mexpo
+                real(kind=8) intent(in) :: eexpo
+                real(kind=8) intent(in) :: mexpi
+                real(kind=8) intent(in) :: eexpi
+                real(kind=8) intent(in) :: interval
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_exponential_exponential
+            subroutine lightcurve_explosion_explosion(rho_o,vgrido,trefo,rho_i,vgridi,trefi,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: rho_o
+                real(kind=8), target,dimension(:),intent(in) :: vgrido
+                real(kind=8) intent(in) :: trefo
+                real(kind=8), target,dimension(:),intent(in) :: rho_i
+                real(kind=8), target,dimension(:),intent(in) :: vgridi
+                real(kind=8) intent(in) :: trefi
+                real(kind=8) intent(in) :: interval
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_explosion_explosion
+            subroutine lightcurve_explosion_bpl(rho_input,vinput,t_ref,inner_slope,outer_slope,mexp,eexp,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                use constants, only: intpol
+                real(kind=8), target,dimension(:),intent(in) :: rho_input
+                real(kind=8), target,dimension(:),intent(in) :: vinput
+                real(kind=8) intent(in) :: t_ref
+                real(kind=8) intent(in) :: inner_slope
+                real(kind=8) intent(in) :: outer_slope
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8) intent(in) :: interval
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_explosion_bpl
+            subroutine lightcurve_bpl_exponential(inner_slope,outer_slope,mexp,eexp,mexp_out,eexp_out,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8) intent(in) :: inner_slope
+                real(kind=8) intent(in) :: outer_slope
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8) intent(in) :: mexp_out
+                real(kind=8) intent(in) :: eexp_out
+                real(kind=8) intent(in) :: interval
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_bpl_exponential
+            subroutine lightcurve_exponential_explosion(mexp,eexp,rho_input,vinput,t_ref,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8), target,dimension(:),intent(in) :: rho_input
+                real(kind=8), target,dimension(:),intent(in) :: vinput
+                real(kind=8) intent(in) :: t_ref
+                real(kind=8) intent(in) :: interval
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_exponential_explosion
+            subroutine lightcurve_explosion_exponential(rho_input,vinput,t_ref,mexp,eexp,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: rho_input
+                real(kind=8), target,dimension(:),intent(in) :: vinput
+                real(kind=8) intent(in) :: t_ref
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8) intent(in) :: interval
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_explosion_exponential
+        end module lc_mod
+    end interface 
+end python module csm
+
+! This file was auto-generated with f2py (version:2.3.5).
+! See:
+! https://web.archive.org/web/20140822061353/http://cens.ioc.ee/projects/f2py2e

@@ -1,0 +1,216 @@
+Available Models
+================
+
+Each physical scenario is exposed as four functions:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Suffix
+     - Description
+   * - ``{name}_bolometric``
+     - Bolometric luminosity (erg/s), source-frame time in days
+   * - ``{name}``
+     - Multiband (flux density / magnitude / spectra), observer-frame time
+   * - ``{name}_nickel_bolometric``
+     - CSM + radioactive nickel/cobalt decay, bolometric
+   * - ``{name}_nickel``
+     - CSM + radioactive nickel/cobalt decay, multiband
+
+Wind / Simple CSM Models
+------------------------
+
+**wind_exponential**
+    A steady, spherically symmetric wind (constant mass-loss rate) creates the CSM.
+    The supernova ejecta follow an exponential density profile.
+    Parameters: ``mdot`` (M☉/yr), ``vwind`` (km/s), ``mexp`` (M☉), ``eexp`` (foe), ``eff``.
+
+**wind_bpl**
+    Steady wind CSM with a broken power-law supernova ejecta profile (inner index
+    ``delta``, outer index ``nn``). The most commonly used model for Type IIn supernovae.
+    Parameters: ``mdot``, ``vwind``, ``delta``, ``nn``, ``mexp``, ``eexp``, ``eff``.
+
+**exponential_wind**
+    An exponential eruption (or low-energy transient) expands outward and subsequently
+    interacts with an ongoing stellar wind.
+    Parameters: ``mexp``, ``eexp``, ``mdot``, ``vwind``, ``eff``.
+
+**bpl_wind**
+    A broken power-law eruption expands into a surrounding wind.
+    Parameters: ``delta``, ``nn``, ``mexp``, ``eexp``, ``mdot``, ``vwind``, ``eff``.
+
+Eruption–Explosion Interaction Models
+--------------------------------------
+
+These models describe a pre-SN eruption that creates the CSM, followed some time
+``interval`` (days) later by the main supernova.
+
+**exponential_exponential**
+    Both the eruption (CSM) and the supernova have exponential ejecta profiles.
+
+**exponential_bpl**
+    Exponential eruption (CSM) + broken power-law supernova.
+
+**bpl_bpl**
+    Broken power-law eruption (CSM) + broken power-law supernova.
+
+**bpl_exponential**
+    Broken power-law eruption (CSM) + exponential supernova.
+
+Shaped Wind Profile Models
+---------------------------
+
+**boxwind_exponential** / **boxwind_bpl**
+    The pre-SN mass-loss rate follows a box (step-function) profile in time:
+    a baseline rate ``mdot_0`` outside the interval [t1, t2] years and an elevated
+    rate ``mdot_1`` inside it. Useful for modeling discrete mass-loss episodes.
+
+**gausswind_exponential** / **gausswind_bpl**
+    The mass-loss rate follows a Gaussian profile in time, peaking at ``t_peak``
+    (years before the SN) with width ``t_width``. Models a single eruptive episode
+    with a smooth onset and decline.
+
+Triple Power-Law Wind Models
+-----------------------------
+
+These models allow the pre-SN mass-loss history to follow a triple power-law in
+time, with breaks at ``t_break1`` and ``t_break2`` (years). The reference rate is
+``mdot_0`` at t = 1 year, with power-law indices ``alpha1``, ``alpha2``, ``alpha3``.
+
+**triple_powerlaw_wind_bpl** / **triple_powerlaw_wind_exponential**
+    Triple power-law wind CSM with BPL or exponential SN.
+
+**exponential_triple_powerlaw_wind** / **bpl_triple_powerlaw_wind**
+    SN expanding into a pre-existing triple power-law wind.
+
+**smooth_triple_powerlaw_wind_bpl** / **smooth_triple_powerlaw_wind_exponential**
+    Same as above but with smooth (tanh) transitions at the breaks rather than sharp
+    discontinuities. Avoids unphysical kinks in the density profile.
+
+Generic Phenomenological CSM Models
+-------------------------------------
+
+These models allow an arbitrary CSM density profile constructed from a power-law
+base density plus up to N Gaussian shells. Set ``shell_density = 0`` to disable any
+shell. This is the most flexible option, useful when the pre-SN mass-loss history is
+poorly constrained.
+
+**generic_csm_exponential** / **generic_csm_bpl**
+    Power-law base + up to 3 Gaussian shells + exponential or BPL supernova.
+
+**generic_4shell_csm_bpl**
+    Power-law base + up to 4 Gaussian shells + BPL supernova.
+
+**generic_8shell_csm_bpl**
+    Power-law base + up to 8 Gaussian shells + BPL supernova. High-dimensional
+    (30+ parameters); consider using the 3-shell or 4-shell variant first.
+
+Exploration: Arbitrary Density Profile
+---------------------------------------
+
+For visualisation and exploration with numerically-computed density profiles
+(e.g. from stellar-evolution codes), use ``csm_lightcurve_from_density`` from
+``redback_csm.explore``.  This function is **not** registered as an inference
+model — it is designed for interactive exploration only.
+
+.. code-block:: python
+
+   import numpy as np
+   import matplotlib.pyplot as plt
+   from redback_csm.explore import csm_lightcurve_from_density
+
+   # Example: r^{-2} CSM (equivalent to a steady wind)
+   r   = np.geomspace(1e13, 1e17, 500)   # cm
+   rho = 5e16 / r**2                      # g/cm^3
+
+   fig, lc = csm_lightcurve_from_density(
+       radius=r,
+       density=rho,
+       t_ref=365.0,       # days — sets r = v × t_ref
+       mexp=10.0,         # M☉
+       eexp=1.0,          # foe
+       eff=0.3,
+       kappa=0.34,        # cm²/g — enables photon diffusion
+       sn_profile='bpl',  # or 'exponential'
+       delta=1.0,
+       nn=12.0,
+       label=r'$\rho \propto r^{-2}$',
+   )
+   fig.savefig('my_lightcurve.png')
+
+The function accepts a user-supplied ``radius`` (cm) and ``density`` (g cm⁻³)
+array, interpolates them onto the internal Fortran velocity grid using the
+mapping r = v × ``t_ref``, runs the shock interaction model, and returns both
+the figure and the raw light-curve namedtuple (``lc.time``, ``lc.lbol``,
+``lc.rph``, ``lc.temperature``, …).
+
+Multiple profiles can be overlaid by passing the same ``ax``:
+
+.. code-block:: python
+
+   fig, ax = plt.subplots()
+   for slope in [1.5, 2.0, 2.5]:
+       csm_lightcurve_from_density(
+           radius=r, density=1e16 / r**slope,
+           t_ref=365.0, mexp=10.0, eexp=1.0, eff=0.3,
+           ax=ax, label=rf'$\rho \propto r^{{-{slope}}}$',
+       )
+   ax.legend()
+
+**Parameters summary**
+
+.. list-table::
+   :header-rows: 1
+
+   * - Parameter
+     - Unit
+     - Description
+   * - ``radius``
+     - cm
+     - Radial grid of the CSM profile
+   * - ``density``
+     - g cm⁻³
+     - Density at each radius
+   * - ``t_ref``
+     - days
+     - Reference epoch; sets r = v × t_ref
+   * - ``mexp``
+     - M☉
+     - Supernova ejecta mass
+   * - ``eexp``
+     - foe
+     - Supernova explosion energy
+   * - ``eff``
+     - —
+     - Shock-to-radiation efficiency
+   * - ``kappa``
+     - cm² g⁻¹
+     - Opacity (optional; enables diffusion)
+   * - ``sn_profile``
+     - —
+     - ``'bpl'`` or ``'exponential'``
+
+Unit Conventions
+-----------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Quantity
+     - Input unit
+   * - Time (source frame)
+     - days
+   * - Mass (explosion, ejecta)
+     - M☉
+   * - Energy
+     - foe (10⁵¹ erg)
+   * - Mass-loss rate
+     - M☉/yr
+   * - Velocity
+     - km/s
+   * - Opacity
+     - cm²/g
+   * - Density (generic models)
+     - g/cm³
+   * - Radius/width (generic models)
+     - cm

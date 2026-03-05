@@ -1,0 +1,8 @@
+*.so
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+fortran/*.f90
+.DS_Store

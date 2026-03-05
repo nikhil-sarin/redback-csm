@@ -1,0 +1,8 @@
+t_peak = LogUniform(minimum=1, maximum=100, name='t_peak', latex_label='$t_{\\rm peak}~({\\rm yr})$')
+t_width = LogUniform(minimum=0.1, maximum=50, name='t_width', latex_label='$\\sigma_t~({\\rm yr})$')
+mdot_baseline = LogUniform(minimum=1e-6, maximum=1, name='mdot_baseline', latex_label='$\\dot{M}_{\\rm base}$')
+mdot_peak = LogUniform(minimum=1e-4, maximum=100, name='mdot_peak', latex_label='$\\dot{M}_{\\rm peak}$')
+vwind = LogUniform(minimum=10, maximum=1000, name='vwind', latex_label='$v_{\\rm wind}~({\\rm km/s})$')
+mexp = LogUniform(minimum=1, maximum=30, name='mexp', latex_label='$M_{\\rm exp}~(M_\\odot)$')
+eexp = LogUniform(minimum=0.1, maximum=10, name='eexp', latex_label='$E_{\\rm exp}~({\\rm foe})$')
+eff = Uniform(minimum=0.01, maximum=1, name='eff', latex_label='$\\epsilon$')
