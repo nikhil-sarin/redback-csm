@@ -8,7 +8,7 @@ by this plugin. Returns a bilby PriorDict or None if the model is not known here
 import os
 from bilby.core.prior import PriorDict
 
-PRIOR_DIR = os.path.join(os.path.dirname(__file__), 'priors')
+PRIOR_DIR = os.path.join(os.path.dirname(__file__), "priors")
 
 
 def get_prior(model_name: str):
@@ -17,7 +17,7 @@ def get_prior(model_name: str):
 
     Used by redback.priors.get_priors() via the redback.model.priors entry point.
     """
-    path = os.path.join(PRIOR_DIR, f'{model_name}.prior')
+    path = os.path.join(PRIOR_DIR, f"{model_name}.prior")
     if not os.path.exists(path):
         return None
     priors = PriorDict()

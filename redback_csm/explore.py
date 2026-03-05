@@ -32,31 +32,46 @@ from collections import namedtuple
 
 from redback_csm.core import _get_csm, DAY, foe, solar_mass
 
-__all__ = ['csm_lightcurve_from_density']
+__all__ = ["csm_lightcurve_from_density"]
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _run_fortran(v_grid, density, t_ref_sec, sn_profile,
-                 delta, nn, mexp_g, eexp_erg, eff, kappa):
+
+def _run_fortran(
+    v_grid, density, t_ref_sec, sn_profile, delta, nn, mexp_g, eexp_erg, eff, kappa
+):
     """Call the appropriate Fortran subroutine and return the lc namedtuple."""
     csm = _get_csm()
 
-    if sn_profile == 'bpl':
+    if sn_profile == "bpl":
         if kappa is not None:
             csm.lc_mod.lightcurve_explosion_bpl(
-                density, v_grid, t_ref_sec, delta, nn, mexp_g, eexp_erg, t_ref_sec, eff, kappa)
+                density,
+                v_grid,
+                t_ref_sec,
+                delta,
+                nn,
+                mexp_g,
+                eexp_erg,
+                t_ref_sec,
+                eff,
+                kappa,
+            )
         else:
             csm.lc_mod.lightcurve_explosion_bpl(
-                density, v_grid, t_ref_sec, delta, nn, mexp_g, eexp_erg, t_ref_sec, eff)
+                density, v_grid, t_ref_sec, delta, nn, mexp_g, eexp_erg, t_ref_sec, eff
+            )
     else:  # exponential
         if kappa is not None:
             csm.lc_mod.lightcurve_explosion_exponential(
-                density, v_grid, t_ref_sec, mexp_g, eexp_erg, t_ref_sec, eff, kappa)
+                density, v_grid, t_ref_sec, mexp_g, eexp_erg, t_ref_sec, eff, kappa
+            )
         else:
             csm.lc_mod.lightcurve_explosion_exponential(
-                density, v_grid, t_ref_sec, mexp_g, eexp_erg, t_ref_sec, eff)
+                density, v_grid, t_ref_sec, mexp_g, eexp_erg, t_ref_sec, eff
+            )
 
     time = csm.lc_mod.tarray.copy()
     lbol_shock = csm.lc_mod.larray.copy()
@@ -65,9 +80,17 @@ def _run_fortran(v_grid, density, t_ref_sec, sn_profile,
     lbol_diffuse = csm.lc_mod.ldiff.copy() if kappa is not None else None
     lbol = lbol_diffuse if kappa is not None else lbol_shock
 
-    LC = namedtuple('LC', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse', 'rph', 'temperature'])
-    return LC(time=time, lbol=lbol, lbol_shock=lbol_shock,
-              lbol_diffuse=lbol_diffuse, rph=rph, temperature=temperature)
+    LC = namedtuple(
+        "LC", ["time", "lbol", "lbol_shock", "lbol_diffuse", "rph", "temperature"]
+    )
+    return LC(
+        time=time,
+        lbol=lbol,
+        lbol_shock=lbol_shock,
+        lbol_diffuse=lbol_diffuse,
+        rph=rph,
+        temperature=temperature,
+    )
 
 
 def _radius_density_to_vgrid(radius, density, t_ref_sec):
@@ -78,8 +101,8 @@ def _radius_density_to_vgrid(radius, density, t_ref_sec):
 
     Values outside the supplied radius range are extrapolated as zero density.
     """
-    v_grid = np.arange(1, 100001, dtype=np.float64) * 1e5   # cm/s
-    r_grid = v_grid * t_ref_sec                               # cm
+    v_grid = np.arange(1, 100001, dtype=np.float64) * 1e5  # cm/s
+    r_grid = v_grid * t_ref_sec  # cm
 
     # Log-space interpolation is more accurate for power-law profiles
     log_r = np.log10(radius)
@@ -89,10 +112,10 @@ def _radius_density_to_vgrid(radius, density, t_ref_sec):
         np.log10(r_grid),
         log_r,
         log_rho,
-        left=-100.0,    # zero outside range
+        left=-100.0,  # zero outside range
         right=-100.0,
     )
-    density_interp = 10.0 ** log_rho_interp
+    density_interp = 10.0**log_rho_interp
 
     return v_grid, density_interp
 
@@ -101,6 +124,7 @@ def _radius_density_to_vgrid(radius, density, t_ref_sec):
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def csm_lightcurve_from_density(
     radius,
     density,
@@ -108,7 +132,7 @@ def csm_lightcurve_from_density(
     mexp,
     eexp,
     eff,
-    sn_profile='bpl',
+    sn_profile="bpl",
     delta=1.0,
     nn=12.0,
     kappa=None,
@@ -116,8 +140,8 @@ def csm_lightcurve_from_density(
     label=None,
     color=None,
     show_shock=False,
-    xlabel='Time (days)',
-    ylabel=r'Bolometric luminosity (erg s$^{-1}$)',
+    xlabel="Time (days)",
+    ylabel=r"Bolometric luminosity (erg s$^{-1}$)",
     title=None,
 ):
     """
@@ -210,7 +234,7 @@ def csm_lightcurve_from_density(
     radius = np.asarray(radius, dtype=np.float64)
     density = np.asarray(density, dtype=np.float64)
 
-    if sn_profile not in ('bpl', 'exponential'):
+    if sn_profile not in ("bpl", "exponential"):
         raise ValueError("sn_profile must be 'bpl' or 'exponential'")
     if radius.shape != density.shape:
         raise ValueError("radius and density must have the same shape")
@@ -223,8 +247,18 @@ def csm_lightcurve_from_density(
 
     v_grid, density_interp = _radius_density_to_vgrid(radius, density, t_ref_sec)
 
-    lc = _run_fortran(v_grid, density_interp, t_ref_sec, sn_profile,
-                      delta, nn, mexp_g, eexp_erg, eff, kappa)
+    lc = _run_fortran(
+        v_grid,
+        density_interp,
+        t_ref_sec,
+        sn_profile,
+        delta,
+        nn,
+        mexp_g,
+        eexp_erg,
+        eff,
+        kappa,
+    )
 
     # --- Plot ---
     if ax is None:
@@ -237,11 +271,16 @@ def csm_lightcurve_from_density(
     ax.plot(t_days[mask], lc.lbol[mask], color=color, label=label)
 
     if show_shock and kappa is not None and lc.lbol_shock is not None:
-        ax.plot(t_days[mask], lc.lbol_shock[mask],
-                color=color, linestyle='--', alpha=0.5,
-                label=(label + ' (shock)') if label else 'shock')
+        ax.plot(
+            t_days[mask],
+            lc.lbol_shock[mask],
+            color=color,
+            linestyle="--",
+            alpha=0.5,
+            label=(label + " (shock)") if label else "shock",
+        )
 
-    ax.set_yscale('log')
+    ax.set_yscale("log")
     ax.set_xlabel(xlabel, fontsize=13)
     ax.set_ylabel(ylabel, fontsize=13)
     if title is not None:

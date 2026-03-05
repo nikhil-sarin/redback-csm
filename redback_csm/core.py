@@ -8,6 +8,7 @@ name strings to the correct underlying function.
 
 csm = None  # Lazy import — loaded on first use by _get_csm()
 
+
 def _get_csm():
     """Return the compiled Fortran extension, importing it lazily on first call."""
     global csm
@@ -15,23 +16,26 @@ def _get_csm():
         import importlib.util
         import glob
         import os
+
         # The .so lives next to this file inside the redback_csm package directory
         _pkg_dir = os.path.dirname(__file__)
-        _matches = glob.glob(os.path.join(_pkg_dir, 'csm*.so')) + \
-                   glob.glob(os.path.join(_pkg_dir, 'csm*.pyd'))
+        _matches = glob.glob(os.path.join(_pkg_dir, "csm*.so")) + glob.glob(
+            os.path.join(_pkg_dir, "csm*.pyd")
+        )
         if not _matches:
             raise ImportError(
                 "redback_csm Fortran extension not found. "
                 "Run `bash setup_fortran.sh && pip install -e .` to compile."
             )
-        _spec = importlib.util.spec_from_file_location('csm', _matches[0])
+        _spec = importlib.util.spec_from_file_location("csm", _matches[0])
         _csm_module = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_csm_module)
         csm = _csm_module
     return csm
+
+
 import numpy as np
 from collections import namedtuple
-from scipy.integrate import quad
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 
@@ -42,6 +46,7 @@ solar_mass_per_yr_to_gram_per_sec = solar_mass / (365.25 * 24 * 3600)
 YEAR = 365.25 * 24 * 3600  # seconds in a year
 DAY = 86400  # seconds in a day
 YEAR_DAYS = YEAR / DAY  # 365.25 days in a year
+
 
 def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
     """
@@ -77,7 +82,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -85,13 +90,17 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
     eexp = eexp * foe  # Convert erg to ergs
 
     mdot = np.array([mdot], dtype=np.float64)
-    tgrid = np.array([1.], dtype=np.float64)
+    tgrid = np.array([1.0], dtype=np.float64)
 
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -108,8 +117,19 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -119,6 +139,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
     outs.vshell = vshell
     outs.shell_mass = shell_mass
     return outs
+
 
 def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     """
@@ -156,7 +177,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -164,13 +185,17 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     eexp = eexp * foe  # Convert foe to ergs
 
     mdot = np.array([mdot], dtype=np.float64)
-    tgrid = np.array([1.], dtype=np.float64)
+    tgrid = np.array([1.0], dtype=np.float64)
 
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -187,8 +212,19 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -198,6 +234,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     outs.vshell = vshell
     outs.shell_mass = shell_mass
     return outs
+
 
 def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     """
@@ -232,7 +269,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -240,13 +277,17 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     eexp = eexp * foe  # Convert foe to ergs
 
     mdot = np.array([mdot], dtype=np.float64)
-    tgrid = np.array([1.], dtype=np.float64)
+    tgrid = np.array([1.0], dtype=np.float64)
 
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_exponential_wind(mexp, eexp, mdot, tgrid, vwind, eff, kappa)
+        _get_csm().lc_mod.lightcurve_exponential_wind(
+            mexp, eexp, mdot, tgrid, vwind, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_exponential_wind(mexp, eexp, mdot, tgrid, vwind, eff)
+        _get_csm().lc_mod.lightcurve_exponential_wind(
+            mexp, eexp, mdot, tgrid, vwind, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -263,8 +304,19 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -274,6 +326,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     outs.vshell = vshell
     outs.shell_mass = shell_mass
     return outs
+
 
 def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
     """
@@ -310,21 +363,25 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    tgrid = np.array([1.], dtype=np.float64)
+    tgrid = np.array([1.0], dtype=np.float64)
     mdot = np.array([mdot], dtype=np.float64)
 
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_bpl_wind(delta, nn, mexp, eexp, mdot, tgrid, vwind, eff, kappa)
+        _get_csm().lc_mod.lightcurve_bpl_wind(
+            delta, nn, mexp, eexp, mdot, tgrid, vwind, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_bpl_wind(delta, nn, mexp, eexp, mdot, tgrid, vwind, eff)
+        _get_csm().lc_mod.lightcurve_bpl_wind(
+            delta, nn, mexp, eexp, mdot, tgrid, vwind, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -341,8 +398,19 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -353,7 +421,10 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_exponential_exponential(mexp, eexp, mexp_out, eexp_out, interval, eff, **kwargs):
+
+def _get_lc_exponential_exponential(
+    mexp, eexp, mexp_out, eexp_out, interval, eff, **kwargs
+):
     """
     Calculate the light curve for double exponential explosion interaction.
 
@@ -388,7 +459,7 @@ def _get_lc_exponential_exponential(mexp, eexp, mexp_out, eexp_out, interval, ef
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     # Convert to CGS
     mexp = mexp * solar_mass  # Convert solar masses to grams
@@ -399,9 +470,13 @@ def _get_lc_exponential_exponential(mexp, eexp, mexp_out, eexp_out, interval, ef
 
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_exponential_exponential(mexp, eexp, mexp_out, eexp_out, interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_exponential_exponential(
+            mexp, eexp, mexp_out, eexp_out, interval_sec, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_exponential_exponential(mexp, eexp, mexp_out, eexp_out, interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_exponential_exponential(
+            mexp, eexp, mexp_out, eexp_out, interval_sec, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -418,8 +493,19 @@ def _get_lc_exponential_exponential(mexp, eexp, mexp_out, eexp_out, interval, ef
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -430,7 +516,10 @@ def _get_lc_exponential_exponential(mexp, eexp, mexp_out, eexp_out, interval, ef
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_exponential_bpl(mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, interval, eff, **kwargs):
+
+def _get_lc_exponential_bpl(
+    mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, interval, eff, **kwargs
+):
     """
     Calculate the light curve for an exponential explosion (CSM) interacting with a broken power law explosion (SN).
 
@@ -470,8 +559,8 @@ def _get_lc_exponential_bpl(mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, i
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
-    time_ref_days = kwargs.get('time_ref', interval)
+    kappa = kwargs.get("kappa", None)
+    time_ref_days = kwargs.get("time_ref", interval)
 
     csmclass = SequentialCSMModel(verbose=False, time_ref=time_ref_days)
     v_grid, _, density, _ = csmclass.create_exponential_profile(mexp, eexp)
@@ -484,11 +573,30 @@ def _get_lc_exponential_bpl(mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, i
 
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(density, v_grid, time_ref_sec,
-                                            delta_out, nn_out, mexp_out, eexp_out, interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            density,
+            v_grid,
+            time_ref_sec,
+            delta_out,
+            nn_out,
+            mexp_out,
+            eexp_out,
+            interval_sec,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(density, v_grid, time_ref_sec,
-                                            delta_out, nn_out, mexp_out, eexp_out, interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            density,
+            v_grid,
+            time_ref_sec,
+            delta_out,
+            nn_out,
+            mexp_out,
+            eexp_out,
+            interval_sec,
+            eff,
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -505,8 +613,19 @@ def _get_lc_exponential_bpl(mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, i
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -517,7 +636,20 @@ def _get_lc_exponential_bpl(mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, i
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_bpl_bpl(delta, nn, mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, interval, eff, **kwargs):
+
+def _get_lc_bpl_bpl(
+    delta,
+    nn,
+    mexp,
+    eexp,
+    delta_out,
+    nn_out,
+    mexp_out,
+    eexp_out,
+    interval,
+    eff,
+    **kwargs,
+):
     """
     Calculate the light curve for double broken power law explosion interaction.
     First set of parameters correspond to the first explosion (CSM), second set to the supernova.
@@ -559,7 +691,7 @@ def _get_lc_bpl_bpl(delta, nn, mexp, eexp, delta_out, nn_out, mexp_out, eexp_out
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     # Convert to CGS
     mexp = mexp * solar_mass  # Convert solar masses to grams
@@ -570,9 +702,32 @@ def _get_lc_bpl_bpl(delta, nn, mexp, eexp, delta_out, nn_out, mexp_out, eexp_out
 
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_bpl_bpl(delta, nn, mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_bpl_bpl(
+            delta,
+            nn,
+            mexp,
+            eexp,
+            delta_out,
+            nn_out,
+            mexp_out,
+            eexp_out,
+            interval_sec,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_bpl_bpl(delta, nn, mexp, eexp, delta_out, nn_out, mexp_out, eexp_out, interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_bpl_bpl(
+            delta,
+            nn,
+            mexp,
+            eexp,
+            delta_out,
+            nn_out,
+            mexp_out,
+            eexp_out,
+            interval_sec,
+            eff,
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -589,8 +744,19 @@ def _get_lc_bpl_bpl(delta, nn, mexp, eexp, delta_out, nn_out, mexp_out, eexp_out
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -601,7 +767,10 @@ def _get_lc_bpl_bpl(delta, nn, mexp, eexp, delta_out, nn_out, mexp_out, eexp_out
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_bpl_exponential(delta, nn, mexp, eexp, mexp_out, eexp_out, interval, eff, **kwargs):
+
+def _get_lc_bpl_exponential(
+    delta, nn, mexp, eexp, mexp_out, eexp_out, interval, eff, **kwargs
+):
     """
     Calculate the light curve for a broken power law CSM interacting with an exponential SN.
 
@@ -643,7 +812,7 @@ def _get_lc_bpl_exponential(delta, nn, mexp, eexp, mexp_out, eexp_out, interval,
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     # Convert to CGS
     mexp_cgs = mexp * solar_mass
@@ -657,13 +826,21 @@ def _get_lc_bpl_exponential(delta, nn, mexp, eexp, mexp_out, eexp_out, interval,
     # Arguments: (delta, nn, M_csm, E_csm, M_sn, E_sn, interval, eff)
     # Call Fortran with or without kappa
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_bpl_exponential(delta, nn, mexp_cgs, eexp_cgs,
-                                              mexp_out_cgs, eexp_out_cgs,
-                                              interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_bpl_exponential(
+            delta,
+            nn,
+            mexp_cgs,
+            eexp_cgs,
+            mexp_out_cgs,
+            eexp_out_cgs,
+            interval_sec,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_bpl_exponential(delta, nn, mexp_cgs, eexp_cgs,
-                                              mexp_out_cgs, eexp_out_cgs,
-                                              interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_bpl_exponential(
+            delta, nn, mexp_cgs, eexp_cgs, mexp_out_cgs, eexp_out_cgs, interval_sec, eff
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -681,8 +858,19 @@ def _get_lc_bpl_exponential(delta, nn, mexp, eexp, mexp_out, eexp_out, interval,
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -693,7 +881,10 @@ def _get_lc_bpl_exponential(delta, nn, mexp, eexp, mexp_out, eexp_out, interval,
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_boxwind_exponential(t1, t2, mdot_0, mdot_1, mdot_2, vwind, mexp, eexp, eff, **kwargs):
+
+def _get_lc_boxwind_exponential(
+    t1, t2, mdot_0, mdot_1, mdot_2, vwind, mexp, eexp, eff, **kwargs
+):
     """
     Calculate the light curve for a boxy (step function) mass-loss wind followed by an exponential explosion.
 
@@ -709,20 +900,24 @@ def _get_lc_boxwind_exponential(t1, t2, mdot_0, mdot_1, mdot_2, vwind, mexp, eex
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     mdot = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
-    tgrid = np.array([t1 , t1, t2, t2], dtype=np.float64)
+    tgrid = np.array([t1, t1, t2, t2], dtype=np.float64)
     tgrid = tgrid * 365.25 * 24 * 3600  # Convert years to seconds
     vwind = vwind * 1e5  # Convert km/s to cm/s
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert erg to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -738,8 +933,19 @@ def _get_lc_boxwind_exponential(t1, t2, mdot_0, mdot_1, mdot_2, vwind, mexp, eex
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -750,7 +956,10 @@ def _get_lc_boxwind_exponential(t1, t2, mdot_0, mdot_1, mdot_2, vwind, mexp, eex
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_boxwind_bpl(t1, t2, mdot_0, mdot_1, mdot_2, vwind, delta, nn, mexp, eexp, eff, **kwargs):
+
+def _get_lc_boxwind_bpl(
+    t1, t2, mdot_0, mdot_1, mdot_2, vwind, delta, nn, mexp, eexp, eff, **kwargs
+):
     """
     Calculate the light curve for a boxy (step function) mass-loss wind followed by a broken power law explosion.
 
@@ -768,20 +977,24 @@ def _get_lc_boxwind_bpl(t1, t2, mdot_0, mdot_1, mdot_2, vwind, delta, nn, mexp, 
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    kappa = kwargs.get('kappa', None)
+    kappa = kwargs.get("kappa", None)
 
     mdot = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
-    tgrid = np.array([t1 , t1, t2, t2], dtype=np.float64)
+    tgrid = np.array([t1, t1, t2, t2], dtype=np.float64)
     tgrid = tgrid * 365.25 * 24 * 3600  # Convert years to seconds
     vwind = vwind * 1e5  # Convert km/s to cm/s
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -797,8 +1010,19 @@ def _get_lc_boxwind_bpl(t1, t2, mdot_0, mdot_1, mdot_2, vwind, delta, nn, mexp, 
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -809,7 +1033,10 @@ def _get_lc_boxwind_bpl(t1, t2, mdot_0, mdot_1, mdot_2, vwind, delta, nn, mexp, 
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_gausswind_exponential(t_peak, t_width, mdot_baseline, mdot_peak, vwind, mexp, eexp, eff, **kwargs):
+
+def _get_lc_gausswind_exponential(
+    t_peak, t_width, mdot_baseline, mdot_peak, vwind, mexp, eexp, eff, **kwargs
+):
     """
     A light curve for a Gaussian-like mass-loss profile followed by an exponential explosion.
 
@@ -832,8 +1059,8 @@ def _get_lc_gausswind_exponential(t_peak, t_width, mdot_baseline, mdot_peak, vwi
         lc = _get_lc_gausswind_exponential(t_peak=5.0, t_width=1.0, mdot_baseline=1e-6,
                                            mdot_peak=1e-3, vwind=100, mexp=10.0, eexp=1.0, eff=0.5)
     """
-    n_points = kwargs.get('n_points', 50)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid for Gaussian profile
     t_start = t_peak - 4 * t_width  # Start 4 sigma before peak
@@ -852,9 +1079,13 @@ def _get_lc_gausswind_exponential(t_peak, t_width, mdot_baseline, mdot_peak, vwi
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -870,8 +1101,19 @@ def _get_lc_gausswind_exponential(t_peak, t_width, mdot_baseline, mdot_peak, vwi
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -882,7 +1124,20 @@ def _get_lc_gausswind_exponential(t_peak, t_width, mdot_baseline, mdot_peak, vwi
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_gausswind_bpl(t_peak, t_width, mdot_baseline, mdot_peak, vwind, delta, nn, mexp, eexp, eff, **kwargs):
+
+def _get_lc_gausswind_bpl(
+    t_peak,
+    t_width,
+    mdot_baseline,
+    mdot_peak,
+    vwind,
+    delta,
+    nn,
+    mexp,
+    eexp,
+    eff,
+    **kwargs,
+):
     """
     A light curve for a Gaussian-like mass-loss profile followed by a broken power law explosion.
 
@@ -901,8 +1156,8 @@ def _get_lc_gausswind_bpl(t_peak, t_width, mdot_baseline, mdot_peak, vwind, delt
         - kappa: Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    n_points = kwargs.get('n_points', 50)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid for Gaussian profile
     t_start = t_peak - 4 * t_width  # Start 4 sigma before peak
@@ -921,9 +1176,13 @@ def _get_lc_gausswind_bpl(t_peak, t_width, mdot_baseline, mdot_peak, vwind, delt
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -939,8 +1198,19 @@ def _get_lc_gausswind_bpl(t_peak, t_width, mdot_baseline, mdot_peak, vwind, delt
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -952,8 +1222,21 @@ def _get_lc_gausswind_bpl(t_peak, t_width, mdot_baseline, mdot_peak, vwind, delt
     return outs
 
 
-def _get_lc_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3,
-                                     vwind, delta, nn, mexp, eexp, eff, **kwargs):
+def _get_lc_triple_powerlaw_wind_bpl(
+    t_break1,
+    t_break2,
+    mdot_0,
+    alpha1,
+    alpha2,
+    alpha3,
+    vwind,
+    delta,
+    nn,
+    mexp,
+    eexp,
+    eff,
+    **kwargs,
+):
     """
     A light curve for a triple power law mass-loss profile followed by a broken power law explosion.
 
@@ -977,8 +1260,8 @@ def _get_lc_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, alpha2,
         - kappa: Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    n_points = kwargs.get('n_points', 50)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1014,9 +1297,13 @@ def _get_lc_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, alpha2,
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -1032,8 +1319,19 @@ def _get_lc_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, alpha2,
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1044,8 +1342,10 @@ def _get_lc_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, alpha2,
     outs.shell_mass = shell_mass
     return outs
 
-def _get_lc_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3, vwind, mexp, eexp, eff,
-                                             **kwargs):
+
+def _get_lc_triple_powerlaw_wind_exponential(
+    t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3, vwind, mexp, eexp, eff, **kwargs
+):
     """
     A light curve for a triple power law mass-loss profile followed by an exponential explosion.
 
@@ -1067,8 +1367,8 @@ def _get_lc_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, alpha1,
         - kappa: Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    n_points = kwargs.get('n_points', 50)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1104,9 +1404,13 @@ def _get_lc_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, alpha1,
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -1122,8 +1426,19 @@ def _get_lc_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, alpha1,
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1135,8 +1450,9 @@ def _get_lc_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, alpha1,
     return outs
 
 
-def _get_lc_exponential_triple_powerlaw_wind(mexp, eexp, t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3, vwind, eff,
-                                             **kwargs):
+def _get_lc_exponential_triple_powerlaw_wind(
+    mexp, eexp, t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3, vwind, eff, **kwargs
+):
     """
     Calculate the light curve for an exponential explosion followed with triple power law wind interaction.
 
@@ -1155,8 +1471,8 @@ def _get_lc_exponential_triple_powerlaw_wind(mexp, eexp, t_break1, t_break2, mdo
         - kappa: Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    n_points = kwargs.get('n_points', 50)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1192,9 +1508,13 @@ def _get_lc_exponential_triple_powerlaw_wind(mexp, eexp, t_break1, t_break2, mdo
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_exponential_wind(mexp, eexp, mdot, tgrid, vwind, eff, kappa)
+        _get_csm().lc_mod.lightcurve_exponential_wind(
+            mexp, eexp, mdot, tgrid, vwind, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_exponential_wind(mexp, eexp, mdot, tgrid, vwind, eff)
+        _get_csm().lc_mod.lightcurve_exponential_wind(
+            mexp, eexp, mdot, tgrid, vwind, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -1210,8 +1530,19 @@ def _get_lc_exponential_triple_powerlaw_wind(mexp, eexp, t_break1, t_break2, mdo
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1223,8 +1554,21 @@ def _get_lc_exponential_triple_powerlaw_wind(mexp, eexp, t_break1, t_break2, mdo
     return outs
 
 
-def _get_lc_bpl_triple_powerlaw_wind(delta, nn, mexp, eexp, t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3, vwind,
-                                     eff, **kwargs):
+def _get_lc_bpl_triple_powerlaw_wind(
+    delta,
+    nn,
+    mexp,
+    eexp,
+    t_break1,
+    t_break2,
+    mdot_0,
+    alpha1,
+    alpha2,
+    alpha3,
+    vwind,
+    eff,
+    **kwargs,
+):
     """
     Calculate the light curve for a broken power law explosion followed by triple power law wind interaction.
 
@@ -1245,8 +1589,8 @@ def _get_lc_bpl_triple_powerlaw_wind(delta, nn, mexp, eexp, t_break1, t_break2, 
         - kappa: Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    n_points = kwargs.get('n_points', 50)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1282,9 +1626,13 @@ def _get_lc_bpl_triple_powerlaw_wind(delta, nn, mexp, eexp, t_break1, t_break2, 
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_bpl_wind(delta, nn, mexp, eexp, mdot, tgrid, vwind, eff, kappa)
+        _get_csm().lc_mod.lightcurve_bpl_wind(
+            delta, nn, mexp, eexp, mdot, tgrid, vwind, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_bpl_wind(delta, nn, mexp, eexp, mdot, tgrid, vwind, eff)
+        _get_csm().lc_mod.lightcurve_bpl_wind(
+            delta, nn, mexp, eexp, mdot, tgrid, vwind, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -1300,8 +1648,19 @@ def _get_lc_bpl_triple_powerlaw_wind(delta, nn, mexp, eexp, t_break1, t_break2, 
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1313,8 +1672,21 @@ def _get_lc_bpl_triple_powerlaw_wind(delta, nn, mexp, eexp, t_break1, t_break2, 
     return outs
 
 
-def _get_lc_smooth_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3,
-                                            vwind, delta, nn, mexp, eexp, eff, **kwargs):
+def _get_lc_smooth_triple_powerlaw_wind_bpl(
+    t_break1,
+    t_break2,
+    mdot_0,
+    alpha1,
+    alpha2,
+    alpha3,
+    vwind,
+    delta,
+    nn,
+    mexp,
+    eexp,
+    eff,
+    **kwargs,
+):
     """
     Calculate the light curve for a smooth triple power law mass-loss wind followed by a broken power law explosion.
     Uses tanh transitions for smooth breaks instead of sharp discontinuities.
@@ -1337,9 +1709,9 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, 
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    n_points = kwargs.get('n_points', 50)
-    smooth_factor = kwargs.get('smooth_factor', 0.2)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    smooth_factor = kwargs.get("smooth_factor", 0.2)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1360,20 +1732,30 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, 
     mdot_3 = mdot_break2 * (tgrid / t_break2) ** alpha3
 
     # Smooth transition widths (in log space for better scaling)
-    smooth_width1 = smooth_factor * np.log10(t_break1) if t_break1 > 1 else smooth_factor
-    smooth_width2 = smooth_factor * np.log10(t_break2) if t_break2 > 1 else smooth_factor
+    smooth_width1 = (
+        smooth_factor * np.log10(t_break1) if t_break1 > 1 else smooth_factor
+    )
+    smooth_width2 = (
+        smooth_factor * np.log10(t_break2) if t_break2 > 1 else smooth_factor
+    )
 
     # Create smooth transitions using tanh
     # Transition 1: from regime 1 to regime 2
-    transition1 = 0.5 * (1 + np.tanh((np.log10(tgrid) - np.log10(t_break1)) / smooth_width1))
+    transition1 = 0.5 * (
+        1 + np.tanh((np.log10(tgrid) - np.log10(t_break1)) / smooth_width1)
+    )
 
     # Transition 2: from regime 2 to regime 3
-    transition2 = 0.5 * (1 + np.tanh((np.log10(tgrid) - np.log10(t_break2)) / smooth_width2))
+    transition2 = 0.5 * (
+        1 + np.tanh((np.log10(tgrid) - np.log10(t_break2)) / smooth_width2)
+    )
 
     # Combine the three regimes with smooth transitions
-    mdot = (1 - transition1) * mdot_1 + \
-           transition1 * (1 - transition2) * mdot_2 + \
-           transition2 * mdot_3
+    mdot = (
+        (1 - transition1) * mdot_1
+        + transition1 * (1 - transition2) * mdot_2
+        + transition2 * mdot_3
+    )
 
     # Convert units
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
@@ -1383,9 +1765,13 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, 
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_bpl(mdot, tgrid, vwind, delta, nn, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_bpl(
+            mdot, tgrid, vwind, delta, nn, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -1401,8 +1787,19 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, 
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1414,8 +1811,9 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(t_break1, t_break2, mdot_0, alpha1, 
     return outs
 
 
-def _get_lc_smooth_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3, vwind, mexp,
-                                                    eexp, eff, **kwargs):
+def _get_lc_smooth_triple_powerlaw_wind_exponential(
+    t_break1, t_break2, mdot_0, alpha1, alpha2, alpha3, vwind, mexp, eexp, eff, **kwargs
+):
     """
     Calculate the light curve for a smooth triple power law mass-loss wind followed by an exponential explosion.
     Uses tanh transitions for smooth breaks instead of sharp discontinuities.
@@ -1436,9 +1834,9 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, 
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    n_points = kwargs.get('n_points', 50)
-    smooth_factor = kwargs.get('smooth_factor', 0.2)
-    kappa = kwargs.get('kappa', None)
+    n_points = kwargs.get("n_points", 50)
+    smooth_factor = kwargs.get("smooth_factor", 0.2)
+    kappa = kwargs.get("kappa", None)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1459,20 +1857,30 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, 
     mdot_3 = mdot_break2 * (tgrid / t_break2) ** alpha3
 
     # Smooth transition widths (in log space for better scaling)
-    smooth_width1 = smooth_factor * np.log10(t_break1) if t_break1 > 1 else smooth_factor
-    smooth_width2 = smooth_factor * np.log10(t_break2) if t_break2 > 1 else smooth_factor
+    smooth_width1 = (
+        smooth_factor * np.log10(t_break1) if t_break1 > 1 else smooth_factor
+    )
+    smooth_width2 = (
+        smooth_factor * np.log10(t_break2) if t_break2 > 1 else smooth_factor
+    )
 
     # Create smooth transitions using tanh
     # Transition 1: from regime 1 to regime 2
-    transition1 = 0.5 * (1 + np.tanh((np.log10(tgrid) - np.log10(t_break1)) / smooth_width1))
+    transition1 = 0.5 * (
+        1 + np.tanh((np.log10(tgrid) - np.log10(t_break1)) / smooth_width1)
+    )
 
     # Transition 2: from regime 2 to regime 3
-    transition2 = 0.5 * (1 + np.tanh((np.log10(tgrid) - np.log10(t_break2)) / smooth_width2))
+    transition2 = 0.5 * (
+        1 + np.tanh((np.log10(tgrid) - np.log10(t_break2)) / smooth_width2)
+    )
 
     # Combine the three regimes with smooth transitions
-    mdot = (1 - transition1) * mdot_1 + \
-           transition1 * (1 - transition2) * mdot_2 + \
-           transition2 * mdot_3
+    mdot = (
+        (1 - transition1) * mdot_1
+        + transition1 * (1 - transition2) * mdot_2
+        + transition2 * mdot_3
+    )
 
     # Convert units
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
@@ -1482,9 +1890,13 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, 
     eexp = eexp * foe  # Convert foe to ergs
 
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff, kappa)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff, kappa
+        )
     else:
-        _get_csm().lc_mod.lightcurve_wind_exponential(mdot, tgrid, vwind, mexp, eexp, eff)
+        _get_csm().lc_mod.lightcurve_wind_exponential(
+            mdot, tgrid, vwind, mexp, eexp, eff
+        )
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
@@ -1500,8 +1912,19 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, 
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1511,6 +1934,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(t_break1, t_break2, mdot_0, 
     outs.vshell = vshell
     outs.shell_mass = shell_mass
     return outs
+
 
 def create_wind_density_profile(mdot, vwind, time_ref):
     """
@@ -1526,19 +1950,20 @@ def create_wind_density_profile(mdot, vwind, time_ref):
     # Create velocity and radius grids
     v_grid = np.arange(1, 100001, dtype=np.float64) * 1e5  # 1e5 to 1e10 cm/s
     r_grid = v_grid * time_ref
-    
+
     # Convert units
     mdot_cgs = mdot * solar_mass_per_yr_to_gram_per_sec  # g/s
     vwind_cgs = vwind * 1e5  # cm/s
-    
+
     # Wind density: rho = Mdot / (4*pi*r^2*v)
     density = mdot_cgs / (4 * np.pi * r_grid**2 * vwind_cgs)
-    
+
     return v_grid, r_grid, density
 
 
-def _get_lc_multi_eruption_bpl_sn(eruption_list, interval, delta_sn, nn_sn, mej,
-                                  esn, **kwargs):
+def _get_lc_multi_eruption_bpl_sn(
+    eruption_list, interval, delta_sn, nn_sn, mej, esn, **kwargs
+):
     """
     Calculate the light curve for multiple eruptions creating CSM, followed by a broken power law supernova.
 
@@ -1567,40 +1992,57 @@ def _get_lc_multi_eruption_bpl_sn(eruption_list, interval, delta_sn, nn_sn, mej,
     """
     mej = mej * solar_mass  # Convert to grams
     esn = esn * foe  # Convert to ergs
-    time_ref_days = kwargs.get('time_ref', interval)
+    time_ref_days = kwargs.get("time_ref", interval)
     time_ref_seconds = time_ref_days * DAY
     interval_seconds = interval * DAY
-    eff = kwargs.get('eff', 0.5)
-    kappa = kwargs.get('kappa', None)
+    eff = kwargs.get("eff", 0.5)
+    kappa = kwargs.get("kappa", None)
 
     # Create CSM model from eruption list
     csm_model = SequentialCSMModel(time_ref=time_ref_days, verbose=False)
 
     for eruption in eruption_list:
         csm_model.add_eruption(
-            mass_msun=eruption['mass_msun'],
-            energy_foe=eruption['energy_foe'],
-            label=eruption.get('label', None),
-            profile_type=eruption.get('profile_type', 'exponential'),
-            profile_params=eruption.get('profile_params', None),
-            shell_config=eruption.get('shell_config', None)
+            mass_msun=eruption["mass_msun"],
+            energy_foe=eruption["energy_foe"],
+            label=eruption.get("label", None),
+            profile_type=eruption.get("profile_type", "exponential"),
+            profile_params=eruption.get("profile_params", None),
+            shell_config=eruption.get("shell_config", None),
         )
-    
+
     # Get CSM density profile
     result = csm_model.finalize_model()
-    csm_density = result['final_csm_density']
-    v_grid = result['v_grid']
-    
+    csm_density = result["final_csm_density"]
+    v_grid = result["v_grid"]
+
     # Use the explosion_bpl Fortran interface
     # Signature: lightcurve_explosion_bpl(rho_input, vinput, t_ref, inner_slope, outer_slope, Mexp, Eexp, interval, eff)
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, time_ref_seconds,
-                                            delta_sn, nn_sn, mej, esn,
-                                            interval_seconds, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            time_ref_seconds,
+            delta_sn,
+            nn_sn,
+            mej,
+            esn,
+            interval_seconds,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, time_ref_seconds,
-                                            delta_sn, nn_sn, mej, esn,
-                                            interval_seconds, eff)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            time_ref_seconds,
+            delta_sn,
+            nn_sn,
+            mej,
+            esn,
+            interval_seconds,
+            eff,
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -1617,8 +2059,19 @@ def _get_lc_multi_eruption_bpl_sn(eruption_list, interval, delta_sn, nn_sn, mej,
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1647,33 +2100,33 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     """
     # Store input values before conversion
     mej_msun = mej  # Keep solar mass version for create_exponential_profile
-    esn_foe = esn   # Keep foe version for create_exponential_profile
+    esn_foe = esn  # Keep foe version for create_exponential_profile
 
     mej_cgs = mej * solar_mass  # Convert to grams for Fortran
     esn_cgs = esn * foe  # Convert to ergs for Fortran
-    time_ref_days = kwargs.get('time_ref', interval)
+    time_ref_days = kwargs.get("time_ref", interval)
     time_ref_seconds = time_ref_days * DAY
     interval_seconds = interval * DAY
-    eff = kwargs.get('eff', 0.5)
-    kappa = kwargs.get('kappa', None)
+    eff = kwargs.get("eff", 0.5)
+    kappa = kwargs.get("kappa", None)
 
     # Create CSM model from eruption list
     csm_model = SequentialCSMModel(time_ref=time_ref_days, verbose=False)
 
     for eruption in eruption_list:
         csm_model.add_eruption(
-            mass_msun=eruption['mass_msun'],
-            energy_foe=eruption['energy_foe'],
-            label=eruption.get('label', None),
-            profile_type=eruption.get('profile_type', 'exponential'),
-            profile_params=eruption.get('profile_params', None),
-            shell_config=eruption.get('shell_config', None)
+            mass_msun=eruption["mass_msun"],
+            energy_foe=eruption["energy_foe"],
+            label=eruption.get("label", None),
+            profile_type=eruption.get("profile_type", "exponential"),
+            profile_params=eruption.get("profile_params", None),
+            shell_config=eruption.get("shell_config", None),
         )
 
     # Get CSM density profile
     result = csm_model.finalize_model()
-    csm_density = result['final_csm_density']
-    v_grid = result['v_grid']
+    csm_density = result["final_csm_density"]
+    v_grid = result["v_grid"]
 
     # Use the new faster lightcurve_explosion_exponential interface
     # This uses analytical exponential formula for SN (inner) instead of creating a density grid
@@ -1682,11 +2135,26 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     # Naming: explosion_exponential = arbitrary CSM + exponential SN
     # Arguments: (rho_csm, v_csm, t_ref_csm, Mexp_sn, Eexp_sn, interval, eff)
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_exponential(csm_density, v_grid, time_ref_seconds,
-                                                    mej_cgs, esn_cgs, interval_seconds, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_exponential(
+            csm_density,
+            v_grid,
+            time_ref_seconds,
+            mej_cgs,
+            esn_cgs,
+            interval_seconds,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_exponential(csm_density, v_grid, time_ref_seconds,
-                                                    mej_cgs, esn_cgs, interval_seconds, eff)
+        _get_csm().lc_mod.lightcurve_explosion_exponential(
+            csm_density,
+            v_grid,
+            time_ref_seconds,
+            mej_cgs,
+            esn_cgs,
+            interval_seconds,
+            eff,
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -1703,8 +2171,19 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1717,7 +2196,9 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     return outs
 
 
-def _get_lc_multi_eruption_arbitrary_sn(eruption_list, interval, sn_eruption_dict, **kwargs):
+def _get_lc_multi_eruption_arbitrary_sn(
+    eruption_list, interval, sn_eruption_dict, **kwargs
+):
     """
     Calculate the light curve for multiple eruptions creating CSM, followed by an arbitrary supernova profile.
 
@@ -1730,43 +2211,45 @@ def _get_lc_multi_eruption_arbitrary_sn(eruption_list, interval, sn_eruption_dic
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    time_ref_days = kwargs.get('time_ref', interval)
+    time_ref_days = kwargs.get("time_ref", interval)
     time_ref_seconds = time_ref_days * DAY
     interval_seconds = interval * DAY
-    eff = kwargs.get('eff', 0.5)
-    kappa = kwargs.get('kappa', None)
+    eff = kwargs.get("eff", 0.5)
+    kappa = kwargs.get("kappa", None)
 
     # Create CSM model from eruption list
     csm_model = SequentialCSMModel(time_ref=time_ref_days, verbose=False)
-    
+
     for eruption in eruption_list:
         csm_model.add_eruption(
-            mass_msun=eruption['mass_msun'],
-            energy_foe=eruption['energy_foe'],
-            label=eruption.get('label', None),
-            profile_type=eruption.get('profile_type', 'exponential'),
-            profile_params=eruption.get('profile_params', None),
-            shell_config=eruption.get('shell_config', None)
+            mass_msun=eruption["mass_msun"],
+            energy_foe=eruption["energy_foe"],
+            label=eruption.get("label", None),
+            profile_type=eruption.get("profile_type", "exponential"),
+            profile_params=eruption.get("profile_params", None),
+            shell_config=eruption.get("shell_config", None),
         )
-    
+
     # Get CSM density profile
     result = csm_model.finalize_model()
-    csm_density = result['final_csm_density']
-    v_grid = result['v_grid']
-    
+    csm_density = result["final_csm_density"]
+    v_grid = result["v_grid"]
+
     # Create supernova profile
     # The SN explodes at t=0, so use a small but non-zero time_ref
     # The density will scale as (t_ref/t)^3 in the Fortran code
     sn_time_ref = 1.0  # 1 day (reasonable for SN to establish profile)
     sn_model = SequentialCSMModel(verbose=False, time_ref=sn_time_ref)
-    if sn_eruption_dict['profile_type'] == 'exponential':
+    if sn_eruption_dict["profile_type"] == "exponential":
         v_grid_sn, _, sn_density, _ = sn_model.create_exponential_profile(
-            sn_eruption_dict['mass_msun'], sn_eruption_dict['energy_foe']
+            sn_eruption_dict["mass_msun"], sn_eruption_dict["energy_foe"]
         )
     else:  # broken_powerlaw
         v_grid_sn, _, sn_density, _ = sn_model.create_broken_powerlaw_profile(
-            sn_eruption_dict['mass_msun'], sn_eruption_dict['energy_foe'],
-            sn_eruption_dict['profile_params']['delta'], sn_eruption_dict['profile_params']['n']
+            sn_eruption_dict["mass_msun"],
+            sn_eruption_dict["energy_foe"],
+            sn_eruption_dict["profile_params"]["delta"],
+            sn_eruption_dict["profile_params"]["n"],
         )
 
     # Use explosion_explosion interface
@@ -1774,13 +2257,28 @@ def _get_lc_multi_eruption_arbitrary_sn(eruption_list, interval, sn_eruption_dic
     # op(2) = CSM (outer): t_ref = time_ref_days, delay = interval
     # The SN density will scale from t_ref=1day properly in Fortran via (t_ref/t)^3
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_explosion(csm_density, v_grid, time_ref_seconds,
-                                                  sn_density, v_grid_sn, sn_time_ref * DAY,
-                                                  interval_seconds, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_explosion(
+            csm_density,
+            v_grid,
+            time_ref_seconds,
+            sn_density,
+            v_grid_sn,
+            sn_time_ref * DAY,
+            interval_seconds,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_explosion(csm_density, v_grid, time_ref_seconds,
-                                                  sn_density, v_grid_sn, sn_time_ref * DAY,
-                                                  interval_seconds, eff)
+        _get_csm().lc_mod.lightcurve_explosion_explosion(
+            csm_density,
+            v_grid,
+            time_ref_seconds,
+            sn_density,
+            v_grid_sn,
+            sn_time_ref * DAY,
+            interval_seconds,
+            eff,
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -1797,8 +2295,19 @@ def _get_lc_multi_eruption_arbitrary_sn(eruption_list, interval, sn_eruption_dic
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -1810,12 +2319,22 @@ def _get_lc_multi_eruption_arbitrary_sn(eruption_list, interval, sn_eruption_dic
 
     return outs
 
-def create_generic_csm_density(r_inner=1e10, r_outer=1e20, n_points=1000,
-                                base_density=1e-14, base_index=-2.0,
-                                n_shells=0, shell_radii=None, shell_widths=None,
-                                shell_densities=None, shell_profiles='gaussian',
-                                base_profile='powerlaw', base_bpl_params=None,
-                                time_ref_days=10 * YEAR_DAYS):
+
+def create_generic_csm_density(
+    r_inner=1e10,
+    r_outer=1e20,
+    n_points=1000,
+    base_density=1e-14,
+    base_index=-2.0,
+    n_shells=0,
+    shell_radii=None,
+    shell_widths=None,
+    shell_densities=None,
+    shell_profiles="gaussian",
+    base_profile="powerlaw",
+    base_bpl_params=None,
+    time_ref_days=10 * YEAR_DAYS,
+):
     """
     Create a generic phenomenological CSM density profile for fitting observations.
 
@@ -1874,21 +2393,23 @@ def create_generic_csm_density(r_inner=1e10, r_outer=1e20, n_points=1000,
     r_grid = np.logspace(np.log10(r_inner), np.log10(r_outer), n_points)
 
     # Base density profile
-    if base_profile == 'powerlaw':
+    if base_profile == "powerlaw":
         # Simple power-law density profile
         csm_density = base_density * (r_grid / 1e14) ** base_index
 
-    elif base_profile == 'bpl':
+    elif base_profile == "bpl":
         # Broken power-law density profile
         if base_bpl_params is None:
             raise ValueError("base_bpl_params required when base_profile='bpl'")
 
-        r_break = base_bpl_params.get('r_break')
-        index_inner = base_bpl_params.get('index_inner')
-        index_outer = base_bpl_params.get('index_outer')
+        r_break = base_bpl_params.get("r_break")
+        index_inner = base_bpl_params.get("index_inner")
+        index_outer = base_bpl_params.get("index_outer")
 
         if r_break is None or index_inner is None or index_outer is None:
-            raise ValueError("base_bpl_params must contain 'r_break', 'index_inner', 'index_outer'")
+            raise ValueError(
+                "base_bpl_params must contain 'r_break', 'index_inner', 'index_outer'"
+            )
 
         # Ensure continuity at break radius
         # At r_break: rho_inner(r_break) = rho_outer(r_break)
@@ -1900,23 +2421,31 @@ def create_generic_csm_density(r_inner=1e10, r_outer=1e20, n_points=1000,
         outer_mask = r_grid >= r_break
 
         # Inner region
-        csm_density[inner_mask] = base_density * (r_grid[inner_mask] / 1e14) ** index_inner
+        csm_density[inner_mask] = (
+            base_density * (r_grid[inner_mask] / 1e14) ** index_inner
+        )
 
         # Density at break (for continuity)
         rho_break = base_density * (r_break / 1e14) ** index_inner
 
         # Outer region
-        csm_density[outer_mask] = rho_break * (r_grid[outer_mask] / r_break) ** index_outer
+        csm_density[outer_mask] = (
+            rho_break * (r_grid[outer_mask] / r_break) ** index_outer
+        )
 
     else:
-        raise ValueError(f"Unknown base_profile type: {base_profile}. Must be 'powerlaw' or 'bpl'")
+        raise ValueError(
+            f"Unknown base_profile type: {base_profile}. Must be 'powerlaw' or 'bpl'"
+        )
 
     # Add shells if requested
     if n_shells > 0:
         # Handle default shell parameters
         if shell_radii is None:
             # Evenly space shells in log space
-            shell_radii = np.logspace(np.log10(r_inner * 2), np.log10(r_outer / 2), n_shells)
+            shell_radii = np.logspace(
+                np.log10(r_inner * 2), np.log10(r_outer / 2), n_shells
+            )
         else:
             shell_radii = np.atleast_1d(shell_radii)
 
@@ -1928,8 +2457,9 @@ def create_generic_csm_density(r_inner=1e10, r_outer=1e20, n_points=1000,
 
         if shell_densities is None:
             # Default: 10x the base density at shell location
-            shell_densities = np.array([base_density * (r / r_inner) ** base_index * 10.0
-                                       for r in shell_radii])
+            shell_densities = np.array(
+                [base_density * (r / r_inner) ** base_index * 10.0 for r in shell_radii]
+            )
         else:
             shell_densities = np.atleast_1d(shell_densities)
 
@@ -1944,21 +2474,25 @@ def create_generic_csm_density(r_inner=1e10, r_outer=1e20, n_points=1000,
             peak_density = shell_densities[i]
             profile_type = shell_profiles[i]
 
-            if profile_type == 'gaussian':
+            if profile_type == "gaussian":
                 # Gaussian shell: sigma = width / 2.355 (FWHM)
                 sigma = width / 2.355
-                shell_component = peak_density * np.exp(-0.5 * ((r_grid - r_shell) / sigma) ** 2)
+                shell_component = peak_density * np.exp(
+                    -0.5 * ((r_grid - r_shell) / sigma) ** 2
+                )
 
-            elif profile_type == 'tophat':
+            elif profile_type == "tophat":
                 # Top-hat shell: constant density within width
                 shell_component = np.zeros_like(r_grid)
                 mask = np.abs(r_grid - r_shell) < width / 2
                 shell_component[mask] = peak_density
 
-            elif profile_type == 'exponential':
+            elif profile_type == "exponential":
                 # Exponential decay from shell center (symmetric)
                 scale_length = width / 2.0
-                shell_component = peak_density * np.exp(-np.abs(r_grid - r_shell) / scale_length)
+                shell_component = peak_density * np.exp(
+                    -np.abs(r_grid - r_shell) / scale_length
+                )
 
             else:
                 raise ValueError(f"Unknown shell profile type: {profile_type}")
@@ -1973,12 +2507,24 @@ def create_generic_csm_density(r_inner=1e10, r_outer=1e20, n_points=1000,
     return r_grid, v_grid, csm_density
 
 
-def _get_lc_generic_csm_exponential(base_density, base_index,
-                                     shell1_radius, shell1_width, shell1_density,
-                                     shell2_radius, shell2_width, shell2_density,
-                                     shell3_radius, shell3_width, shell3_density,
-                                     interval_sn, mej_sn, esn, eff,
-                                     **kwargs):
+def _get_lc_generic_csm_exponential(
+    base_density,
+    base_index,
+    shell1_radius,
+    shell1_width,
+    shell1_density,
+    shell2_radius,
+    shell2_width,
+    shell2_density,
+    shell3_radius,
+    shell3_width,
+    shell3_density,
+    interval_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
     """
     Calculate the light curve for generic phenomenological CSM interacting with an EXPONENTIAL supernova.
     Fixed signature for redback integration with up to 3 shells (set density=0 to disable).
@@ -2018,9 +2564,9 @@ def _get_lc_generic_csm_exponential(base_density, base_index,
             interval_sn=30, mej_sn=0.2, esn=0.01, eff=0.5
         )
     """
-    r_inner = kwargs.get('r_inner', 1e10)
-    r_outer = kwargs.get('r_outer', 1e20)
-    kappa = kwargs.get('kappa', None)
+    r_inner = kwargs.get("r_inner", 1e10)
+    r_outer = kwargs.get("r_outer", 1e20)
+    kappa = kwargs.get("kappa", None)
 
     # Build shell parameters based on which shells are enabled
     shell_radii = []
@@ -2046,14 +2592,17 @@ def _get_lc_generic_csm_exponential(base_density, base_index,
 
     # Create generic CSM density profile
     r_grid, v_grid, csm_density = create_generic_csm_density(
-        r_inner=r_inner, r_outer=r_outer, n_points=1000,
-        base_density=base_density, base_index=base_index,
+        r_inner=r_inner,
+        r_outer=r_outer,
+        n_points=1000,
+        base_density=base_density,
+        base_index=base_index,
         n_shells=n_shells,
         shell_radii=shell_radii if n_shells > 0 else None,
         shell_widths=shell_widths if n_shells > 0 else None,
         shell_densities=shell_densities if n_shells > 0 else None,
-        shell_profiles='gaussian',
-        time_ref_days=interval_sn
+        shell_profiles="gaussian",
+        time_ref_days=interval_sn,
     )
 
     # Convert SN parameters to CGS
@@ -2063,13 +2612,20 @@ def _get_lc_generic_csm_exponential(base_density, base_index,
 
     # Call Fortran lightcurve function with EXPONENTIAL explosion
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_exponential(csm_density, v_grid, interval_sec,
-                                                    mej_sn_grams, esn_ergs,
-                                                    interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_exponential(
+            csm_density,
+            v_grid,
+            interval_sec,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_exponential(csm_density, v_grid, interval_sec,
-                                                    mej_sn_grams, esn_ergs,
-                                                    interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_explosion_exponential(
+            csm_density, v_grid, interval_sec, mej_sn_grams, esn_ergs, interval_sec, eff
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -2086,8 +2642,19 @@ def _get_lc_generic_csm_exponential(base_density, base_index,
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -2099,12 +2666,26 @@ def _get_lc_generic_csm_exponential(base_density, base_index,
     return outs
 
 
-def _get_lc_generic_csm_bpl(base_density, base_index,
-                            shell1_radius, shell1_width, shell1_density,
-                            shell2_radius, shell2_width, shell2_density,
-                            shell3_radius, shell3_width, shell3_density,
-                            interval_sn, delta_sn, nn_sn, mej_sn, esn, eff,
-                            **kwargs):
+def _get_lc_generic_csm_bpl(
+    base_density,
+    base_index,
+    shell1_radius,
+    shell1_width,
+    shell1_density,
+    shell2_radius,
+    shell2_width,
+    shell2_density,
+    shell3_radius,
+    shell3_width,
+    shell3_density,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
     """
     Calculate the light curve for generic phenomenological CSM interacting with a broken power law supernova.
     Fixed signature for redback integration with up to 3 shells (set density=0 to disable).
@@ -2132,9 +2713,9 @@ def _get_lc_generic_csm_bpl(base_density, base_index,
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    r_inner = kwargs.get('r_inner', 1e10)
-    r_outer = kwargs.get('r_outer', 1e20)
-    kappa = kwargs.get('kappa', None)
+    r_inner = kwargs.get("r_inner", 1e10)
+    r_outer = kwargs.get("r_outer", 1e20)
+    kappa = kwargs.get("kappa", None)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
     shell_widths = []
@@ -2159,14 +2740,17 @@ def _get_lc_generic_csm_bpl(base_density, base_index,
 
     # Create generic CSM density profile
     r_grid, v_grid, csm_density = create_generic_csm_density(
-        r_inner=r_inner, r_outer=r_outer, n_points=1000,
-        base_density=base_density, base_index=base_index,
+        r_inner=r_inner,
+        r_outer=r_outer,
+        n_points=1000,
+        base_density=base_density,
+        base_index=base_index,
         n_shells=n_shells,
         shell_radii=shell_radii if n_shells > 0 else None,
         shell_widths=shell_widths if n_shells > 0 else None,
         shell_densities=shell_densities if n_shells > 0 else None,
-        shell_profiles='gaussian',
-        time_ref_days=interval_sn
+        shell_profiles="gaussian",
+        time_ref_days=interval_sn,
     )
 
     # Convert SN parameters to CGS
@@ -2176,13 +2760,30 @@ def _get_lc_generic_csm_bpl(base_density, base_index,
 
     # Call Fortran lightcurve function
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, interval_sec,
-                                            delta_sn, nn_sn, mej_sn_grams, esn_ergs,
-                                            interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, interval_sec,
-                                            delta_sn, nn_sn, mej_sn_grams, esn_ergs,
-                                            interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -2199,8 +2800,19 @@ def _get_lc_generic_csm_bpl(base_density, base_index,
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -2213,13 +2825,29 @@ def _get_lc_generic_csm_bpl(base_density, base_index,
     return outs
 
 
-def _get_lc_generic_4shell_csm_bpl(base_density, base_index,
-                            shell1_radius, shell1_width, shell1_density,
-                            shell2_radius, shell2_width, shell2_density,
-                            shell3_radius, shell3_width, shell3_density,
-                            shell4_radius, shell4_width, shell4_density,
-                            interval_sn, delta_sn, nn_sn, mej_sn, esn, eff,
-                            **kwargs):
+def _get_lc_generic_4shell_csm_bpl(
+    base_density,
+    base_index,
+    shell1_radius,
+    shell1_width,
+    shell1_density,
+    shell2_radius,
+    shell2_width,
+    shell2_density,
+    shell3_radius,
+    shell3_width,
+    shell3_density,
+    shell4_radius,
+    shell4_width,
+    shell4_density,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
     """
     Calculate the light curve for generic phenomenological CSM interacting with a broken power law supernova.
     Fixed signature for redback integration with up to 4 shells (set density=0 to disable).
@@ -2247,9 +2875,9 @@ def _get_lc_generic_4shell_csm_bpl(base_density, base_index,
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    r_inner = kwargs.get('r_inner', 1e10)
-    r_outer = kwargs.get('r_outer', 1e20)
-    kappa = kwargs.get('kappa', None)
+    r_inner = kwargs.get("r_inner", 1e10)
+    r_outer = kwargs.get("r_outer", 1e20)
+    kappa = kwargs.get("kappa", None)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
     shell_widths = []
@@ -2279,14 +2907,17 @@ def _get_lc_generic_4shell_csm_bpl(base_density, base_index,
 
     # Create generic CSM density profile
     r_grid, v_grid, csm_density = create_generic_csm_density(
-        r_inner=r_inner, r_outer=r_outer, n_points=1000,
-        base_density=base_density, base_index=base_index,
+        r_inner=r_inner,
+        r_outer=r_outer,
+        n_points=1000,
+        base_density=base_density,
+        base_index=base_index,
         n_shells=n_shells,
         shell_radii=shell_radii if n_shells > 0 else None,
         shell_widths=shell_widths if n_shells > 0 else None,
         shell_densities=shell_densities if n_shells > 0 else None,
-        shell_profiles='gaussian',
-        time_ref_days=interval_sn
+        shell_profiles="gaussian",
+        time_ref_days=interval_sn,
     )
 
     # Convert SN parameters to CGS
@@ -2296,13 +2927,30 @@ def _get_lc_generic_4shell_csm_bpl(base_density, base_index,
 
     # Call Fortran lightcurve function
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, interval_sec,
-                                            delta_sn, nn_sn, mej_sn_grams, esn_ergs,
-                                            interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, interval_sec,
-                                            delta_sn, nn_sn, mej_sn_grams, esn_ergs,
-                                            interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -2319,8 +2967,19 @@ def _get_lc_generic_4shell_csm_bpl(base_density, base_index,
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -2333,17 +2992,41 @@ def _get_lc_generic_4shell_csm_bpl(base_density, base_index,
     return outs
 
 
-def _get_lc_generic_8shell_csm_bpl(base_density, base_index,
-                            shell1_radius, shell1_width, shell1_density,
-                            shell2_radius, shell2_width, shell2_density,
-                            shell3_radius, shell3_width, shell3_density,
-                            shell4_radius, shell4_width, shell4_density,
-                            shell5_radius, shell5_width, shell5_density,
-                            shell6_radius, shell6_width, shell6_density,
-                            shell7_radius, shell7_width, shell7_density,
-                            shell8_radius, shell8_width, shell8_density,
-                            interval_sn, delta_sn, nn_sn, mej_sn, esn, eff,
-                            **kwargs):
+def _get_lc_generic_8shell_csm_bpl(
+    base_density,
+    base_index,
+    shell1_radius,
+    shell1_width,
+    shell1_density,
+    shell2_radius,
+    shell2_width,
+    shell2_density,
+    shell3_radius,
+    shell3_width,
+    shell3_density,
+    shell4_radius,
+    shell4_width,
+    shell4_density,
+    shell5_radius,
+    shell5_width,
+    shell5_density,
+    shell6_radius,
+    shell6_width,
+    shell6_density,
+    shell7_radius,
+    shell7_width,
+    shell7_density,
+    shell8_radius,
+    shell8_width,
+    shell8_density,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
     """
     Calculate the light curve for generic phenomenological CSM interacting with a broken power law supernova.
     Fixed signature for redback integration with up to 8 shells (set density=0 to disable).
@@ -2408,11 +3091,11 @@ def _get_lc_generic_8shell_csm_bpl(base_density, base_index,
             interval_sn=100, delta_sn=0.5, nn_sn=10, mej_sn=10.0, esn=1.0, eff=0.5
         )
     """
-    r_inner = kwargs.get('r_inner', 1e10)
-    r_outer = kwargs.get('r_outer', 1e20)
-    base_profile = kwargs.get('base_profile', 'powerlaw')
-    base_bpl_params = kwargs.get('base_bpl_params', None)
-    kappa = kwargs.get('kappa', None)
+    r_inner = kwargs.get("r_inner", 1e10)
+    r_outer = kwargs.get("r_outer", 1e20)
+    base_profile = kwargs.get("base_profile", "powerlaw")
+    base_bpl_params = kwargs.get("base_bpl_params", None)
+    kappa = kwargs.get("kappa", None)
 
     # Build shell parameters based on which shells are enabled
     shell_radii = []
@@ -2463,16 +3146,19 @@ def _get_lc_generic_8shell_csm_bpl(base_density, base_index,
 
     # Create generic CSM density profile
     r_grid, v_grid, csm_density = create_generic_csm_density(
-        r_inner=r_inner, r_outer=r_outer, n_points=1000,
-        base_density=base_density, base_index=base_index,
+        r_inner=r_inner,
+        r_outer=r_outer,
+        n_points=1000,
+        base_density=base_density,
+        base_index=base_index,
         n_shells=n_shells,
         shell_radii=shell_radii if n_shells > 0 else None,
         shell_widths=shell_widths if n_shells > 0 else None,
         shell_densities=shell_densities if n_shells > 0 else None,
-        shell_profiles='gaussian',
+        shell_profiles="gaussian",
         base_profile=base_profile,
         base_bpl_params=base_bpl_params,
-        time_ref_days=interval_sn
+        time_ref_days=interval_sn,
     )
     # Convert SN parameters to CGS
     mej_sn_grams = mej_sn * solar_mass
@@ -2481,13 +3167,30 @@ def _get_lc_generic_8shell_csm_bpl(base_density, base_index,
 
     # Call Fortran lightcurve function
     if kappa is not None:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, interval_sec,
-                                            delta_sn, nn_sn, mej_sn_grams, esn_ergs,
-                                            interval_sec, eff, kappa)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+            kappa,
+        )
     else:
-        _get_csm().lc_mod.lightcurve_explosion_bpl(csm_density, v_grid, interval_sec,
-                                            delta_sn, nn_sn, mej_sn_grams, esn_ergs,
-                                            interval_sec, eff)
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+        )
 
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
@@ -2504,8 +3207,19 @@ def _get_lc_generic_8shell_csm_bpl(base_density, base_index,
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple('output', ['time', 'lbol', 'lbol_shock', 'lbol_diffuse',
-                                 'rph', 'temperature', 'vshell', 'shell_mass'])
+    outs = namedtuple(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
@@ -2527,10 +3241,10 @@ def combine_lightcurves(lc1, lc2, theta_polar):
     :param theta_polar: half opening angle of the polar explosion
     :return: Named tuple (time, lbol)
     """
-    LCOutput = namedtuple('output', ['time', 'lbol'])
+    LCOutput = namedtuple("output", ["time", "lbol"])
 
-    weight1 = 1-np.cos(theta_polar/180*np.pi)
-    weight2 = 1-weight1
+    weight1 = 1 - np.cos(theta_polar / 180 * np.pi)
+    weight2 = 1 - weight1
 
     # Determine overlapping time interval
     tmin = max(lc1.time.min(), lc2.time.min())
@@ -2540,22 +3254,28 @@ def combine_lightcurves(lc1, lc2, theta_polar):
 
     # Build adaptive time grid within the overlap
     t_all = np.unique(
-        np.concatenate((lc1.time[(lc1.time >= tmin) & (lc1.time <= tmax)],
-                        lc2.time[(lc2.time >= tmin) & (lc2.time <= tmax)]))
+        np.concatenate(
+            (
+                lc1.time[(lc1.time >= tmin) & (lc1.time <= tmax)],
+                lc2.time[(lc2.time >= tmin) & (lc2.time <= tmax)],
+            )
+        )
     )
     t_all.sort()
 
     # Define helper for interpolating a field (no extrapolation)
     def interp_field(field):
-        f1 = interp1d(lc1.time, field(lc1), bounds_error=False, fill_value="extrapolate")
-        f2 = interp1d(lc2.time, field(lc2), bounds_error=False, fill_value="extrapolate")
+        f1 = interp1d(
+            lc1.time, field(lc1), bounds_error=False, fill_value="extrapolate"
+        )
+        f2 = interp1d(
+            lc2.time, field(lc2), bounds_error=False, fill_value="extrapolate"
+        )
         # Evaluate only within overlap; beyond that the time grid is already truncated
         return weight1 * f1(t_all) + weight2 * f2(t_all)
 
-    return LCOutput(
-        time=t_all,
-        lbol=interp_field(lambda lc: lc.lbol)
-    )
+    return LCOutput(time=t_all, lbol=interp_field(lambda lc: lc.lbol))
+
 
 class SequentialCSMModel:
     """
@@ -2654,11 +3374,15 @@ class SequentialCSMModel:
         wind_density_physical[wind_mask] = wind_density[wind_mask]
 
         # Verify mass conservation
-        actual_wind_mass_cgs = np.trapz(wind_density_physical * 4 * np.pi * self.r_grid**2, self.r_grid)
+        actual_wind_mass_cgs = np.trapz(
+            wind_density_physical * 4 * np.pi * self.r_grid**2, self.r_grid
+        )
         actual_wind_mass_msun = actual_wind_mass_cgs / solar_mass
 
         self._print(f"  Duration: {duration_years:.2f} years")
-        self._print(f"  Wind radial extent: {r_wind_inner/1e15:.2f} - {r_wind_outer/1e15:.2f} × 10¹⁵ cm")
+        self._print(
+            f"  Wind radial extent: {r_wind_inner/1e15:.2f} - {r_wind_outer/1e15:.2f} × 10¹⁵ cm"
+        )
         self._print(f"  Total wind mass: {actual_wind_mass_msun:.4f} M_sun")
 
         # Set as baseline CSM (like first eruption)
@@ -2666,18 +3390,18 @@ class SequentialCSMModel:
 
         # Store wind info as step 0
         wind_result = {
-            'step_number': 0,
-            'label': 'Wind_Baseline',
-            'profile_type': 'wind',
-            'mdot': mdot,
-            'vwind': vwind,
-            'duration_years': duration_years,
-            'wind_density': wind_density_physical.copy(),
-            'csm_density': self.current_csm_density.copy(),
-            'mass_msun': actual_wind_mass_msun,
-            'calculated_mass_cgs': actual_wind_mass_cgs,
-            'calculated_mass_msun': actual_wind_mass_msun,
-            'interaction_type': 'wind_baseline'
+            "step_number": 0,
+            "label": "Wind_Baseline",
+            "profile_type": "wind",
+            "mdot": mdot,
+            "vwind": vwind,
+            "duration_years": duration_years,
+            "wind_density": wind_density_physical.copy(),
+            "csm_density": self.current_csm_density.copy(),
+            "mass_msun": actual_wind_mass_msun,
+            "calculated_mass_cgs": actual_wind_mass_cgs,
+            "calculated_mass_msun": actual_wind_mass_msun,
+            "interaction_type": "wind_baseline",
         }
 
         self.step_results.append(wind_result)
@@ -2720,7 +3444,9 @@ class SequentialCSMModel:
         r_grid = v_grid * self.time_ref_seconds
 
         # Exponential density profile: ρ(v,t) = M/(8π v₀³ t³) * exp(-v/v₀)
-        density = (mass / (8.0 * np.pi * (v0 * self.time_ref_seconds) ** 3)) * np.exp(-v_grid / v0)
+        density = (mass / (8.0 * np.pi * (v0 * self.time_ref_seconds) ** 3)) * np.exp(
+            -v_grid / v0
+        )
 
         return v_grid, r_grid, density, v0
 
@@ -2763,7 +3489,9 @@ class SequentialCSMModel:
         denominator = (3 - delta) * (n - 3) * mass
 
         if denominator <= 0 or numerator <= 0:
-            raise ValueError(f"Invalid parameters for broken power law: delta={delta}, n={n}")
+            raise ValueError(
+                f"Invalid parameters for broken power law: delta={delta}, n={n}"
+            )
 
         v_star = np.sqrt(numerator / denominator)
 
@@ -2791,7 +3519,11 @@ class SequentialCSMModel:
 
         # Calculate Fortran coefficients (for 4πr²ρ) using analytical formula
         bpl_co = (E_term ** (0.5 * (n - 3))) / (M_term ** (0.5 * (n - 5))) / (n - delta)
-        bpl_ci = (E_term ** (0.5 * (delta - 3))) / (M_term ** (0.5 * (delta - 5))) / (n - delta)
+        bpl_ci = (
+            (E_term ** (0.5 * (delta - 3)))
+            / (M_term ** (0.5 * (delta - 5)))
+            / (n - delta)
+        )
 
         density = np.zeros_like(v_grid)
 
@@ -2801,7 +3533,11 @@ class SequentialCSMModel:
         #       = bpl_co × v^(2-n) / t / (4π × v² × t²)
         #       = bpl_co / (4π) × v^(-n) / t³
         outer_mask = v_grid >= v_star
-        density[outer_mask] = (bpl_co / (4 * np.pi)) * (v_grid[outer_mask] ** (-n)) / (self.time_ref_seconds ** 3)
+        density[outer_mask] = (
+            (bpl_co / (4 * np.pi))
+            * (v_grid[outer_mask] ** (-n))
+            / (self.time_ref_seconds**3)
+        )
 
         # Inner region (v < v*):
         # Fortran: 4πr²ρ = bpl_ci × v^(2-δ) / t
@@ -2809,11 +3545,17 @@ class SequentialCSMModel:
         #       = bpl_ci × v^(2-δ) / t / (4π × v² × t²)
         #       = bpl_ci / (4π) × v^(-δ) / t³
         inner_mask = v_grid < v_star
-        density[inner_mask] = (bpl_ci / (4 * np.pi)) * (v_grid[inner_mask] ** (-delta)) / (self.time_ref_seconds ** 3)
+        density[inner_mask] = (
+            (bpl_ci / (4 * np.pi))
+            * (v_grid[inner_mask] ** (-delta))
+            / (self.time_ref_seconds**3)
+        )
 
         return v_grid, r_grid, density, v_star
 
-    def create_density_profile(self, mass_msun, energy_foe, profile_type='exponential', profile_params=None):
+    def create_density_profile(
+        self, mass_msun, energy_foe, profile_type="exponential", profile_params=None
+    ):
         """
         Create density profile with support for multiple profile types.
 
@@ -2841,15 +3583,15 @@ class SequentialCSMModel:
         characteristic_velocity : float
             v0 for exponential or v* for broken power law
         """
-        if profile_type == 'exponential':
+        if profile_type == "exponential":
             return self.create_exponential_profile(mass_msun, energy_foe)
 
-        elif profile_type == 'broken_powerlaw':
+        elif profile_type == "broken_powerlaw":
             if profile_params is None:
                 raise ValueError("profile_params required for broken_powerlaw")
 
-            delta = profile_params.get('delta', 0.5)
-            n = profile_params.get('n', 10.0)
+            delta = profile_params.get("delta", 0.5)
+            n = profile_params.get("n", 10.0)
 
             return self.create_broken_powerlaw_profile(mass_msun, energy_foe, delta, n)
 
@@ -2885,7 +3627,7 @@ class SequentialCSMModel:
         density_region = density[mask]
 
         # Integrate mass: M = ∫ ρ(r) * 4πr² dr
-        integrand = density_region * 4 * np.pi * r_region ** 2
+        integrand = density_region * 4 * np.pi * r_region**2
         swept_mass = np.trapz(integrand, r_region)
 
         return swept_mass
@@ -2914,10 +3656,12 @@ class SequentialCSMModel:
         sigma = delta_r / 2.0
 
         # Create Gaussian profile centered at r_sh
-        gaussian_profile = np.exp(-((self.r_grid - r_sh) / sigma) ** 2)
+        gaussian_profile = np.exp(-(((self.r_grid - r_sh) / sigma) ** 2))
 
         # Normalize to conserve mass
-        gaussian_mass_integral = np.trapz(gaussian_profile * 4 * np.pi * self.r_grid ** 2, self.r_grid)
+        gaussian_mass_integral = np.trapz(
+            gaussian_profile * 4 * np.pi * self.r_grid**2, self.r_grid
+        )
 
         if gaussian_mass_integral > 0:
             # Scale to achieve desired shell mass
@@ -2928,8 +3672,15 @@ class SequentialCSMModel:
 
         return shell_enhancement, sigma
 
-    def add_eruption(self, mass_msun, energy_foe, label=None, profile_type='exponential',
-                     profile_params=None, shell_config=None):
+    def add_eruption(
+        self,
+        mass_msun,
+        energy_foe,
+        label=None,
+        profile_type="exponential",
+        profile_params=None,
+        shell_config=None,
+    ):
         """
         Add a new eruption to the sequential CSM model.
 
@@ -2959,78 +3710,95 @@ class SequentialCSMModel:
         """
         step_number = len(self.step_results) + 1
         if label is None:
-            label = f'Eruption_{step_number}'
+            label = f"Eruption_{step_number}"
 
         self._print(f"\nStep {step_number}: Processing {label}")
         self._print(f"  Mass: {mass_msun:.3f} M☉")
         self._print(f"  Energy: {energy_foe:.3f} foe")
         self._print(f"  Profile type: {profile_type}")
 
-        if profile_type == 'broken_powerlaw' and profile_params:
+        if profile_type == "broken_powerlaw" and profile_params:
             self._print(
-                f"  Power-law indices: δ={profile_params.get('delta', 0.0):.1f}, n={profile_params.get('n', 7.0):.1f}")
+                f"  Power-law indices: δ={profile_params.get('delta', 0.0):.1f}, n={profile_params.get('n', 7.0):.1f}"
+            )
 
         # Create explosion profile
-        self.v_grid, self.r_grid, explosion_density, char_velocity = self.create_density_profile(
-            mass_msun, energy_foe, profile_type, profile_params
+        self.v_grid, self.r_grid, explosion_density, char_velocity = (
+            self.create_density_profile(
+                mass_msun, energy_foe, profile_type, profile_params
+            )
         )
 
-        if profile_type == 'exponential':
+        if profile_type == "exponential":
             self._print(f"  Characteristic velocity v₀: {char_velocity / 1e5:.0f} km/s")
         else:
             self._print(f"  Break velocity v*: {char_velocity / 1e5:.0f} km/s")
 
         # Verify mass conservation
-        calculated_mass_cgs = np.trapz(explosion_density * 4 * np.pi * self.r_grid ** 2, self.r_grid)
+        calculated_mass_cgs = np.trapz(
+            explosion_density * 4 * np.pi * self.r_grid**2, self.r_grid
+        )
         calculated_mass_msun = calculated_mass_cgs / solar_mass
-        self._print(f"  Mass conservation check: {calculated_mass_msun / mass_msun:.4f} (should be ~1.0)")
+        self._print(
+            f"  Mass conservation check: {calculated_mass_msun / mass_msun:.4f} (should be ~1.0)"
+        )
 
         # Initialize step result
         step_result = {
-            'step_number': step_number,
-            'label': label,
-            'profile_type': profile_type,
-            'explosion_density': explosion_density.copy(),
-            'characteristic_velocity': char_velocity,
-            'mass_msun': mass_msun,
-            'energy_foe': energy_foe,
-            'calculated_mass_cgs': calculated_mass_cgs,
-            'calculated_mass_msun': calculated_mass_msun
+            "step_number": step_number,
+            "label": label,
+            "profile_type": profile_type,
+            "explosion_density": explosion_density.copy(),
+            "characteristic_velocity": char_velocity,
+            "mass_msun": mass_msun,
+            "energy_foe": energy_foe,
+            "calculated_mass_cgs": calculated_mass_cgs,
+            "calculated_mass_msun": calculated_mass_msun,
         }
 
         if profile_params:
-            step_result['profile_params'] = profile_params.copy()
+            step_result["profile_params"] = profile_params.copy()
 
         if step_number == 1:
             # First eruption: establishes baseline CSM
             self.current_csm_density = explosion_density.copy()
-            step_result['csm_density'] = self.current_csm_density.copy()
-            step_result['interaction_type'] = 'first_eruption'
+            step_result["csm_density"] = self.current_csm_density.copy()
+            step_result["interaction_type"] = "first_eruption"
             self._print(f"  First eruption - establishes baseline CSM")
 
         else:
             # Subsequent eruptions: interact with current CSM
             if shell_config is not None:
                 # Shell interaction occurs
-                r_sh = shell_config['r_shell']
-                delta_r = shell_config['shell_width']
+                r_sh = shell_config["r_shell"]
+                delta_r = shell_config["shell_width"]
                 r_inner = r_sh - delta_r / 2
                 r_outer = r_sh + delta_r / 2
                 sigma = delta_r / 4.0
 
                 self._print(f"  Shell interaction with correct piecewise physics:")
                 self._print(f"    Shell center: {r_sh / 1e15:.2f} × 10¹⁵ cm")
-                self._print(f"    Shell boundaries: {r_inner / 1e15:.2f} - {r_outer / 1e15:.2f} × 10¹⁵ cm")
+                self._print(
+                    f"    Shell boundaries: {r_inner / 1e15:.2f} - {r_outer / 1e15:.2f} × 10¹⁵ cm"
+                )
 
                 # Calculate swept masses
-                mass_csm_swept = self.calculate_swept_mass(self.current_csm_density, 0., r_outer)
-                mass_new_swept = self.calculate_swept_mass(explosion_density, r_inner, self.r_grid.max())
+                mass_csm_swept = self.calculate_swept_mass(
+                    self.current_csm_density, 0.0, r_outer
+                )
+                mass_new_swept = self.calculate_swept_mass(
+                    explosion_density, r_inner, self.r_grid.max()
+                )
                 total_shell_mass = mass_csm_swept + mass_new_swept
 
-                self._print(f"    Total shell mass: {total_shell_mass / solar_mass:.4f} M☉")
+                self._print(
+                    f"    Total shell mass: {total_shell_mass / solar_mass:.4f} M☉"
+                )
 
                 # Create smooth Gaussian shell enhancement
-                shell_enhancement, sigma = self.create_gaussian_shell(total_shell_mass, r_sh, delta_r)
+                shell_enhancement, sigma = self.create_gaussian_shell(
+                    total_shell_mass, r_sh, delta_r
+                )
 
                 # CORRECT PIECEWISE CONSTRUCTION:
                 new_csm_density = np.zeros_like(self.r_grid)
@@ -3058,41 +3826,61 @@ class SequentialCSMModel:
                 outer_mask = self.r_grid > r_outer
                 new_csm_density[outer_mask] = self.current_csm_density[outer_mask]
 
-                self._print(f"    Piecewise: [New {profile_type} | Smooth shell | Previous CSM]")
-                self._print(f"    Outer region properly steps down to previous material")
+                self._print(
+                    f"    Piecewise: [New {profile_type} | Smooth shell | Previous CSM]"
+                )
+                self._print(
+                    f"    Outer region properly steps down to previous material"
+                )
 
                 # Update current CSM
                 self.current_csm_density = new_csm_density
 
                 # Store results
-                step_result.update({
-                    'interaction_type': 'correct_piecewise_gaussian',
-                    'r_shell': r_sh,
-                    'shell_width': delta_r,
-                    'sigma': sigma,
-                    'mass_csm_swept': mass_csm_swept,
-                    'mass_new_swept': mass_new_swept,
-                    'total_shell_mass': total_shell_mass,
-                    'mass_csm_swept_msun': mass_csm_swept / solar_mass,
-                    'mass_new_swept_msun': mass_new_swept / solar_mass,
-                    'total_shell_mass_msun': total_shell_mass / solar_mass,
-                    'shell_enhancement': shell_enhancement.copy(),
-                    'csm_density': self.current_csm_density.copy(),
-                    'previous_csm_density': self.step_results[-1]['csm_density'].copy() if self.step_results else None
-                })
+                step_result.update(
+                    {
+                        "interaction_type": "correct_piecewise_gaussian",
+                        "r_shell": r_sh,
+                        "shell_width": delta_r,
+                        "sigma": sigma,
+                        "mass_csm_swept": mass_csm_swept,
+                        "mass_new_swept": mass_new_swept,
+                        "total_shell_mass": total_shell_mass,
+                        "mass_csm_swept_msun": mass_csm_swept / solar_mass,
+                        "mass_new_swept_msun": mass_new_swept / solar_mass,
+                        "total_shell_mass_msun": total_shell_mass / solar_mass,
+                        "shell_enhancement": shell_enhancement.copy(),
+                        "csm_density": self.current_csm_density.copy(),
+                        "previous_csm_density": (
+                            self.step_results[-1]["csm_density"].copy()
+                            if self.step_results
+                            else None
+                        ),
+                    }
+                )
 
             else:
                 # No shell interaction
-                self._print(f"  No shell interaction - new explosion dominates where denser")
+                self._print(
+                    f"  No shell interaction - new explosion dominates where denser"
+                )
 
-                new_csm_density = np.maximum(self.current_csm_density, explosion_density)
+                new_csm_density = np.maximum(
+                    self.current_csm_density, explosion_density
+                )
                 self.current_csm_density = new_csm_density
 
-                step_result.update({
-                    'interaction_type': 'no_shell',
-                    'csm_density': self.current_csm_density.copy(),
-                    'previous_csm_density': self.step_results[-1]['csm_density'].copy() if self.step_results else None
-                })
+                step_result.update(
+                    {
+                        "interaction_type": "no_shell",
+                        "csm_density": self.current_csm_density.copy(),
+                        "previous_csm_density": (
+                            self.step_results[-1]["csm_density"].copy()
+                            if self.step_results
+                            else None
+                        ),
+                    }
+                )
 
         self.step_results.append(step_result)
         return step_result
@@ -3113,31 +3901,35 @@ class SequentialCSMModel:
             raise ValueError("No eruptions added to model")
 
         # Calculate final mass conservation
-        final_csm_mass_cgs = np.trapz(self.current_csm_density * 4 * np.pi * self.r_grid ** 2, self.r_grid)
+        final_csm_mass_cgs = np.trapz(
+            self.current_csm_density * 4 * np.pi * self.r_grid**2, self.r_grid
+        )
         final_csm_mass_msun = final_csm_mass_cgs / solar_mass
-        total_input_mass_msun = sum(step['mass_msun'] for step in self.step_results)
+        total_input_mass_msun = sum(step["mass_msun"] for step in self.step_results)
 
         self._print(f"\nFinal Results:")
         self._print(f"  Total input mass: {total_input_mass_msun:.3f} M☉")
         self._print(f"  Final CSM mass: {final_csm_mass_msun:.3f} M☉")
-        self._print(f"  Mass conservation: {final_csm_mass_msun / total_input_mass_msun:.4f}")
+        self._print(
+            f"  Mass conservation: {final_csm_mass_msun / total_input_mass_msun:.4f}"
+        )
 
         # Count shells created
-        n_shells = sum(1 for step in self.step_results if 'r_shell' in step)
+        n_shells = sum(1 for step in self.step_results if "r_shell" in step)
         self._print(f"  Shells created: {n_shells}")
 
         # Package results
         self.final_result = {
-            'v_grid': self.v_grid,
-            'r_grid': self.r_grid,
-            'step_results': self.step_results,
-            'final_csm_density': self.current_csm_density,
-            'time_ref_days': self.time_ref_days,
-            'time_ref_seconds': self.time_ref_seconds,
-            'final_csm_mass_cgs': final_csm_mass_cgs,
-            'final_csm_mass_msun': final_csm_mass_msun,
-            'total_input_mass_msun': total_input_mass_msun,
-            'n_shells': n_shells
+            "v_grid": self.v_grid,
+            "r_grid": self.r_grid,
+            "step_results": self.step_results,
+            "final_csm_density": self.current_csm_density,
+            "time_ref_days": self.time_ref_days,
+            "time_ref_seconds": self.time_ref_seconds,
+            "final_csm_mass_cgs": final_csm_mass_cgs,
+            "final_csm_mass_msun": final_csm_mass_msun,
+            "total_input_mass_msun": total_input_mass_msun,
+            "n_shells": n_shells,
         }
 
         return self.final_result
@@ -3159,19 +3951,23 @@ class SequentialCSMModel:
         result : dict
             Complete sequential model results
         """
-        self._print("Sequential Multiple Eruption Shell Interaction Model (Extended Profile Support)")
+        self._print(
+            "Sequential Multiple Eruption Shell Interaction Model (Extended Profile Support)"
+        )
         self._print("Units: Mass in M☉, Energy in foe (10⁵¹ erg)")
         self._print("=" * 85)
 
         for eruption in eruption_sequence:
-            mass_msun = eruption['mass']
-            energy_foe = eruption['energy']
-            label = eruption.get('label', None)
-            profile_type = eruption.get('profile_type', 'exponential')
-            profile_params = eruption.get('profile_params', None)
-            shell_config = eruption.get('shell_config', None)
+            mass_msun = eruption["mass"]
+            energy_foe = eruption["energy"]
+            label = eruption.get("label", None)
+            profile_type = eruption.get("profile_type", "exponential")
+            profile_params = eruption.get("profile_params", None)
+            shell_config = eruption.get("shell_config", None)
 
-            self.add_eruption(mass_msun, energy_foe, label, profile_type, profile_params, shell_config)
+            self.add_eruption(
+                mass_msun, energy_foe, label, profile_type, profile_params, shell_config
+            )
 
         return self.finalize_model()
 
@@ -3220,64 +4016,103 @@ class SequentialCSMModel:
             col = i % n_cols
             ax = axes[row, col]
 
-            label = step_result['label']
-            profile_type = step_result['profile_type']
-            interaction_type = step_result['interaction_type']
+            label = step_result["label"]
+            profile_type = step_result["profile_type"]
+            interaction_type = step_result["interaction_type"]
 
             # Plot the explosion density for this step
-            profile_label = f'{label} ({profile_type})'
-            if profile_type == 'broken_powerlaw' and 'profile_params' in step_result:
-                params = step_result['profile_params']
-                profile_label += f' δ={params.get("delta", 0):.1f},n={params.get("n", 7):.1f}'
+            profile_label = f"{label} ({profile_type})"
+            if profile_type == "broken_powerlaw" and "profile_params" in step_result:
+                params = step_result["profile_params"]
+                profile_label += (
+                    f' δ={params.get("delta", 0):.1f},n={params.get("n", 7):.1f}'
+                )
 
-            ax.loglog(r_1e15, step_result['explosion_density'],
-                      color=colors[i], linestyle='--', linewidth=2, alpha=0.7,
-                      label=profile_label)
+            ax.loglog(
+                r_1e15,
+                step_result["explosion_density"],
+                color=colors[i],
+                linestyle="--",
+                linewidth=2,
+                alpha=0.7,
+                label=profile_label,
+            )
 
             # Plot previous CSM if it exists
-            if 'previous_csm_density' in step_result and step_result['previous_csm_density'] is not None:
-                ax.loglog(r_1e15, step_result['previous_csm_density'],
-                          color='gray', linestyle=':', linewidth=2, alpha=0.5,
-                          label='Previous CSM')
+            if (
+                "previous_csm_density" in step_result
+                and step_result["previous_csm_density"] is not None
+            ):
+                ax.loglog(
+                    r_1e15,
+                    step_result["previous_csm_density"],
+                    color="gray",
+                    linestyle=":",
+                    linewidth=2,
+                    alpha=0.5,
+                    label="Previous CSM",
+                )
 
             # Plot shell enhancement if it exists
-            if 'shell_enhancement' in step_result:
-                shell_enhancement = step_result['shell_enhancement']
+            if "shell_enhancement" in step_result:
+                shell_enhancement = step_result["shell_enhancement"]
                 shell_mask = shell_enhancement > shell_enhancement.max() * 0.01
                 if np.any(shell_mask):
-                    ax.loglog(r_1e15[shell_mask], shell_enhancement[shell_mask],
-                              color='green', linewidth=3, alpha=0.8,
-                              label='Shell enhancement')
+                    ax.loglog(
+                        r_1e15[shell_mask],
+                        shell_enhancement[shell_mask],
+                        color="green",
+                        linewidth=3,
+                        alpha=0.8,
+                        label="Shell enhancement",
+                    )
 
                     # Mark shell center and σ boundaries
-                    r_shell = step_result['r_shell'] / 1e15
-                    sigma = step_result['sigma'] / 1e15
+                    r_shell = step_result["r_shell"] / 1e15
+                    sigma = step_result["sigma"] / 1e15
 
-                    ax.axvline(r_shell, color='green', linestyle='-', alpha=0.8, linewidth=2)
-                    ax.axvline(r_shell - sigma, color='green', linestyle='--', alpha=0.5)
-                    ax.axvline(r_shell + sigma, color='green', linestyle='--', alpha=0.5)
+                    ax.axvline(
+                        r_shell, color="green", linestyle="-", alpha=0.8, linewidth=2
+                    )
+                    ax.axvline(
+                        r_shell - sigma, color="green", linestyle="--", alpha=0.5
+                    )
+                    ax.axvline(
+                        r_shell + sigma, color="green", linestyle="--", alpha=0.5
+                    )
 
             # Plot resulting CSM
-            ax.loglog(r_1e15, step_result['csm_density'],
-                      color='black', linewidth=3,
-                      label='Final CSM')
+            ax.loglog(
+                r_1e15,
+                step_result["csm_density"],
+                color="black",
+                linewidth=3,
+                label="Final CSM",
+            )
 
             # Formatting
-            ax.set_xlabel('Radius (10¹⁵ cm)')
-            ax.set_ylabel('Density (g/cm³)')
+            ax.set_xlabel("Radius (10¹⁵ cm)")
+            ax.set_ylabel("Density (g/cm³)")
             ax.set_title(
-                f'Step {step_result["step_number"]}: {label}\n({profile_type}, {interaction_type.replace("_", " ")})')
+                f'Step {step_result["step_number"]}: {label}\n({profile_type}, {interaction_type.replace("_", " ")})'
+            )
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
 
             # Add mass and profile information (now in convenient units)
             info_text = f'Mass: {step_result["calculated_mass_msun"]:.3f} M☉'
-            if 'total_shell_mass_msun' in step_result:
+            if "total_shell_mass_msun" in step_result:
                 info_text += f'\nShell: {step_result["total_shell_mass_msun"]:.4f} M☉'
                 info_text += f'\nσ: {step_result["sigma"] / 1e15:.2f}×10¹⁵cm'
 
-            ax.text(0.05, 0.05, info_text, transform=ax.transAxes,
-                    fontsize=8, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7))
+            ax.text(
+                0.05,
+                0.05,
+                info_text,
+                transform=ax.transAxes,
+                fontsize=8,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7),
+            )
 
         # Plot final comparison in remaining subplot
         if n_steps < n_rows * n_cols:
@@ -3285,27 +4120,39 @@ class SequentialCSMModel:
 
             # Plot all explosion profiles
             for i, step_result in enumerate(self.step_results):
-                profile_type = step_result['profile_type']
+                profile_type = step_result["profile_type"]
                 profile_label = f'{step_result["label"]} ({profile_type})'
 
-                ax_final.loglog(r_1e15, step_result['explosion_density'],
-                                color=colors[i], linestyle='--', alpha=0.4, linewidth=1,
-                                label=profile_label)
+                ax_final.loglog(
+                    r_1e15,
+                    step_result["explosion_density"],
+                    color=colors[i],
+                    linestyle="--",
+                    alpha=0.4,
+                    linewidth=1,
+                    label=profile_label,
+                )
 
             # Plot final CSM
-            ax_final.loglog(r_1e15, self.final_result['final_csm_density'],
-                            color='black', linewidth=4,
-                            label='Final CSM')
+            ax_final.loglog(
+                r_1e15,
+                self.final_result["final_csm_density"],
+                color="black",
+                linewidth=4,
+                label="Final CSM",
+            )
 
             # Mark all shell centers
             for step_result in self.step_results:
-                if 'r_shell' in step_result:
-                    r_shell = step_result['r_shell'] / 1e15
-                    ax_final.axvline(r_shell, color='red', linestyle=':', alpha=0.6)
+                if "r_shell" in step_result:
+                    r_shell = step_result["r_shell"] / 1e15
+                    ax_final.axvline(r_shell, color="red", linestyle=":", alpha=0.6)
 
-            ax_final.set_xlabel('Radius (10¹⁵ cm)')
-            ax_final.set_ylabel('Density (g/cm³)')
-            ax_final.set_title(f'Final CSM Profile\n({self.final_result["n_shells"]} shells, mixed profiles)')
+            ax_final.set_xlabel("Radius (10¹⁵ cm)")
+            ax_final.set_ylabel("Density (g/cm³)")
+            ax_final.set_title(
+                f'Final CSM Profile\n({self.final_result["n_shells"]} shells, mixed profiles)'
+            )
             ax_final.legend(fontsize=8)
             ax_final.grid(True, alpha=0.3)
 
@@ -3323,10 +4170,13 @@ class SequentialCSMModel:
         if show_summary:
             print(f"\nPlot Summary:")
             print(f"Total eruptions processed: {n_steps}")
-            print(f"Profile types used: {[step['profile_type'] for step in self.step_results]}")
+            print(
+                f"Profile types used: {[step['profile_type'] for step in self.step_results]}"
+            )
             print(f"Gaussian shell interactions: {self.final_result['n_shells']}")
             print(
-                f"Mass conservation: {self.final_result['final_csm_mass_msun'] / self.final_result['total_input_mass_msun']:.4f}")
+                f"Mass conservation: {self.final_result['final_csm_mass_msun'] / self.final_result['total_input_mass_msun']:.4f}"
+            )
 
     def set_verbose(self, verbose):
         """
@@ -3365,107 +4215,320 @@ class SequentialCSMModel:
         """Get final CSM mass in solar masses."""
         if self.final_result is None:
             raise ValueError("Model not finalized. Call finalize_model() first.")
-        return self.final_result['final_csm_mass_msun']
+        return self.final_result["final_csm_mass_msun"]
 
     def get_total_input_mass_msun(self):
         """Get total input mass in solar masses."""
         if not self.step_results:
             raise ValueError("No eruptions added to model")
-        return sum(step['mass_msun'] for step in self.step_results)
+        return sum(step["mass_msun"] for step in self.step_results)
+
 
 # ---------------------------------------------------------------------------
 # Dispatch registry: maps model name string -> (_get_lc_* function, [param names])
 # param_names are extracted from kwargs in order by _call_csm.
 # ---------------------------------------------------------------------------
 _DISPATCH = {
-    'wind_exponential': (
+    "wind_exponential": (
         _get_lc_wind_exponential,
-        ['mdot', 'vwind', 'mexp', 'eexp', 'eff']),
-    'wind_bpl': (
+        ["mdot", "vwind", "mexp", "eexp", "eff"],
+    ),
+    "wind_bpl": (
         _get_lc_wind_bpl,
-        ['mdot', 'vwind', 'delta', 'nn', 'mexp', 'eexp', 'eff']),
-    'exponential_wind': (
+        ["mdot", "vwind", "delta", "nn", "mexp", "eexp", "eff"],
+    ),
+    "exponential_wind": (
         _get_lc_exponential_wind,
-        ['mexp', 'eexp', 'mdot', 'vwind', 'eff']),
-    'bpl_wind': (
+        ["mexp", "eexp", "mdot", "vwind", "eff"],
+    ),
+    "bpl_wind": (
         _get_lc_bpl_wind,
-        ['delta', 'nn', 'mexp', 'eexp', 'mdot', 'vwind', 'eff']),
-    'exponential_exponential': (
+        ["delta", "nn", "mexp", "eexp", "mdot", "vwind", "eff"],
+    ),
+    "exponential_exponential": (
         _get_lc_exponential_exponential,
-        ['mexp', 'eexp', 'mexp_out', 'eexp_out', 'interval', 'eff']),
-    'exponential_bpl': (
+        ["mexp", "eexp", "mexp_out", "eexp_out", "interval", "eff"],
+    ),
+    "exponential_bpl": (
         _get_lc_exponential_bpl,
-        ['mexp', 'eexp', 'delta_out', 'nn_out', 'mexp_out', 'eexp_out', 'interval', 'eff']),
-    'bpl_bpl': (
+        [
+            "mexp",
+            "eexp",
+            "delta_out",
+            "nn_out",
+            "mexp_out",
+            "eexp_out",
+            "interval",
+            "eff",
+        ],
+    ),
+    "bpl_bpl": (
         _get_lc_bpl_bpl,
-        ['delta', 'nn', 'mexp', 'eexp', 'delta_out', 'nn_out', 'mexp_out', 'eexp_out', 'interval', 'eff']),
-    'bpl_exponential': (
+        [
+            "delta",
+            "nn",
+            "mexp",
+            "eexp",
+            "delta_out",
+            "nn_out",
+            "mexp_out",
+            "eexp_out",
+            "interval",
+            "eff",
+        ],
+    ),
+    "bpl_exponential": (
         _get_lc_bpl_exponential,
-        ['delta', 'nn', 'mexp', 'eexp', 'mexp_out', 'eexp_out', 'interval', 'eff']),
-    'boxwind_exponential': (
+        ["delta", "nn", "mexp", "eexp", "mexp_out", "eexp_out", "interval", "eff"],
+    ),
+    "boxwind_exponential": (
         _get_lc_boxwind_exponential,
-        ['t1', 't2', 'mdot_0', 'mdot_1', 'mdot_2', 'vwind', 'mexp', 'eexp', 'eff']),
-    'boxwind_bpl': (
+        ["t1", "t2", "mdot_0", "mdot_1", "mdot_2", "vwind", "mexp", "eexp", "eff"],
+    ),
+    "boxwind_bpl": (
         _get_lc_boxwind_bpl,
-        ['t1', 't2', 'mdot_0', 'mdot_1', 'mdot_2', 'vwind', 'delta', 'nn', 'mexp', 'eexp', 'eff']),
-    'gausswind_exponential': (
+        [
+            "t1",
+            "t2",
+            "mdot_0",
+            "mdot_1",
+            "mdot_2",
+            "vwind",
+            "delta",
+            "nn",
+            "mexp",
+            "eexp",
+            "eff",
+        ],
+    ),
+    "gausswind_exponential": (
         _get_lc_gausswind_exponential,
-        ['t_peak', 't_width', 'mdot_baseline', 'mdot_peak', 'vwind', 'mexp', 'eexp', 'eff']),
-    'gausswind_bpl': (
+        [
+            "t_peak",
+            "t_width",
+            "mdot_baseline",
+            "mdot_peak",
+            "vwind",
+            "mexp",
+            "eexp",
+            "eff",
+        ],
+    ),
+    "gausswind_bpl": (
         _get_lc_gausswind_bpl,
-        ['t_peak', 't_width', 'mdot_baseline', 'mdot_peak', 'vwind', 'delta', 'nn', 'mexp', 'eexp', 'eff']),
-    'triple_powerlaw_wind_bpl': (
+        [
+            "t_peak",
+            "t_width",
+            "mdot_baseline",
+            "mdot_peak",
+            "vwind",
+            "delta",
+            "nn",
+            "mexp",
+            "eexp",
+            "eff",
+        ],
+    ),
+    "triple_powerlaw_wind_bpl": (
         _get_lc_triple_powerlaw_wind_bpl,
-        ['t_break1', 't_break2', 'mdot_0', 'alpha1', 'alpha2', 'alpha3', 'vwind', 'delta', 'nn', 'mexp', 'eexp', 'eff']),
-    'triple_powerlaw_wind_exponential': (
+        [
+            "t_break1",
+            "t_break2",
+            "mdot_0",
+            "alpha1",
+            "alpha2",
+            "alpha3",
+            "vwind",
+            "delta",
+            "nn",
+            "mexp",
+            "eexp",
+            "eff",
+        ],
+    ),
+    "triple_powerlaw_wind_exponential": (
         _get_lc_triple_powerlaw_wind_exponential,
-        ['t_break1', 't_break2', 'mdot_0', 'alpha1', 'alpha2', 'alpha3', 'vwind', 'mexp', 'eexp', 'eff']),
-    'exponential_triple_powerlaw_wind': (
+        [
+            "t_break1",
+            "t_break2",
+            "mdot_0",
+            "alpha1",
+            "alpha2",
+            "alpha3",
+            "vwind",
+            "mexp",
+            "eexp",
+            "eff",
+        ],
+    ),
+    "exponential_triple_powerlaw_wind": (
         _get_lc_exponential_triple_powerlaw_wind,
-        ['mexp', 'eexp', 't_break1', 't_break2', 'mdot_0', 'alpha1', 'alpha2', 'alpha3', 'vwind', 'eff']),
-    'bpl_triple_powerlaw_wind': (
+        [
+            "mexp",
+            "eexp",
+            "t_break1",
+            "t_break2",
+            "mdot_0",
+            "alpha1",
+            "alpha2",
+            "alpha3",
+            "vwind",
+            "eff",
+        ],
+    ),
+    "bpl_triple_powerlaw_wind": (
         _get_lc_bpl_triple_powerlaw_wind,
-        ['delta', 'nn', 'mexp', 'eexp', 't_break1', 't_break2', 'mdot_0', 'alpha1', 'alpha2', 'alpha3', 'vwind', 'eff']),
-    'smooth_triple_powerlaw_wind_bpl': (
+        [
+            "delta",
+            "nn",
+            "mexp",
+            "eexp",
+            "t_break1",
+            "t_break2",
+            "mdot_0",
+            "alpha1",
+            "alpha2",
+            "alpha3",
+            "vwind",
+            "eff",
+        ],
+    ),
+    "smooth_triple_powerlaw_wind_bpl": (
         _get_lc_smooth_triple_powerlaw_wind_bpl,
-        ['t_break1', 't_break2', 'mdot_0', 'alpha1', 'alpha2', 'alpha3', 'vwind', 'delta', 'nn', 'mexp', 'eexp', 'eff']),
-    'smooth_triple_powerlaw_wind_exponential': (
+        [
+            "t_break1",
+            "t_break2",
+            "mdot_0",
+            "alpha1",
+            "alpha2",
+            "alpha3",
+            "vwind",
+            "delta",
+            "nn",
+            "mexp",
+            "eexp",
+            "eff",
+        ],
+    ),
+    "smooth_triple_powerlaw_wind_exponential": (
         _get_lc_smooth_triple_powerlaw_wind_exponential,
-        ['t_break1', 't_break2', 'mdot_0', 'alpha1', 'alpha2', 'alpha3', 'vwind', 'mexp', 'eexp', 'eff']),
-    'generic_csm_exponential': (
+        [
+            "t_break1",
+            "t_break2",
+            "mdot_0",
+            "alpha1",
+            "alpha2",
+            "alpha3",
+            "vwind",
+            "mexp",
+            "eexp",
+            "eff",
+        ],
+    ),
+    "generic_csm_exponential": (
         _get_lc_generic_csm_exponential,
-        ['base_density', 'base_index',
-         'shell1_radius', 'shell1_width', 'shell1_density',
-         'shell2_radius', 'shell2_width', 'shell2_density',
-         'shell3_radius', 'shell3_width', 'shell3_density',
-         'interval_sn', 'mej_sn', 'esn', 'eff']),
-    'generic_csm_bpl': (
+        [
+            "base_density",
+            "base_index",
+            "shell1_radius",
+            "shell1_width",
+            "shell1_density",
+            "shell2_radius",
+            "shell2_width",
+            "shell2_density",
+            "shell3_radius",
+            "shell3_width",
+            "shell3_density",
+            "interval_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_csm_bpl": (
         _get_lc_generic_csm_bpl,
-        ['base_density', 'base_index',
-         'shell1_radius', 'shell1_width', 'shell1_density',
-         'shell2_radius', 'shell2_width', 'shell2_density',
-         'shell3_radius', 'shell3_width', 'shell3_density',
-         'interval_sn', 'delta_sn', 'nn_sn', 'mej_sn', 'esn', 'eff']),
-    'generic_4shell_csm_bpl': (
+        [
+            "base_density",
+            "base_index",
+            "shell1_radius",
+            "shell1_width",
+            "shell1_density",
+            "shell2_radius",
+            "shell2_width",
+            "shell2_density",
+            "shell3_radius",
+            "shell3_width",
+            "shell3_density",
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_4shell_csm_bpl": (
         _get_lc_generic_4shell_csm_bpl,
-        ['base_density', 'base_index',
-         'shell1_radius', 'shell1_width', 'shell1_density',
-         'shell2_radius', 'shell2_width', 'shell2_density',
-         'shell3_radius', 'shell3_width', 'shell3_density',
-         'shell4_radius', 'shell4_width', 'shell4_density',
-         'interval_sn', 'delta_sn', 'nn_sn', 'mej_sn', 'esn', 'eff']),
-    'generic_8shell_csm_bpl': (
+        [
+            "base_density",
+            "base_index",
+            "shell1_radius",
+            "shell1_width",
+            "shell1_density",
+            "shell2_radius",
+            "shell2_width",
+            "shell2_density",
+            "shell3_radius",
+            "shell3_width",
+            "shell3_density",
+            "shell4_radius",
+            "shell4_width",
+            "shell4_density",
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_8shell_csm_bpl": (
         _get_lc_generic_8shell_csm_bpl,
-        ['base_density', 'base_index',
-         'shell1_radius', 'shell1_width', 'shell1_density',
-         'shell2_radius', 'shell2_width', 'shell2_density',
-         'shell3_radius', 'shell3_width', 'shell3_density',
-         'shell4_radius', 'shell4_width', 'shell4_density',
-         'shell5_radius', 'shell5_width', 'shell5_density',
-         'shell6_radius', 'shell6_width', 'shell6_density',
-         'shell7_radius', 'shell7_width', 'shell7_density',
-         'shell8_radius', 'shell8_width', 'shell8_density',
-         'interval_sn', 'delta_sn', 'nn_sn', 'mej_sn', 'esn', 'eff']),
+        [
+            "base_density",
+            "base_index",
+            "shell1_radius",
+            "shell1_width",
+            "shell1_density",
+            "shell2_radius",
+            "shell2_width",
+            "shell2_density",
+            "shell3_radius",
+            "shell3_width",
+            "shell3_density",
+            "shell4_radius",
+            "shell4_width",
+            "shell4_density",
+            "shell5_radius",
+            "shell5_width",
+            "shell5_density",
+            "shell6_radius",
+            "shell6_width",
+            "shell6_density",
+            "shell7_radius",
+            "shell7_width",
+            "shell7_density",
+            "shell8_radius",
+            "shell8_width",
+            "shell8_density",
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
 }
 
 
