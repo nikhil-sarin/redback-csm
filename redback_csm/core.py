@@ -4546,3 +4546,330 @@ def _call_csm(csm_model, **kwargs):
     func, param_names = _DISPATCH[csm_model]
     args = [kwargs.pop(p) for p in param_names]
     return func(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Radio / synchrotron support
+# ---------------------------------------------------------------------------
+
+# Unit conversion shorthands used by density evaluators
+_MSUN_CGS = solar_mass                                   # g
+_MSUN_PER_YR_CGS = solar_mass / (365.25 * 24 * 3600)    # g/s per (Msun/yr)
+_FOE = 1e51                                              # erg
+_MP  = 1.6726e-24                                        # g
+
+
+def _rho_wind_at_r(r_array, **kwargs):
+    """CSM density for a simple steady wind: rho = mdot / (4 pi r^2 vwind)."""
+    mdot_cgs  = kwargs['mdot'] * _MSUN_PER_YR_CGS        # g/s
+    vwind_cgs = kwargs['vwind'] * 1e5                     # cm/s
+    return mdot_cgs / (4.0 * np.pi * r_array ** 2 * vwind_cgs)
+
+
+def _rho_exponential_at_r(r_array, lc, **kwargs):
+    """
+    CSM density for homologously expanding exponential ejecta evaluated at radii r_array.
+
+    rho(r, t) = M / (8 pi (v0 t)^3) * exp(-r / (v0 t))
+    v0 = sqrt(E / (6 M))
+    """
+    mexp_cgs = kwargs['mexp'] * _MSUN_CGS
+    eexp_cgs = kwargs['eexp'] * _FOE
+    v0 = np.sqrt(eexp_cgs / (6.0 * mexp_cgs))
+    t_s = lc.time                                        # seconds (Fortran grid)
+    # Broadcast: r_array and t_s have the same length (one value per time step)
+    return mexp_cgs / (8.0 * np.pi * (v0 * t_s) ** 3) * np.exp(-r_array / (v0 * t_s))
+
+
+def _rho_bpl_at_r(r_array, lc, **kwargs):
+    """
+    CSM density for BPL ejecta at radii r_array.
+
+    The BPL ejecta profile in velocity space is a broken power law with
+    indices delta (inner) and nn (outer), normalised to (mexp, eexp).
+    We evaluate the density at homologous coordinates v = r/t.
+    """
+    mexp_cgs = kwargs['mexp'] * _MSUN_CGS
+    eexp_cgs = kwargs['eexp'] * _FOE
+    delta = kwargs['delta']
+    nn    = kwargs['nn']
+    t_s   = lc.time                                      # seconds
+
+    # Transition velocity between inner (delta) and outer (nn) regions.
+    # From normalisation: v_t^{nn-delta} = (nn - 3) / (3 - delta) * (2 E (nn-5)) / (M (nn-3))
+    # Simplification for nn > 5, delta < 3:
+    A = (nn - 3.0) * (3.0 - delta)
+    B = 2.0 * eexp_cgs * (nn - 5.0) / (mexp_cgs * (nn - 3.0))
+    if nn <= 5.0 or delta >= 3.0 or A <= 0.0 or B <= 0.0:
+        # Fallback: approximate as exponential with same M and E
+        return _rho_exponential_at_r(r_array, lc, **kwargs)
+    v_t = (A / (3.0 - delta) * B) ** (1.0 / (nn - delta))
+
+    # Normalisation constant rho_0 from mass integral
+    # rho(v, t) = rho_0 / t^3 * { (v/v_t)^{-delta} for v < v_t; (v/v_t)^{-nn} for v >= v_t }
+    # Mass normalisation: 4 pi int rho(v) v^2 dv = mexp
+    # => rho_0 = mexp / (4 pi v_t^3) * [(3-delta)^{-1} + (nn-3)^{-1}]^{-1}
+    rho_0 = mexp_cgs / (4.0 * np.pi * v_t ** 3 * (1.0 / (3.0 - delta) + 1.0 / (nn - 3.0)))
+
+    v_r = r_array / t_s                                  # homologous velocity at shock
+    rho = np.where(
+        v_r < v_t,
+        rho_0 / t_s ** 3 * (v_r / v_t) ** (-delta),
+        rho_0 / t_s ** 3 * (v_r / v_t) ** (-nn),
+    )
+    return rho
+
+
+def _rho_variable_wind_at_r(model_name, r_array, lc, **kwargs):
+    """
+    CSM density for variable-wind models (gausswind, boxwind, triple_powerlaw_wind).
+
+    The density profile is rho = mdot(t_wind) / (4 pi r^2 vwind), but mdot is
+    a function of the wind emission time t_wind = r / vwind (i.e. the time the
+    wind parcel was emitted in order to be at radius r today).
+
+    We reconstruct the same mdot(t) array that was passed to the Fortran, then
+    evaluate it at t_wind = r / vwind for each shock radius.
+    """
+    vwind_cgs = kwargs['vwind'] * 1e5    # cm/s
+    n_points  = kwargs.get('n_points', 50)
+
+    if model_name in ('gausswind_exponential', 'gausswind_bpl'):
+        t_peak        = kwargs['t_peak']
+        t_width       = kwargs['t_width']
+        mdot_baseline = kwargs['mdot_baseline']
+        mdot_peak     = kwargs['mdot_peak']
+        t_start = t_peak - 4 * t_width
+        t_end   = t_peak + 4 * t_width
+        tgrid_yr = np.linspace(t_start, t_end, n_points)
+        gauss = np.exp(-0.5 * ((tgrid_yr - t_peak) / t_width) ** 2)
+        mdot_yr = mdot_baseline + (mdot_peak - mdot_baseline) * gauss
+
+    elif model_name in ('boxwind_exponential', 'boxwind_bpl'):
+        t1    = kwargs['t1']
+        t2    = kwargs['t2']
+        mdot_0 = kwargs['mdot_0']
+        mdot_1 = kwargs['mdot_1']
+        mdot_2 = kwargs['mdot_2']
+        tgrid_yr = np.array([t1, t1, t2, t2])
+        mdot_yr  = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
+
+    elif model_name in ('triple_powerlaw_wind_bpl', 'triple_powerlaw_wind_exponential',
+                        'exponential_triple_powerlaw_wind', 'bpl_triple_powerlaw_wind',
+                        'smooth_triple_powerlaw_wind_bpl', 'smooth_triple_powerlaw_wind_exponential'):
+        t_break1 = kwargs['t_break1']
+        t_break2 = kwargs['t_break2']
+        mdot_0   = kwargs['mdot_0']
+        alpha1   = kwargs['alpha1']
+        alpha2   = kwargs['alpha2']
+        alpha3   = kwargs['alpha3']
+        t_start = 0.1
+        t_end   = max(t_break2 * 2, 10)
+        tgrid_yr = np.logspace(np.log10(t_start), np.log10(t_end), n_points)
+        mdot_yr = np.zeros_like(tgrid_yr)
+        m1 = tgrid_yr < t_break1
+        mdot_yr[m1] = mdot_0 * (tgrid_yr[m1] / 1.0) ** alpha1
+        mdot_b1 = mdot_0 * (t_break1 / 1.0) ** alpha1
+        m2 = (tgrid_yr >= t_break1) & (tgrid_yr < t_break2)
+        mdot_yr[m2] = mdot_b1 * (tgrid_yr[m2] / t_break1) ** alpha2
+        mdot_b2 = mdot_b1 * (t_break2 / t_break1) ** alpha2
+        m3 = tgrid_yr >= t_break2
+        mdot_yr[m3] = mdot_b2 * (tgrid_yr[m3] / t_break2) ** alpha3
+    else:
+        raise ValueError(f"_rho_variable_wind_at_r: unknown model '{model_name}'")
+
+    # Convert to CGS
+    tgrid_s  = tgrid_yr * 365.25 * 24 * 3600   # yr → s
+    mdot_cgs = mdot_yr * _MSUN_PER_YR_CGS      # Msun/yr → g/s
+
+    # Build an interpolator: mdot as a function of time (seconds)
+    from scipy.interpolate import interp1d as _interp1d_loc
+    mdot_interp = _interp1d_loc(
+        tgrid_s, mdot_cgs,
+        bounds_error=False,
+        fill_value=(mdot_cgs[0], mdot_cgs[-1]),
+    )
+
+    # Wind emission time for a parcel at radius r: t_wind = r / vwind
+    t_wind = r_array / vwind_cgs              # seconds
+    mdot_at_r = mdot_interp(t_wind)
+    rho = mdot_at_r / (4.0 * np.pi * r_array ** 2 * vwind_cgs)
+    return rho
+
+
+def _rho_generic_at_r(r_array, **kwargs):
+    """
+    CSM density for generic-shell models, evaluated by re-building the same
+    density grid that was passed to the Fortran and interpolating at r_array.
+    """
+    r_inner = kwargs.get('r_inner', 1e10)
+    r_outer = kwargs.get('r_outer', 1e20)
+    base_density = kwargs['base_density']
+    base_index   = kwargs['base_index']
+
+    # Collect shell parameters (up to 8 shells)
+    shell_radii     = []
+    shell_widths    = []
+    shell_densities = []
+    for i in range(1, 9):
+        d = kwargs.get(f'shell{i}_density', 0.0)
+        if d > 0:
+            shell_radii.append(kwargs[f'shell{i}_radius'])
+            shell_widths.append(kwargs[f'shell{i}_width'])
+            shell_densities.append(d)
+
+    n_shells = len(shell_radii)
+    r_grid, _, csm_density = create_generic_csm_density(
+        r_inner=r_inner,
+        r_outer=r_outer,
+        n_points=1000,
+        base_density=base_density,
+        base_index=base_index,
+        n_shells=n_shells,
+        shell_radii=shell_radii if n_shells > 0 else None,
+        shell_widths=shell_widths if n_shells > 0 else None,
+        shell_densities=shell_densities if n_shells > 0 else None,
+        shell_profiles='gaussian',
+        time_ref_days=kwargs.get('interval_sn', 10 * YEAR_DAYS),
+    )
+
+    from scipy.interpolate import interp1d as _interp1d_loc
+    rho_interp = _interp1d_loc(
+        r_grid, csm_density,
+        bounds_error=False,
+        fill_value=(csm_density[0], csm_density[-1]),
+    )
+    return rho_interp(r_array)
+
+
+# Maps each model name to the type of upstream density estimator it needs.
+# 'wind'            — simple steady wind: rho = mdot/(4 pi r^2 vwind)
+# 'exponential'     — exponential ejecta outer CSM
+# 'bpl'             — broken power-law ejecta outer CSM
+# 'variable_wind'   — time-varying wind (gausswind / boxwind / triple_powerlaw)
+# 'generic'         — generic shell model (density grid interpolation)
+_CSM_DENSITY_TYPE = {
+    'wind_exponential':                    'wind',
+    'wind_bpl':                            'wind',
+    'exponential_wind':                    'wind',
+    'bpl_wind':                            'wind',
+    'gausswind_exponential':               'variable_wind',
+    'gausswind_bpl':                       'variable_wind',
+    'boxwind_exponential':                 'variable_wind',
+    'boxwind_bpl':                         'variable_wind',
+    'triple_powerlaw_wind_bpl':            'variable_wind',
+    'triple_powerlaw_wind_exponential':    'variable_wind',
+    'exponential_triple_powerlaw_wind':    'variable_wind',
+    'bpl_triple_powerlaw_wind':            'variable_wind',
+    'smooth_triple_powerlaw_wind_bpl':     'variable_wind',
+    'smooth_triple_powerlaw_wind_exponential': 'variable_wind',
+    'exponential_exponential':             'exponential',
+    'exponential_bpl':                     'exponential',
+    'bpl_bpl':                             'bpl',
+    'bpl_exponential':                     'bpl',
+    'generic_csm_exponential':             'generic',
+    'generic_csm_bpl':                     'generic',
+    'generic_4shell_csm_bpl':              'generic',
+    'generic_8shell_csm_bpl':              'generic',
+}
+
+
+def _get_rho_csm_at_shock(csm_model, lc, **kwargs):
+    """
+    Return the upstream CSM mass density (g/cm^3) at the shock position for each
+    time step in lc, using the analytic or reconstructed density profile that
+    corresponds to csm_model.
+
+    Parameters
+    ----------
+    csm_model : str
+        CSM model name (key in _DISPATCH).
+    lc : namedtuple
+        Output from _call_csm — must have lc.rph (shock radius in cm) and lc.time (s).
+    **kwargs
+        All model parameters (same dict that was passed to _call_csm, before popping).
+
+    Returns
+    -------
+    rho : ndarray, shape (len(lc.time),)
+        Upstream density in g/cm^3.
+    """
+    r_sh = lc.rph                     # shock radius, cm, same grid as lc.time
+
+    density_type = _CSM_DENSITY_TYPE.get(csm_model)
+    if density_type is None:
+        raise ValueError(
+            f"_get_rho_csm_at_shock: unknown model '{csm_model}'. "
+            f"Expected one of: {sorted(_CSM_DENSITY_TYPE.keys())}"
+        )
+
+    if density_type == 'wind':
+        return _rho_wind_at_r(r_sh, **kwargs)
+
+    elif density_type == 'exponential':
+        return _rho_exponential_at_r(r_sh, lc, **kwargs)
+
+    elif density_type == 'bpl':
+        return _rho_bpl_at_r(r_sh, lc, **kwargs)
+
+    elif density_type == 'variable_wind':
+        return _rho_variable_wind_at_r(csm_model, r_sh, lc, **kwargs)
+
+    elif density_type == 'generic':
+        return _rho_generic_at_r(r_sh, **kwargs)
+
+    else:
+        raise ValueError(f"Unhandled density type '{density_type}'")
+
+
+def _call_csm_radio(csm_model, redshift, logepsb, logepse, p, frequency,
+                    luminosity_distance_cm, **kwargs):
+    """
+    Run the CSM Fortran model, compute the upstream density at the shock, and
+    return synchrotron flux density in mJy on the Fortran time grid.
+
+    Parameters
+    ----------
+    csm_model : str
+    redshift : float
+    logepsb : float
+        log10(epsilon_B)
+    logepse : float
+        log10(epsilon_e)
+    p : float
+        Electron power-law index
+    frequency : float or array
+        Observer-frame frequency in Hz
+    luminosity_distance_cm : float
+    **kwargs
+        All physical parameters for the CSM model (passed through to _call_csm
+        and also used by the density evaluators).
+
+    Returns
+    -------
+    time_days : ndarray
+        Time in observer-frame days (Fortran grid).
+    flux_mJy : ndarray
+        Radio flux density in mJy.
+    """
+    from redback_csm.radio import synchrotron_flux_density
+
+    # Keep a copy of kwargs for density evaluation (before _call_csm pops them)
+    kwargs_density = dict(kwargs)
+
+    lc = _call_csm(csm_model, **kwargs)
+
+    rho = _get_rho_csm_at_shock(csm_model, lc, **kwargs_density)
+
+    flux_mJy = synchrotron_flux_density(
+        time_days=lc.time / DAY,
+        vshell_cgs=lc.vshell,
+        rho_csm_cgs=rho,
+        redshift=redshift,
+        logepsb=logepsb,
+        logepse=logepse,
+        p=p,
+        frequency=frequency,
+        luminosity_distance_cm=luminosity_distance_cm,
+    )
+    return lc.time / DAY, flux_mJy
