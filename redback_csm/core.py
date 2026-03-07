@@ -4570,15 +4570,19 @@ def _rho_exponential_at_r(r_array, lc, **kwargs):
     """
     CSM density for homologously expanding exponential ejecta evaluated at radii r_array.
 
-    rho(r, t) = M / (8 pi (v0 t)^3) * exp(-r / (v0 t))
+    rho(r, t) = M / (8 pi (v0 t_csm)^3) * exp(-r / (v0 t_csm))
     v0 = sqrt(E / (6 M))
+
+    t_csm = lc.time + interval * DAY  — the CSM eruption started 'interval' days
+    before the SN, so by the time t has elapsed since the SN, the ejecta age is
+    t + interval.
     """
     mexp_cgs = kwargs['mexp'] * _MSUN_CGS
     eexp_cgs = kwargs['eexp'] * _FOE
     v0 = np.sqrt(eexp_cgs / (6.0 * mexp_cgs))
-    t_s = lc.time                                        # seconds (Fortran grid)
-    # Broadcast: r_array and t_s have the same length (one value per time step)
-    return mexp_cgs / (8.0 * np.pi * (v0 * t_s) ** 3) * np.exp(-r_array / (v0 * t_s))
+    interval_s = kwargs.get('interval', 0.0) * DAY       # seconds
+    t_csm = lc.time + interval_s                         # total CSM age in seconds
+    return mexp_cgs / (8.0 * np.pi * (v0 * t_csm) ** 3) * np.exp(-r_array / (v0 * t_csm))
 
 
 def _rho_bpl_at_r(r_array, lc, **kwargs):
@@ -4593,29 +4597,25 @@ def _rho_bpl_at_r(r_array, lc, **kwargs):
     eexp_cgs = kwargs['eexp'] * _FOE
     delta = kwargs['delta']
     nn    = kwargs['nn']
-    t_s   = lc.time                                      # seconds
+    interval_s = kwargs.get('interval', 0.0) * DAY       # seconds
+    t_csm = lc.time + interval_s                         # total CSM age in seconds
 
-    # Transition velocity between inner (delta) and outer (nn) regions.
-    # From normalisation: v_t^{nn-delta} = (nn - 3) / (3 - delta) * (2 E (nn-5)) / (M (nn-3))
-    # Simplification for nn > 5, delta < 3:
-    A = (nn - 3.0) * (3.0 - delta)
-    B = 2.0 * eexp_cgs * (nn - 5.0) / (mexp_cgs * (nn - 3.0))
-    if nn <= 5.0 or delta >= 3.0 or A <= 0.0 or B <= 0.0:
-        # Fallback: approximate as exponential with same M and E
+    # Transition (break) velocity — same formula as the Fortran get_bpl_coeffs:
+    #   v_t = sqrt( 2*(5-delta)*(nn-5)*E / ((3-delta)*(nn-3)*M) )
+    num = 2.0 * (5.0 - delta) * (nn - 5.0) * eexp_cgs
+    den = (3.0 - delta) * (nn - 3.0) * mexp_cgs
+    if nn <= 5.0 or delta >= 3.0 or num <= 0.0 or den <= 0.0:
         return _rho_exponential_at_r(r_array, lc, **kwargs)
-    v_t = (A / (3.0 - delta) * B) ** (1.0 / (nn - delta))
+    v_t = np.sqrt(num / den)
 
-    # Normalisation constant rho_0 from mass integral
-    # rho(v, t) = rho_0 / t^3 * { (v/v_t)^{-delta} for v < v_t; (v/v_t)^{-nn} for v >= v_t }
-    # Mass normalisation: 4 pi int rho(v) v^2 dv = mexp
-    # => rho_0 = mexp / (4 pi v_t^3) * [(3-delta)^{-1} + (nn-3)^{-1}]^{-1}
+    # Normalisation: rho_0 from mass integral 4pi int rho v^2 dv = mexp
     rho_0 = mexp_cgs / (4.0 * np.pi * v_t ** 3 * (1.0 / (3.0 - delta) + 1.0 / (nn - 3.0)))
 
-    v_r = r_array / t_s                                  # homologous velocity at shock
+    v_r = r_array / t_csm                               # homologous velocity at shock
     rho = np.where(
         v_r < v_t,
-        rho_0 / t_s ** 3 * (v_r / v_t) ** (-delta),
-        rho_0 / t_s ** 3 * (v_r / v_t) ** (-nn),
+        rho_0 / t_csm ** 3 * (v_r / v_t) ** (-delta),
+        rho_0 / t_csm ** 3 * (v_r / v_t) ** (-nn),
     )
     return rho
 
