@@ -203,7 +203,7 @@ flux_mJy = wind_bpl_radio(
 priors = redback.priors.get_priors('wind_bpl_bolometric')
 
 # Fit to data using redback
-transient = redback.transient.Supernova.from_open_transient_catalog_data('SN2010jl')
+transient = redback.transient.Supernova.from_open_access_catalogue('SN2010jl')
 result = redback.fit_model(
     transient=transient,
     model='wind_bpl',
