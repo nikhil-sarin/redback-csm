@@ -118,7 +118,7 @@ ax2.set_xlim(1, 1000)
 fig.tight_layout()
 fig.savefig("variable_wind_overview.png", dpi=150)
 print("Saved: variable_wind_overview.png")
-# plt.show()
+plt.show()
 
 # ---------------------------------------------------------------------------
 # Figure 2: Synthetic data from Gaussian wind
@@ -150,7 +150,7 @@ ax.set_xlim(0.8, 600)
 fig.tight_layout()
 fig.savefig("variable_wind_synthetic_data.png", dpi=150)
 print("Saved: variable_wind_synthetic_data.png")
-# plt.show()
+plt.show()
 
 # ---------------------------------------------------------------------------
 # Bayesian inference with redback
@@ -175,6 +175,7 @@ priors["t_width"] = bilby.core.prior.LogUniform(5,  100,  name="t_width",
     latex_label=r"$\sigma_t$ (yr)")
 priors["vwind"]   = bilby.core.prior.LogUniform(10, 300,  name="vwind",
     latex_label=r"$v_{\rm wind}$ (km s$^{-1}$)")
+priors["mdot_baseline"].maximum = 1e-4
 priors['kappa'] = KAPPA
 
 # The model function redback will call: gausswind_exponential_bolometric(time, **params)
@@ -193,7 +194,7 @@ result = redback.fit_model(
     model=model_for_redback,
     prior=priors,
     sampler="pymultinest", # change to different sampler if you prefer
-    nlive=1000,
+    nlive=500,
     plot=False,
     injection_parameters=TRUE_PARAMS,
     clean=True
@@ -210,7 +211,8 @@ print("Saved: variable_wind_corner.png")
 # ---------------------------------------------------------------------------
 # Figure 4: Redback lightcurve fit
 # ---------------------------------------------------------------------------
-result.plot_lightcurve(filename="variable_wind_lightcurve.png", model=model_for_redback, show=False)
+result.plot_lightcurve(filename="variable_wind_lightcurve.png", model=model_for_redback,
+                       show=False)
 print("Saved: variable_wind_corner.png")
 
 # ---------------------------------------------------------------------------
@@ -221,33 +223,25 @@ fig, (ax_lc, ax_mdot) = plt.subplots(2, 1, figsize=(7, 10))
 # ---- Bottom panel: mass-loss history reconstruction ----
 # The Gaussian CSM profile is fully determined by t_peak, t_width,
 # mdot_baseline, mdot_peak — reconstruct the same grid used by the Fortran code.
-t_common = np.linspace(0, 200, 300)   # years before explosion
+t_common = np.linspace(0.1, 200, 1000)   # years before explosion
 
 all_mdot = []
 for _, row in result.posterior.iterrows():
-    t_start = row.t_peak - 4 * row.t_width
-    t_end   = row.t_peak + 4 * row.t_width
-    tgrid   = np.linspace(t_start, t_end, 50)
-    gauss_i = np.exp(-0.5 * ((tgrid - row.t_peak) / row.t_width) ** 2)
+    gauss_i = np.exp(-0.5 * ((t_common - row.t_peak) / row.t_width) ** 2)
     mdot_i  = row.mdot_baseline + (row.mdot_peak - row.mdot_baseline) * gauss_i
-    all_mdot.append(np.interp(t_common, tgrid, mdot_i,
-                              left=row.mdot_baseline, right=row.mdot_baseline))
+    all_mdot.append(mdot_i)
 
 all_mdot = np.array(all_mdot)
 lo95, med, hi95 = np.percentile(all_mdot, [2.5, 50, 97.5], axis=0)
 lo68, hi68      = np.percentile(all_mdot, [16, 84], axis=0)
 
-ax_mdot.fill_between(t_common, lo95, hi95, color="steelblue", alpha=0.25, label="95% CI")
-ax_mdot.fill_between(t_common, lo68, hi68, color="steelblue", alpha=0.50, label="68% CI")
-ax_mdot.plot(t_common, med, color="steelblue", lw=1.5, label="Posterior median")
+ax_mdot.fill_between(t_common, lo95, hi95, color="steelblue", alpha=0.25, label=r"$95\%$ CI")
 
-# True mass-loss history
-t_true = np.linspace(TRUE_PARAMS["t_peak"] - 4 * TRUE_PARAMS["t_width"],
-                     TRUE_PARAMS["t_peak"] + 4 * TRUE_PARAMS["t_width"], 200)
-gauss_true = np.exp(-0.5 * ((t_true - TRUE_PARAMS["t_peak"]) / TRUE_PARAMS["t_width"]) ** 2)
+# True mass-loss history (evaluated on the same t_common grid)
+gauss_true = np.exp(-0.5 * ((t_common - TRUE_PARAMS["t_peak"]) / TRUE_PARAMS["t_width"]) ** 2)
 mdot_true  = (TRUE_PARAMS["mdot_baseline"]
               + (TRUE_PARAMS["mdot_peak"] - TRUE_PARAMS["mdot_baseline"]) * gauss_true)
-ax_mdot.plot(t_true, mdot_true, "r-", lw=2.5, label="True model", zorder=5)
+ax_mdot.plot(t_common, mdot_true, "r-", lw=2.5, label="True model", zorder=5)
 
 ax_mdot.set_xlabel("Time before explosion (yr)", fontsize=12)
 ax_mdot.set_ylabel(r"$\dot{M}$ ($M_\odot$ yr$^{-1}$)", fontsize=12)
@@ -258,12 +252,16 @@ ax_mdot.legend(fontsize=9)
 ax_mdot.grid(True, alpha=0.3)
 
 # ---- Top panel: lightcurve fit ----
-t_plot = np.geomspace(0.8, 600, 200)
+t_plot = np.geomspace(1, 600, 200)
 
 # Posterior predictive envelope
 all_lc = []
+# Build fixed-parameter overrides for any prior entries that are not free (e.g. kappa)
+fixed_params = {k: v for k, v in priors.items() if not hasattr(v, 'sample')}
 for _, row in result.posterior.iterrows():
-    lc_i = gausswind_exponential_bolometric(t_plot, **{k: row[k] for k in priors})
+    kwargs = {k: row[k] for k in result.posterior.columns if k in priors}
+    kwargs.update(fixed_params)
+    lc_i = gausswind_exponential_bolometric(t_plot, **kwargs)
     all_lc.append(lc_i)
 
 all_lc = np.array(all_lc)
@@ -271,8 +269,6 @@ lc_lo95, lc_med, lc_hi95 = np.percentile(all_lc, [2.5, 50, 97.5], axis=0)
 lc_lo68, lc_hi68          = np.percentile(all_lc, [16, 84], axis=0)
 
 ax_lc.fill_between(t_plot, lc_lo95, lc_hi95, color="steelblue", alpha=0.25)
-ax_lc.fill_between(t_plot, lc_lo68, lc_hi68, color="steelblue", alpha=0.50)
-ax_lc.plot(t_plot, lc_med, color="steelblue", lw=1.5, label="Posterior median")
 ax_lc.plot(t_plot, gausswind_exponential_bolometric(t_plot, **TRUE_PARAMS),
            "r-", lw=2.5, label="True model")
 ax_lc.errorbar(t_obs, lbol_obs, yerr=lbol_err, fmt="o", color="k",
@@ -291,19 +287,3 @@ fig.tight_layout()
 fig.savefig("variable_wind_posterior_predictions.png", dpi=150)
 print("Saved: variable_wind_posterior_predictions.png")
 plt.show()
-
-# ---------------------------------------------------------------------------
-# Parameter recovery summary
-# ---------------------------------------------------------------------------
-print("\nParameter recovery (median ± 1σ vs true):")
-print(f"{'Parameter':<16} {'True':>10}  {'Median':>10}  {'−1σ':>8}  {'+1σ':>8}")
-print("-" * 60)
-for p in priors:
-    if p not in result.posterior.columns:
-        continue
-    samples = result.posterior[p].values
-    med  = np.median(samples)
-    lo   = med - np.percentile(samples, 16)
-    hi   = np.percentile(samples, 84) - med
-    true = TRUE_PARAMS.get(p, float("nan"))
-    print(f"{p:<16} {true:>10.3g}  {med:>10.3g}  {lo:>8.3g}  {hi:>8.3g}")
