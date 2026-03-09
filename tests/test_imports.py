@@ -139,6 +139,33 @@ def test_bolometric_model_callable():
         pytest.skip("Fortran extension not compiled")
 
 
+def test_prior_latex_labels_render():
+    """All latex_labels in every prior file must render without error in matplotlib."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from redback_csm.prior_provider import PRIOR_DIR
+    import os
+    from bilby.core.prior import PriorDict
+
+    prior_files = sorted(f for f in os.listdir(PRIOR_DIR) if f.endswith(".prior"))
+    assert prior_files, "No prior files found"
+
+    fig, ax = plt.subplots()
+    failures = []
+    for fname in prior_files:
+        priors = PriorDict()
+        priors.from_file(os.path.join(PRIOR_DIR, fname))
+        for param, prior in priors.items():
+            try:
+                ax.set_xlabel(prior.latex_label)
+                fig.canvas.draw()
+            except Exception as e:
+                failures.append(f"{fname}::{param} — {prior.latex_label!r} → {e}")
+    plt.close(fig)
+    assert not failures, "Latex label rendering failures:\n" + "\n".join(failures)
+
+
 def test_dispatch_registry():
     """_DISPATCH should contain all 22 expected model keys."""
     from redback_csm.core import _DISPATCH

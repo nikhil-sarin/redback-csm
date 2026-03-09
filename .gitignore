@@ -6,3 +6,4 @@ dist/
 build/
 fortran/*.f90
 .DS_Store
+scripts/
