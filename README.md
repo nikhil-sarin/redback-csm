@@ -206,6 +206,7 @@ priors = redback.priors.get_priors('wind_bpl_bolometric')
 transient = redback.transient.Supernova.from_open_access_catalogue('SN2010jl')
 result = redback.fit_model(
     transient=transient,
+    prior=priors,
     model='wind_bpl',
     sampler='dynesty',
     nlive=500,
