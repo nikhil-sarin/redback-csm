@@ -16,7 +16,5 @@ shell3_radius = LogUniform(minimum=1e13, maximum=1e17, name='shell3_radius', lat
 shell3_width = LogUniform(minimum=1e12, maximum=1e16, name='shell3_width', latex_label='$w_3~({\\mathrm{cm}})$')
 shell3_density = LogUniform(minimum=1e-20, maximum=1e-12, name='shell3_density', latex_label='$\\rho_3$')
 f_nickel = LogUniform(minimum=1e-3, maximum=1, name='f_nickel', latex_label='$f_{\\mathrm{Ni}}$')
-mej = LogUniform(minimum=0.1, maximum=30, name='mej', latex_label='$M_{\\mathrm{ej}}~(M_\\odot)$')
 kappa = Uniform(minimum=0.05, maximum=2, name='kappa', latex_label='$\\kappa~({\\mathrm{cm}}^2/{\\mathrm{g}})$')
 kappa_gamma = LogUniform(minimum=1e-4, maximum=1e4, name='kappa_gamma', latex_label='$\\kappa_\\gamma$')
-vej = LogUniform(minimum=1e3, maximum=3e4, name='vej', latex_label='$v_{\\mathrm{ej}}~({\\mathrm{km/s}})$')

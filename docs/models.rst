@@ -105,6 +105,17 @@ poorly constrained.
     Power-law base + up to 8 Gaussian shells + BPL supernova. High-dimensional
     (30+ parameters); consider using the 3-shell or 4-shell variant first.
 
+Syntax
+-------------------------------------
+
+All models share similar syntax consistent with redback. The order of the naming is chronological: the first component
+describes the CSM (e.g. ``wind``, ``exponential``, ``bpl``, ``generic``), and the second component describes the
+supernova ejecta profile (``exponential`` or ``bpl``).
+For example, ``wind_exponential`` means a steady wind CSM with an exponential SN ejecta profile.
+
+Note some models are the other way round, e.g. ``exponential_wind`` means an exponential eruption
+followed by a steady wind, and ``bpl_exponential`` means a BPL eruption followed by an exponential eruption.
+
 Exploration: Arbitrary Density Profile
 ---------------------------------------
 

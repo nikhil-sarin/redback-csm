@@ -11,7 +11,7 @@ Each CSM physical scenario is exposed as four functions:
 All functions are registered in redback.model_library.all_models_dict automatically
 when the package is installed, via the redback.model.modules entry point.
 
-Citation: Sarin & Hirai (in prep); Sarin et al. 2024 (redback, JOSS)
+Citation: Sarin & Hirai (in prep); Sarin et al. 2024 (redback)
 """
 
 import numpy as _np
@@ -172,8 +172,16 @@ def _csm_rph_temp_impl(time, csm_model, **kwargs):
 
 def _csm_nickel_bolometric_impl(time, csm_model, **kwargs):
     """Combined CSM shock + radioactive nickel bolometric luminosity."""
+    # mej and vej for Arnett diffusion are derived from the CSM explosion parameters.
+    # vej = sqrt(2 * eexp[foe] * 1e51 / (mexp[M_sun] * M_sun_g)) in km/s
+    import redback.constants as _rc
+    arnett_kwargs = dict(kwargs)
+    mexp = kwargs["mexp"]
+    eexp = kwargs["eexp"]
+    arnett_kwargs["mej"] = mexp
+    arnett_kwargs["vej"] = _np.sqrt(2.0 * eexp * 1e51 / (mexp * _rc.solar_mass)) / 1e5
     return _csm_bolometric_impl(time, csm_model, **kwargs) + _arnett_bolometric(
-        time=time, **kwargs
+        time=time, **arnett_kwargs
     )
 
 
@@ -318,7 +326,7 @@ def wind_exponential(time, redshift, mdot, vwind, mexp, eexp, eff, **kwargs):
 
 @_citation_wrapper(CITATION)
 def wind_exponential_nickel_bolometric(
-    time, mdot, vwind, mexp, eexp, eff, f_nickel, mej, **kwargs
+    time, mdot, vwind, mexp, eexp, eff, f_nickel, **kwargs
 ):
     """Bolometric light curve for wind exponential CSM interaction with radioactive nickel/cobalt decay.
 
@@ -338,14 +346,13 @@ def wind_exponential_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
 
 @_citation_wrapper(CITATION)
 def wind_exponential_nickel(
-    time, redshift, mdot, vwind, mexp, eexp, eff, f_nickel, mej, **kwargs
+    time, redshift, mdot, vwind, mexp, eexp, eff, f_nickel, **kwargs
 ):
     """Multiband light curve for wind exponential CSM interaction with radioactive nickel/cobalt decay.
 
@@ -369,7 +376,6 @@ def wind_exponential_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -435,7 +441,7 @@ def wind_bpl(time, redshift, mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
 
 @_citation_wrapper(CITATION)
 def wind_bpl_nickel_bolometric(
-    time, mdot, vwind, delta, nn, mexp, eexp, eff, f_nickel, mej, **kwargs
+    time, mdot, vwind, delta, nn, mexp, eexp, eff, f_nickel, **kwargs
 ):
     """Bolometric light curve for wind bpl CSM interaction with radioactive nickel/cobalt decay.
 
@@ -457,14 +463,13 @@ def wind_bpl_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
 
 @_citation_wrapper(CITATION)
 def wind_bpl_nickel(
-    time, redshift, mdot, vwind, delta, nn, mexp, eexp, eff, f_nickel, mej, **kwargs
+    time, redshift, mdot, vwind, delta, nn, mexp, eexp, eff, f_nickel, **kwargs
 ):
     """Multiband light curve for wind bpl CSM interaction with radioactive nickel/cobalt decay.
 
@@ -490,7 +495,6 @@ def wind_bpl_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -547,7 +551,7 @@ def exponential_wind(time, redshift, mexp, eexp, mdot, vwind, eff, **kwargs):
 
 @_citation_wrapper(CITATION)
 def exponential_wind_nickel_bolometric(
-    time, mexp, eexp, mdot, vwind, eff, f_nickel, mej, **kwargs
+    time, mexp, eexp, mdot, vwind, eff, f_nickel, **kwargs
 ):
     """Bolometric light curve for exponential wind CSM interaction with radioactive nickel/cobalt decay.
 
@@ -567,14 +571,13 @@ def exponential_wind_nickel_bolometric(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
 
 @_citation_wrapper(CITATION)
 def exponential_wind_nickel(
-    time, redshift, mexp, eexp, mdot, vwind, eff, f_nickel, mej, **kwargs
+    time, redshift, mexp, eexp, mdot, vwind, eff, f_nickel, **kwargs
 ):
     """Multiband light curve for exponential wind CSM interaction with radioactive nickel/cobalt decay.
 
@@ -598,7 +601,6 @@ def exponential_wind_nickel(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -664,7 +666,7 @@ def bpl_wind(time, redshift, delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
 
 @_citation_wrapper(CITATION)
 def bpl_wind_nickel_bolometric(
-    time, delta, nn, mexp, eexp, mdot, vwind, eff, f_nickel, mej, **kwargs
+    time, delta, nn, mexp, eexp, mdot, vwind, eff, f_nickel, **kwargs
 ):
     """Bolometric light curve for bpl wind CSM interaction with radioactive nickel/cobalt decay.
 
@@ -686,14 +688,13 @@ def bpl_wind_nickel_bolometric(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
 
 @_citation_wrapper(CITATION)
 def bpl_wind_nickel(
-    time, redshift, delta, nn, mexp, eexp, mdot, vwind, eff, f_nickel, mej, **kwargs
+    time, redshift, delta, nn, mexp, eexp, mdot, vwind, eff, f_nickel, **kwargs
 ):
     """Multiband light curve for bpl wind CSM interaction with radioactive nickel/cobalt decay.
 
@@ -719,7 +720,6 @@ def bpl_wind_nickel(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -790,7 +790,7 @@ def exponential_exponential(
 
 @_citation_wrapper(CITATION)
 def exponential_exponential_nickel_bolometric(
-    time, mexp, eexp, mexp_out, eexp_out, interval, eff, f_nickel, mej, **kwargs
+    time, mexp, eexp, mexp_out, eexp_out, interval, eff, f_nickel, **kwargs
 ):
     """Bolometric light curve for exponential exponential CSM interaction with radioactive nickel/cobalt decay.
 
@@ -811,7 +811,6 @@ def exponential_exponential_nickel_bolometric(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -853,7 +852,6 @@ def exponential_exponential_nickel(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -972,7 +970,6 @@ def exponential_bpl_nickel_bolometric(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -1018,7 +1015,6 @@ def exponential_bpl_nickel(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -1155,7 +1151,6 @@ def bpl_bpl_nickel_bolometric(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -1205,7 +1200,6 @@ def bpl_bpl_nickel(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -1311,7 +1305,6 @@ def bpl_exponential_nickel_bolometric(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -1357,7 +1350,6 @@ def bpl_exponential_nickel(
         interval=interval,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -1469,7 +1461,6 @@ def boxwind_exponential_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -1517,7 +1508,6 @@ def boxwind_exponential_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -1651,7 +1641,6 @@ def boxwind_bpl_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -1703,7 +1692,6 @@ def boxwind_bpl_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -1822,7 +1810,6 @@ def gausswind_exponential_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -1868,7 +1855,6 @@ def gausswind_exponential_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -2008,7 +1994,6 @@ def gausswind_bpl_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -2058,7 +2043,6 @@ def gausswind_bpl_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -2210,7 +2194,6 @@ def triple_powerlaw_wind_bpl_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -2264,7 +2247,6 @@ def triple_powerlaw_wind_bpl_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -2407,7 +2389,6 @@ def triple_powerlaw_wind_exponential_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -2457,7 +2438,6 @@ def triple_powerlaw_wind_exponential_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -2602,7 +2582,6 @@ def exponential_triple_powerlaw_wind_nickel_bolometric(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -2652,7 +2631,6 @@ def exponential_triple_powerlaw_wind_nickel(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -2807,7 +2785,6 @@ def bpl_triple_powerlaw_wind_nickel_bolometric(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -2861,7 +2838,6 @@ def bpl_triple_powerlaw_wind_nickel(
         vwind=vwind,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -3016,7 +2992,6 @@ def smooth_triple_powerlaw_wind_bpl_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -3070,7 +3045,6 @@ def smooth_triple_powerlaw_wind_bpl_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -3215,7 +3189,6 @@ def smooth_triple_powerlaw_wind_exponential_nickel_bolometric(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -3265,7 +3238,6 @@ def smooth_triple_powerlaw_wind_exponential_nickel(
         eexp=eexp,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -3438,7 +3410,6 @@ def generic_csm_exponential_nickel_bolometric(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -3498,7 +3469,6 @@ def generic_csm_exponential_nickel(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -3680,7 +3650,6 @@ def generic_csm_bpl_nickel_bolometric(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -3744,7 +3713,6 @@ def generic_csm_bpl_nickel(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -3944,7 +3912,6 @@ def generic_4shell_csm_bpl_nickel_bolometric(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -4014,7 +3981,6 @@ def generic_4shell_csm_bpl_nickel(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
@@ -4287,7 +4253,6 @@ def generic_8shell_csm_bpl_nickel_bolometric(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
 
@@ -4381,7 +4346,6 @@ def generic_8shell_csm_bpl_nickel(
         esn=esn,
         eff=eff,
         f_nickel=f_nickel,
-        mej=mej,
         **kwargs
     )
     if kwargs.get("output_format") == "flux_density":
