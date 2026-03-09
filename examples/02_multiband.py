@@ -60,35 +60,27 @@ bands = ["sdssg", "sdssr", "sdssi"]
 colors = ["steelblue", "darkorange", "firebrick"]
 labels = ["g", "r", "i"]
 
-# Build a frequency array for each band (one constant freq per time point)
-# redback resolves band names internally when output_format='magnitude'
-try:
+# Call once per band — redback expects a single band name per call
+for band, color, label in zip(bands, colors, labels):
     mag = wind_bpl(
         time=time,
         redshift=redshift,
         mdot=1e-3, vwind=100.0,
         delta=0.5, nn=12.0, mexp=5.0, eexp=1.0, eff=0.5,
         temperature_floor=3000.0,
-        bands=bands,
+        bands=band,
         output_format="magnitude",
     )
-    # mag shape: (n_bands, n_time)  or (n_time,) if single band
-    if mag.ndim == 1:
-        mag = mag[np.newaxis, :]
-    for i, (band, color, label) in enumerate(zip(bands, colors, labels)):
-        good = np.isfinite(mag[i]) & (mag[i] < 40)
-        ax.plot(time[good], mag[i][good], color=color, label=label)
-    ax.invert_yaxis()
-    ax.set_xlabel("Time (observer-frame days)", fontsize=12)
-    ax.set_ylabel("AB magnitude", fontsize=12)
-    ax.set_title(r"$gri$ magnitudes, wind BPL ($\dot{M}=10^{-3}$, $z=0.02$)", fontsize=11)
-    ax.legend(fontsize=9)
-    ax.set_xscale("log")
-    ax.set_xlim(1, 500)
-except Exception as exc:
-    ax.text(0.5, 0.5, f"Band magnitudes unavailable:\n{exc}",
-            ha="center", va="center", transform=ax.transAxes, fontsize=9)
-    ax.set_title("Band magnitudes (requires sncosmo bands)", fontsize=11)
+    good = np.isfinite(mag) & (mag < 40)
+    ax.plot(time[good], mag[good], color=color, label=label)
+
+ax.invert_yaxis()
+ax.set_xlabel("Time (observer-frame days)", fontsize=12)
+ax.set_ylabel("AB magnitude", fontsize=12)
+ax.set_title(r"$gri$ magnitudes, wind BPL ($\dot{M}=10^{-3}$, $z=0.02$)", fontsize=11)
+ax.legend(fontsize=9)
+ax.set_xscale("log")
+ax.set_xlim(1, 500)
 
 fig.tight_layout()
 fig.savefig("examples/multiband_lightcurves.png", dpi=150)

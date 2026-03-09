@@ -9,14 +9,6 @@ Demonstrates:
       * Two eruptions (two bumps at different times)
   - Effect of microphysical parameters epsilon_B and p
 
-Note on model choice for "bumpy" radio lightcurves:
-  The gausswind_bpl model creates a genuine density enhancement at
-  r = v_wind * t_peak (wind material piling up from an eruption).
-  When the forward shock sweeps through this overdense shell it
-  produces a distinct peak in the radio lightcurve.
-  Models like exponential_bpl describe smooth ejecta-ejecta collisions
-  (no spatial density bump), so they give featureless radio curves.
-
 Run:
     python examples/04_radio.py
 """
@@ -111,12 +103,6 @@ ax.plot(time, flux_wind,   "k",          ls="--", lw=1.2, label="Steady wind (ba
 ax.plot(time, flux_1erupt, "darkorange",           label="Single eruption (5 yr ago)")
 ax.plot(time, flux_early,  "steelblue",  ls=":",  label="Two eruptions (5 and 30 yr ago)")
 ax.plot(time, flux_late,   "steelblue",  ls=":",  alpha=0.4)
-
-# Mark approximate shell-crossing times
-for t_cross, label in [(25, "shell 1"), (300, "shell 2")]:
-    ax.axvline(t_cross, color="gray", lw=0.8, ls="--", alpha=0.6)
-ax.text(28, ax.get_ylim()[0] if ax.get_ylim()[0] > 0 else 1e-5,
-        "shell\ncrossing", fontsize=7, color="gray", va="bottom")
 
 ax.set_xscale("log")
 ax.set_yscale("log")
