@@ -195,7 +195,7 @@ def _multiband_csm_flux_density(time, redshift, csm_model, csm_kwargs, dl):
     sed_1 = _sed.Blackbody(
         temperature=temp, r_photosphere=rph, frequency=frequency, luminosity_distance=dl
     )
-    return sed_1.flux_density.to(_uu.mJy).value / (1 + redshift)
+    return sed_1.flux_density.to(_uu.mJy).value * (1 + redshift)
 
 
 def _multiband_nickel_flux_density(time, redshift, csm_model, csm_kwargs, dl):
@@ -212,7 +212,7 @@ def _multiband_nickel_flux_density(time, redshift, csm_model, csm_kwargs, dl):
         frequency=frequency,
         luminosity_distance=dl,
     )
-    return sed_1.flux_density.to(_uu.mJy).value / (1 + redshift)
+    return sed_1.flux_density.to(_uu.mJy).value * (1 + redshift)
 
 
 def _multiband_csm(time, redshift, csm_model, csm_kwargs, dl):
