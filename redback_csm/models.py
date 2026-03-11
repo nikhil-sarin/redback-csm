@@ -826,7 +826,6 @@ def exponential_exponential_nickel(
     interval,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for exponential exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -946,7 +945,6 @@ def exponential_bpl_nickel_bolometric(
     interval,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for exponential bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -987,7 +985,6 @@ def exponential_bpl_nickel(
     interval,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for exponential bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -1125,7 +1122,6 @@ def bpl_bpl_nickel_bolometric(
     interval,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for bpl bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -1170,7 +1166,6 @@ def bpl_bpl_nickel(
     interval,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for bpl bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -1281,7 +1276,6 @@ def bpl_exponential_nickel_bolometric(
     interval,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for bpl exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -1322,7 +1316,6 @@ def bpl_exponential_nickel(
     interval,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for bpl exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -1436,7 +1429,6 @@ def boxwind_exponential_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for boxwind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -1479,7 +1471,6 @@ def boxwind_exponential_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for boxwind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -1614,7 +1605,6 @@ def boxwind_bpl_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for boxwind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -1661,7 +1651,6 @@ def boxwind_bpl_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for boxwind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -1786,7 +1775,6 @@ def gausswind_exponential_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for gausswind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -1827,7 +1815,6 @@ def gausswind_exponential_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for gausswind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -1968,7 +1955,6 @@ def gausswind_bpl_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for gausswind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -2013,7 +1999,6 @@ def gausswind_bpl_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for gausswind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -2166,7 +2151,6 @@ def triple_powerlaw_wind_bpl_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for triple powerlaw wind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -2215,7 +2199,6 @@ def triple_powerlaw_wind_bpl_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for triple powerlaw wind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -2363,7 +2346,6 @@ def triple_powerlaw_wind_exponential_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for triple powerlaw wind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -2408,7 +2390,6 @@ def triple_powerlaw_wind_exponential_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for triple powerlaw wind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -2556,7 +2537,6 @@ def exponential_triple_powerlaw_wind_nickel_bolometric(
     vwind,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for exponential triple powerlaw wind CSM interaction with radioactive nickel/cobalt decay.
@@ -2601,7 +2581,6 @@ def exponential_triple_powerlaw_wind_nickel(
     vwind,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for exponential triple powerlaw wind CSM interaction with radioactive nickel/cobalt decay.
@@ -2757,7 +2736,6 @@ def bpl_triple_powerlaw_wind_nickel_bolometric(
     vwind,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for bpl triple powerlaw wind CSM interaction with radioactive nickel/cobalt decay.
@@ -2806,7 +2784,6 @@ def bpl_triple_powerlaw_wind_nickel(
     vwind,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for bpl triple powerlaw wind CSM interaction with radioactive nickel/cobalt decay.
@@ -2964,7 +2941,6 @@ def smooth_triple_powerlaw_wind_bpl_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for smooth triple powerlaw wind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -3013,7 +2989,6 @@ def smooth_triple_powerlaw_wind_bpl_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for smooth triple powerlaw wind bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -3163,7 +3138,6 @@ def smooth_triple_powerlaw_wind_exponential_nickel_bolometric(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for smooth triple powerlaw wind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -3208,7 +3182,6 @@ def smooth_triple_powerlaw_wind_exponential_nickel(
     eexp,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for smooth triple powerlaw wind exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -3379,7 +3352,6 @@ def generic_csm_exponential_nickel_bolometric(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for generic csm exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -3434,7 +3406,6 @@ def generic_csm_exponential_nickel(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for generic csm exponential CSM interaction with radioactive nickel/cobalt decay.
@@ -3617,7 +3588,6 @@ def generic_csm_bpl_nickel_bolometric(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for generic csm bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -3676,7 +3646,6 @@ def generic_csm_bpl_nickel(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for generic csm bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -3876,7 +3845,6 @@ def generic_4shell_csm_bpl_nickel_bolometric(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for generic 4shell csm bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -3941,7 +3909,6 @@ def generic_4shell_csm_bpl_nickel(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for generic 4shell csm bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -4205,7 +4172,6 @@ def generic_8shell_csm_bpl_nickel_bolometric(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Bolometric light curve for generic 8shell csm bpl CSM interaction with radioactive nickel/cobalt decay.
@@ -4294,7 +4260,6 @@ def generic_8shell_csm_bpl_nickel(
     esn,
     eff,
     f_nickel,
-    mej,
     **kwargs
 ):
     """Multiband light curve for generic 8shell csm bpl CSM interaction with radioactive nickel/cobalt decay.
