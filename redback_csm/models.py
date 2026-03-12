@@ -173,11 +173,13 @@ def _csm_rph_temp_impl(time, csm_model, **kwargs):
 def _csm_nickel_bolometric_impl(time, csm_model, **kwargs):
     """Combined CSM shock + radioactive nickel bolometric luminosity."""
     # mej and vej for Arnett diffusion are derived from the CSM explosion parameters.
-    # vej = sqrt(2 * eexp[foe] * 1e51 / (mexp[M_sun] * M_sun_g)) in km/s
+    # Supports two naming conventions:
+    #   wind models:        mexp / eexp
+    #   generic CSM models: mej_sn / esn
     import redback.constants as _rc
     arnett_kwargs = dict(kwargs)
-    mexp = kwargs["mexp"]
-    eexp = kwargs["eexp"]
+    mexp = kwargs.get("mexp", kwargs.get("mej_sn"))
+    eexp = kwargs.get("eexp", kwargs.get("esn"))
     arnett_kwargs["mej"] = mexp
     arnett_kwargs["vej"] = _np.sqrt(2.0 * eexp * 1e51 / (mexp * _rc.solar_mass)) / 1e5
     return _csm_bolometric_impl(time, csm_model, **kwargs) + _arnett_bolometric(

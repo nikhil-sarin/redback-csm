@@ -1,7 +1,7 @@
 # redback-csm
 
 Fortran-based circumstellar matter (CSM) interaction models for the
-[redback](https://github.com/nikhil-sarin/redback) transient inference package.
+[redback](https://github.com/nikhil-sarin/redback) transient modelling and inference package.
 
 Once installed, all CSM models are automatically available in redback's model
 library and can be used for Bayesian inference in the same way as built-in models.
@@ -130,7 +130,7 @@ fig.savefig('my_lightcurve.png')
 
 ### Requirements
 
-- Python >= 3.10
+- Python >= 3.11
 - `gfortran` (for Fortran compilation)
 - `redback >= 1.15.0`
 
