@@ -996,6 +996,7 @@ def _get_lc_boxwind_bpl(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     kappa = kwargs.get("kappa", None)
+    efficiency_mode = kwargs.get("efficiency_mode", None)
 
     mdot = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
@@ -1004,6 +1005,9 @@ def _get_lc_boxwind_bpl(
     vwind = vwind * 1e5  # Convert km/s to cm/s
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
+
+    if efficiency_mode is not None:
+        _get_csm().lc_mod.set_efficiency_mode(int(efficiency_mode))
 
     if kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_bpl(
@@ -4568,7 +4572,10 @@ def _call_csm(csm_model, **kwargs):
             f"Available models: {sorted(_DISPATCH.keys())}"
         )
     paper_mode = bool(kwargs.pop("paper_mode", False))
+    efficiency_mode = kwargs.pop("efficiency_mode", None)
     _get_csm().lc_mod.set_model_mode(1 if paper_mode else 0)
+    if efficiency_mode is not None:
+        _get_csm().lc_mod.set_efficiency_mode(int(efficiency_mode))
     func, param_names = _DISPATCH[csm_model]
     args = [kwargs.pop(p) for p in param_names]
     return func(*args, **kwargs)

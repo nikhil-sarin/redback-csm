@@ -33,6 +33,9 @@ python module csm ! in
             subroutine set_model_mode(mode) ! in :csm:csm.f90:lc_mod
                 integer intent(in) :: mode
             end subroutine set_model_mode
+            subroutine set_efficiency_mode(mode) ! in :csm:csm.f90:lc_mod
+                integer intent(in) :: mode
+            end subroutine set_efficiency_mode
             subroutine lightcurve_wind_exponential(mdotinput,tinput,vwindinput,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
                 use get_vals
                 real(kind=8), target,dimension(:),intent(in) :: mdotinput

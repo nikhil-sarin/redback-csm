@@ -8,15 +8,9 @@ module diffusion_runtime
  integer, parameter, public :: ndiff = 48
 
  real(8), public :: kappa_global = 0d0, eff_global = 1d0, erad = 0d0
- integer, public :: diffusion_type = 0
+ integer, public :: diffusion_type = 0, shock_efficiency_mode = 0
  logical, public :: diffusion_enabled = .false.
  logical, public :: paper_mode = .false.
-
- ! Swept-up shell reservoir for post-CSM-exit diffusion
- real(8), public :: e_shell = 0d0, m_swept = 0d0
- real(8), public :: r_shell_exit = 0d0, v_shell_exit = 0d0, t_shell_exit = 0d0
- real(8), public :: v_csm_global = 0d0
- logical, public :: shell_exit_set = .false.
 
  real(8), allocatable, dimension(:), public :: tauprep_global
  real(8), allocatable, dimension(:) :: wind_tau_cache
@@ -35,8 +29,14 @@ contains
  subroutine set_runtime_mode(mode)
   integer, intent(in) :: mode
 
-  paper_mode = (mode /= 0)
+ paper_mode = (mode /= 0)
  end subroutine set_runtime_mode
+
+ subroutine set_shock_efficiency_mode(mode)
+  integer, intent(in) :: mode
+
+  shock_efficiency_mode = mode
+ end subroutine set_shock_efficiency_mode
 
  subroutine configure_runtime(csm_type, eff, kappa)
   integer, intent(in) :: csm_type
@@ -67,9 +67,6 @@ contains
     allocate(wind_tau_cache(size(op(2)%t_grid)))
    end select
   end if
-
-  ! Store CSM velocity for shell expansion timescale
-  v_csm_global = op(2)%vwind
 
   call reset_diffusion_state
  end subroutine configure_runtime
@@ -275,13 +272,6 @@ contains
   diff_e = 0d0
   diffusion_state_ready = .false.
   erad = 0d0
-  e_shell = 0d0
-  m_swept = 0d0
-  r_shell_exit = 0d0
-  v_shell_exit = 0d0
-  t_shell_exit = 0d0
-  v_csm_global = 0d0
-  shell_exit_set = .false.
  end subroutine reset_diffusion_state
 
  subroutine build_diffusion_grid(r_shell, r_ph, r_grid)
@@ -450,57 +440,5 @@ contains
   diffusion_state_ready = .true.
   erad = diffusion_total_energy()
  end subroutine solve_diffusion_step
-
- subroutine update_shell_reservoir(dt, r_shell, u_shell, tau_unshocked, &
-                                   lum_heat, lum_shell_leak, in_escape)
-  real(8), intent(in) :: dt, r_shell, u_shell, tau_unshocked, lum_heat
-  logical, intent(in) :: in_escape
-  real(8), intent(out) :: lum_shell_leak
-  real(8) :: tau_sh, t_diff_sh, r_now, t_exp
-
-  if (.not. diffusion_enabled .or. m_swept <= 0d0 .or. r_shell <= 0d0) then
-   lum_shell_leak = 0d0
-   return
-  end if
-
-  ! Record shell state at CSM exit (first time escape triggers)
-  if (in_escape .and. .not. shell_exit_set) then
-   r_shell_exit = r_shell
-   v_shell_exit = u_shell
-   t_shell_exit = 0d0
-   shell_exit_set = .true.
-  end if
-
-  ! Shell diffusion timescale: t_diff = tau * R / c
-  ! tau from swept mass, R is current shell radius
-  tau_sh = kappa_global * m_swept / (4d0 * pi * r_shell**2)
-  t_diff_sh = max(tau_sh * r_shell / clight, dt)
-
-  if (shell_exit_set) then
-   ! Post-exit: expanding shell with adiabatic + diffusion losses
-   ! Shell radius grows: R(t) = R_exit + v_exit * dt_since_exit
-   t_shell_exit = t_shell_exit + dt
-   r_now = r_shell_exit + v_shell_exit * t_shell_exit
-
-   ! Update t_diff for expanding shell: tau decreases as r^-2
-   tau_sh = kappa_global * m_swept / (4d0 * pi * r_now**2)
-   t_diff_sh = max(tau_sh * r_now / clight, dt)
-
-   ! Adiabatic expansion timescale for radiation: t_exp = R / (4*v)
-   ! Factor 4 for radiation-dominated PdV work (P = E/3V)
-   t_exp = r_now / (4d0 * v_shell_exit)
-
-   ! Implicit Euler with both diffusion and adiabatic losses, no heating
-   e_shell = e_shell / (1d0 + dt / t_diff_sh + dt / t_exp)
-  else
-   ! During interaction: fill with residual, leak via diffusion
-   ! (keeps reservoir in quasi-steady state for smooth transition)
-   e_shell = (e_shell + dt * lum_heat) / (1d0 + dt / t_diff_sh)
-  end if
-
-  ! Luminosity leaking from shell
-  lum_shell_leak = e_shell / t_diff_sh
-
- end subroutine update_shell_reservoir
 
 end module diffusion_runtime
