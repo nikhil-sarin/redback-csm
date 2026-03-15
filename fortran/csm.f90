@@ -742,7 +742,7 @@ end subroutine lightcurve_wind_bpl
 	      r_ph_now = photosphere_radius(r,t,tau_now)
 	      call solve_diffusion_step(dt,r,r_ph_now,t,lum_store,ld_array(n))
 	      op(2)%scan_i = scan_save
-	      r_store = r_ph_now
+	      r_store = r
 	     else
 	      ld_array(n) = 0d0
 	      r_store = r
@@ -772,13 +772,7 @@ end subroutine lightcurve_wind_bpl
   varray(1:n) = v_array(1:n)
   marray(1:n) = m_array(1:n)
   ldiff(1:n) = ld_array(1:n)
-  if(paper_mode)then
-   temparray(1:n) = temperature(larray(1:n),rarray(1:n))
-  elseif(diffusion_enabled)then
-   temparray(1:n) = temperature(ldiff(1:n),rarray(1:n))
-  else
-   temparray(1:n) = temperature(larray(1:n),rarray(1:n))
-  end if
+  temparray(1:n) = temperature(larray(1:n),rarray(1:n))
 
 !!$  do n = 1, size(tarray)
 !!$   print*,tarray(n),larray(n)
