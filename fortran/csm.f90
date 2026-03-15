@@ -2,9 +2,11 @@ module lc_mod
 
  use constants,only:pi,year,clight,intpol,temperature
  use diffusion_runtime, only: paper_mode, diffusion_enabled, eff_global, erad, &
+                              e_shell, m_swept, v_csm_global, &
                               configure_runtime, reset_diffusion_state, &
                               shell_optical_depth, photosphere_radius, &
-                              solve_diffusion_step, set_runtime_mode
+                              solve_diffusion_step, set_runtime_mode, &
+                              update_shell_reservoir
 
  implicit none
 
@@ -675,6 +677,8 @@ end subroutine lightcurve_wind_bpl
 	  integer:: n, scan_save
 	  real(8):: dt,ku,kr,km
 	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, tau_now, r_ph_now, r_store, eta_fs
+	  real(8):: lum_shell_leak, lum_residual
+	  logical:: in_escape
 
   t_array = -1d0
   ld_array = 0d0
@@ -717,6 +721,9 @@ end subroutine lightcurve_wind_bpl
     m = m + dt*km
    else
     m = max(m + dt*km,1d-30)
+    ! Accumulate CSM mass swept by forward shock
+    if(diffusion_enabled) &
+     m_swept = m_swept + max(rho4pir2_out(r,t,op(2))*(u - v_out(r,t,op(2))),0d0)*dt
    end if
 
 	   if(paper_mode .or. .not.diffusion_enabled)then
@@ -740,7 +747,16 @@ end subroutine lightcurve_wind_bpl
 	      scan_save = op(2)%scan_i
 	      tau_now = shell_optical_depth(r,t)
 	      r_ph_now = photosphere_radius(r,t,tau_now)
+	      ! PDE diffusion through unshocked CSM
 	      call solve_diffusion_step(dt,r,r_ph_now,t,lum_store,ld_array(n))
+	      ! Update shell reservoir with full shock power
+	      in_escape = r_ph_now <= r*(1d0+1d-6)
+	      call update_shell_reservoir(dt,r,u,tau_now, &
+	                                  lum_store,lum_shell_leak,in_escape)
+	      ! In escape mode: use reservoir output (shell cooling tail)
+	      if(in_escape) then
+	       ld_array(n) = lum_shell_leak
+	      end if
 	      op(2)%scan_i = scan_save
 	      r_store = r
 	     else
