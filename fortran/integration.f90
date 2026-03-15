@@ -15,13 +15,15 @@ contains
        + rho4pir2_out(r,t,op(2))*(u-v_out(r,t,op(2)))
  end function dmdt
 
- function dudt(u,r,m,t,op)
+ function dudt(u,r,m,t,op) result(du_dt)
   ! Equation of motion
   type(outflow_parameters),intent(inout):: op(1:2)
   real(8),intent(in):: u,r,m,t
-  real(8):: dudt
-  dudt = ( rho4pir2_in (r,t,op(1))*(v_in (r,t,op(1))-u)**2 &
+  real(8):: du_dt, aram
+
+  aram = ( rho4pir2_in (r,t,op(1))*(v_in (r,t,op(1))-u)**2 &
          - rho4pir2_out(r,t,op(2))*(u-v_out(r,t,op(2)))**2 ) / m
+  du_dt = aram
  end function dudt
 
  function drdt(u,r,m,t,op)

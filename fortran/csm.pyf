@@ -1,7 +1,7 @@
 !    -*- f90 -*-
 ! Note: the context of this file is case sensitive.
 
-python module csm ! in 
+python module csm ! in
     interface  ! in :csm
         module lc_mod ! in :csm:csm.f90
             use constants, only: pi,year,clight
@@ -28,6 +28,9 @@ python module csm ! in
             real(kind=8), private :: t
             real(kind=8), private :: lum
             real(kind=8), private :: dt
+            subroutine set_model_mode(mode) ! in :csm:csm.f90:lc_mod
+                integer intent(in) :: mode
+            end subroutine set_model_mode
             subroutine lightcurve_wind_exponential(mdotinput,tinput,vwindinput,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
                 use get_vals
                 real(kind=8), target,dimension(:),intent(in) :: mdotinput
@@ -190,7 +193,7 @@ python module csm ! in
                 real(kind=8), optional,intent(in) :: kappa
             end subroutine lightcurve_explosion_exponential
         end module lc_mod
-    end interface 
+    end interface
 end python module csm
 
 ! This file was auto-generated with f2py (version:2.3.5).

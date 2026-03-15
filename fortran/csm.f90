@@ -1,6 +1,10 @@
 module lc_mod
 
- use constants,only:pi,year,clight
+ use constants,only:pi,year,clight,intpol,temperature
+ use diffusion_runtime, only: paper_mode, diffusion_enabled, eff_global, erad, &
+                              configure_runtime, reset_diffusion_state, &
+                              shell_optical_depth, photosphere_radius, &
+                              solve_diffusion_step, set_runtime_mode
 
  implicit none
 
@@ -11,17 +15,54 @@ module lc_mod
           lightcurve_wind_wind, lightcurve_explosion_explosion, &
           lightcurve_bpl_bpl, lightcurve_exponential_exponential, &
           lightcurve_explosion_bpl, lightcurve_bpl_exponential, &
-          lightcurve_exponential_explosion, lightcurve_explosion_exponential
+          lightcurve_exponential_explosion, lightcurve_explosion_exponential, &
+          set_model_mode
 
- private:: do_main_loop,get_diffuse_lc
+ private:: finalize_outputs, do_main_loop
+ private:: shock_heating_rate, get_diffuse_lc
  private
- integer,parameter:: ll=10000
- real(8),dimension(ll):: t_array, L_array, temp_array, r_array, v_array, m_array
+integer,parameter:: ll=10000
+ real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array
  integer,dimension(ll):: i_array
  real(8):: t_start=1d1, t_end=10d0*year
- real(8):: u,r,m,t,lum
+ real(8):: u,r,m,t
 
 contains
+
+ subroutine set_model_mode(mode)
+  integer,intent(in):: mode
+
+  call set_runtime_mode(mode)
+ end subroutine set_model_mode
+
+ subroutine finalize_outputs(csm_type, eff, kappa)
+  integer,intent(in):: csm_type
+  real(8),intent(in),optional:: eff, kappa
+
+  if(paper_mode)then
+   if(present(eff))then
+    larray = eff*larray
+    temparray = eff**0.25d0*temparray
+   end if
+
+   if(present(kappa))then
+    call get_diffuse_lc(csm_type,kappa)
+   elseif(allocated(ldiff))then
+    deallocate(ldiff)
+   end if
+  end if
+ end subroutine finalize_outputs
+
+
+function shock_heating_rate(r_shell,t_shell,u_shell) result(lum_heat)
+  use get_vals,only: op
+  use integration,only: shock_luminosity
+
+  real(8),intent(in):: r_shell,t_shell,u_shell
+  real(8):: lum_heat
+
+  lum_heat = eff_global*shock_luminosity(r_shell,t_shell,u_shell,op)
+end function shock_heating_rate
 
  subroutine lightcurve_wind_exponential(Mdotinput, tinput, vwindinput, Mexp, Eexp, eff, kappa)
 
@@ -33,6 +74,9 @@ contains
   real(8),intent(in),target:: Mdotinput(:), tinput(:)
   real(8),intent(in),optional:: eff, kappa
 
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
+
   v_in  => v_explosion
   v_out => v_wind
   rho4pir2_in  => rho_exponential
@@ -43,6 +87,7 @@ contains
 
   op(1)%Mej = Mexp
   op(1)%Eej = Eexp
+  op(1)%delay = 0d0
   op(2)%mdot => Mdotinput
   op(2)%t_grid => tinput
   op(2)%vwind = vwindinput
@@ -53,17 +98,11 @@ contains
   u = max(1.d2*op(1)%exp_v0,op(2)%vwind)
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(2,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(2,kappa)
-  end if
+  call finalize_outputs(2,eff,kappa)
 
  end subroutine lightcurve_wind_exponential
 
@@ -77,6 +116,9 @@ contains
   real(8),intent(in),target:: Mdotinput(:), tinput(:), rho_input(:), vinput(:)
   real(8),intent(in),optional:: eff, kappa
 
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
+
   v_in  => v_explosion
   v_out => v_wind
   rho4pir2_in  => rho_explosion
@@ -88,6 +130,7 @@ contains
   op(1)%rho_expl => rho_input
   op(1)%v_grid => vinput
   op(1)%t_ref = t_ref
+  op(1)%delay = 0d0
   op(2)%mdot => Mdotinput
   op(2)%t_grid => tinput
   op(2)%vwind = vwindinput
@@ -96,17 +139,11 @@ contains
   u = max(maxval(vinput),op(2)%vwind)
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(2,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(2,kappa)
-  end if
+  call finalize_outputs(2,eff,kappa)
 
  end subroutine lightcurve_wind_explosion
 
@@ -119,6 +156,8 @@ contains
   real(8),intent(in):: Eexp, Mexp, inner_slope, outer_slope, vwindinput
   real(8),intent(in),target:: Mdotinput(:), tinput(:)
   real(8),intent(in),optional:: eff, kappa
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_wind
@@ -143,19 +182,13 @@ contains
   u = max(1.d2*op(1)%bpl_vt,op(2)%vwind)
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(2,eff,kappa)
 
   call do_main_loop
+  call finalize_outputs(2,eff,kappa)
 
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(2,kappa)
-  end if
-
- end subroutine lightcurve_wind_bpl
+end subroutine lightcurve_wind_bpl
 
 
  subroutine lightcurve_bpl_wind(inner_slope, outer_slope, Mexp, Eexp, Mdotinput, tinput, vwindinput, eff, kappa)
@@ -168,6 +201,9 @@ contains
   real(8),intent(in),target:: Mdotinput(:), tinput(:)
   real(8),intent(in),optional:: eff, kappa
 
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
+
   v_in  => v_wind
   v_out => v_explosion
   rho4pir2_in  => rho_wind
@@ -176,8 +212,8 @@ contains
   op(1)%scan_i = -size(tinput)
   op(2)%scan_i = 1
 
-  op(1)%mdot = Mdotinput
-  op(1)%t_grid = tinput
+  op(1)%mdot => Mdotinput
+  op(1)%t_grid => tinput
   op(1)%vwind = vwindinput
   op(2)%Mej = Mexp
   op(2)%Eej = Eexp
@@ -191,17 +227,11 @@ contains
   r = 1d0
   u = r/t
   m = 1d0
+  erad = 0d0
+  call configure_runtime(3,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(3,kappa)
-  end if
+  call finalize_outputs(3,eff,kappa)
 
  end subroutine lightcurve_bpl_wind
 
@@ -214,6 +244,9 @@ contains
   real(8),intent(in):: Eexp, Mexp, vwindinput
   real(8),intent(in),target:: Mdotinput(:), tinput(:)
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_wind
   v_out => v_explosion
@@ -228,6 +261,7 @@ contains
   op(1)%vwind = vwindinput
   op(2)%Mej = Mexp
   op(2)%Eej = Eexp
+  op(2)%delay = 0d0
 
   call get_exp_v0(op(2))
 
@@ -235,17 +269,11 @@ contains
   r = 1d0
   u = r/t
   m = 1d0
+  erad = 0d0
+  call configure_runtime(4,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(4,kappa)
-  end if
+  call finalize_outputs(4,eff,kappa)
 
  end subroutine lightcurve_exponential_wind
 
@@ -259,6 +287,9 @@ contains
   real(8),intent(in),target:: rho_input(:), vinput(:), Mdotinput(:), tinput(:)
   real(8),intent(in),optional:: eff, kappa
 
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
+
   v_in  => v_wind
   v_out => v_explosion
   rho4pir2_in  => rho_wind
@@ -267,31 +298,23 @@ contains
   op(1)%scan_i = -size(tinput)
   op(2)%scan_i = 1
 
-  op(1)%mdot = Mdotinput
-  op(1)%t_grid = tinput
+  op(1)%mdot => Mdotinput
+  op(1)%t_grid => tinput
   op(1)%vwind = vwindinput
   op(2)%rho_expl => rho_input
   op(2)%v_grid => vinput
   op(2)%t_ref = t_ref
   op(2)%delay = 0d0
 
-  call get_bpl_coeffs(op(2))
-
   t = t_start   ! Use non-zero initial time to avoid singularity
   r = 1d0
   u = r/t
   m = 1d0
+  erad = 0d0
+  call configure_runtime(1,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(1,kappa)
-  end if
+  call finalize_outputs(1,eff,kappa)
 
  end subroutine lightcurve_explosion_wind
 
@@ -305,6 +328,9 @@ contains
   real(8),intent(in),target:: Mdoto(:), tinputo(:), Mdoti(:), tinputi(:)
   real(8),intent(in),optional:: eff, kappa
 
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
+
   v_in  => v_wind
   v_out => v_wind
   rho4pir2_in  => rho_wind
@@ -316,25 +342,19 @@ contains
   op(1)%mdot => Mdoti
   op(1)%t_grid => tinputi
   op(1)%vwind = vwindi
-  op(2)%mdot = Mdoto
-  op(2)%t_grid = tinputo
+  op(2)%mdot => Mdoto
+  op(2)%t_grid => tinputo
   op(2)%vwind = vwindo
 
   t = t_start   ! Use non-zero initial time to avoid singularity
   r = 1d0
   u = 0.5d0*(vwindi+vwindo)
   m = 1d0
+  erad = 0d0
+  call configure_runtime(2,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(2,kappa)
-  end if
+  call finalize_outputs(2,eff,kappa)
 
  end subroutine lightcurve_wind_wind
 
@@ -348,6 +368,9 @@ contains
 
   real(8),intent(in):: inner_slopeo, outer_slopeo, Mexpo, Eexpo, inner_slopei, outer_slopei, Mexpi, Eexpi, interval
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_explosion
@@ -372,17 +395,11 @@ contains
   u = 1.d2*op(1)%bpl_vt
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(3,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(3,kappa)
-  end if
+  call finalize_outputs(3,eff,kappa)
 
  end subroutine lightcurve_bpl_bpl
 
@@ -394,6 +411,9 @@ contains
 
   real(8),intent(in):: Eexpo, Mexpo, Eexpi, Mexpi, interval
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_explosion
@@ -414,17 +434,11 @@ contains
   u = 1.d2*op(1)%exp_v0
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(4,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(4,kappa)
-  end if
+  call finalize_outputs(4,eff,kappa)
 
  end subroutine lightcurve_exponential_exponential
 
@@ -437,6 +451,9 @@ contains
   real(8),intent(in):: trefo,trefi,interval
   real(8),intent(in),target:: rho_o(:),vgrido(:),rho_i(:),vgridi(:)
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_explosion
@@ -459,17 +476,11 @@ contains
   u = maxval(vgridi)
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(1,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(1,kappa)
-  end if
+  call finalize_outputs(1,eff,kappa)
 
  end subroutine lightcurve_explosion_explosion
 
@@ -486,6 +497,9 @@ contains
   real(8),intent(in):: t_ref, inner_slope, outer_slope, Mexp, Eexp, interval
   real(8),intent(in),target:: rho_input(:), vinput(:)
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_explosion
@@ -511,17 +525,11 @@ contains
   u = 1.d2*op(1)%bpl_vt
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(1,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(1,kappa)
-  end if
+  call finalize_outputs(1,eff,kappa)
 
  end subroutine lightcurve_explosion_bpl
 
@@ -538,6 +546,9 @@ contains
 
   real(8),intent(in):: inner_slope, outer_slope, Mexp, Eexp, Mexp_out, Eexp_out, interval
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_explosion
@@ -560,17 +571,11 @@ contains
   u = 1.d2*op(1)%exp_v0
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(3,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(3,kappa)
-  end if
+  call finalize_outputs(3,eff,kappa)
 
  end subroutine lightcurve_bpl_exponential
 
@@ -588,6 +593,9 @@ contains
   real(8),intent(in):: Mexp, Eexp, t_ref, interval
   real(8),intent(in),target:: rho_input(:), vinput(:)
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_explosion
@@ -611,17 +619,11 @@ contains
   u = maxval(vinput)
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(4,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(4,kappa)
-  end if
+  call finalize_outputs(4,eff,kappa)
 
  end subroutine lightcurve_exponential_explosion
 
@@ -639,6 +641,9 @@ contains
   real(8),intent(in):: Mexp, Eexp, t_ref, interval
   real(8),intent(in),target:: rho_input(:), vinput(:)
   real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
 
   v_in  => v_explosion
   v_out => v_explosion
@@ -662,17 +667,11 @@ contains
   u = 1.d2*op(1)%exp_v0
   r = u*t*1.2d0
   m = 1d0
+  erad = 0d0
+  call configure_runtime(1,eff,kappa)
 
   call do_main_loop
-
-  if(present(eff))then
-   larray = eff*larray
-   temparray = eff**0.25d0*temparray
-  end if
-
-  if(present(kappa))then
-   call get_diffuse_lc(1,kappa)
-  end if
+  call finalize_outputs(1,eff,kappa)
 
  end subroutine lightcurve_explosion_exponential
 
@@ -680,56 +679,104 @@ contains
 
  subroutine do_main_loop
 
-  use constants,only:temperature
   use integration
 
-  integer:: n
-  real(8):: dt,ku,kr,km,lum
+	  integer:: n, scan_save
+	  real(8):: dt,ku,kr,km
+	  real(8):: lum_heat, lum_store, tau_now, r_ph_now, r_store
 
   t_array = -1d0
-  
+  ld_array = 0d0
+  i_array = 0
   n = 0
   do while (t<=t_end)
 
 ! Evolve shell properties
-   ku = dudt(u,r,m,t,op)
-   kr = drdt(u,r,m,t,op)
-   km = dmdt(u,r,m,t,op)
+	   ku = dudt(u,r,m,t,op)
+	   kr = drdt(u,r,m,t,op)
+	   km = dmdt(u,r,m,t,op)
+	   if(paper_mode)then
+	    lum_heat = shock_luminosity(r,t,u,op)
+	   else
+	    lum_heat = shock_heating_rate(r,t,u)
+	   end if
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
-   dt = 0.01d0*min(abs(u/ku),abs(r/kr),abs(m/km))
-
-   lum = shock_luminosity(r,t,u,op)
+   if(paper_mode)then
+    dt = 0.01d0*min(abs(u/ku),abs(r/kr),abs(m/km))
+   else
+    dt = huge(1d0)
+    if(abs(ku)>1d-30)dt = min(dt,abs(u/ku))
+    if(abs(kr)>1d-30)dt = min(dt,abs(r/kr))
+    if(abs(km)>1d-30)dt = min(dt,abs(m/km))
+    dt = 0.01d0*dt
+    if(.not.(dt>0d0.and.dt<huge(1d0)))exit
+   end if
 
    u = u + dt*ku
    r = r + dt*kr
-   m = m + dt*km
+   if(paper_mode)then
+    m = m + dt*km
+   else
+    m = max(m + dt*km,1d-30)
+   end if
+
+	   if(paper_mode .or. .not.diffusion_enabled)then
+	    erad = 0d0
+	   end if
 
    t = t + dt
-
 ! Store output arrays
    if(t>1d4)then ! avoid first few steps that contain large errors
-    if(n>=1)i_array(n) = op(2)%scan_i
+    if(paper_mode)then
+     if(n>=1)i_array(n) = op(2)%scan_i
+    end if
     n = n+1
+	    if(paper_mode)then
+	     lum_store = lum_heat
+	     ld_array(n) = 0d0
+	     r_store = r
+	    else
+	     lum_store = lum_heat
+	     if(diffusion_enabled)then
+	      scan_save = op(2)%scan_i
+	      tau_now = shell_optical_depth(r,t)
+	      r_ph_now = photosphere_radius(r,t,tau_now)
+	      call solve_diffusion_step(dt,r,r_ph_now,t,lum_store,ld_array(n))
+	      op(2)%scan_i = scan_save
+	      r_store = r_ph_now
+	     else
+	      ld_array(n) = 0d0
+	      r_store = r
+	     end if
+	    end if
     t_array(n) = t
-    l_array(n) = lum
-    r_array(n) = r
+    l_array(n) = lum_store
+    r_array(n) = r_store
     m_array(n) = m
     v_array(n) = u
+    if(n>=ll)exit
    end if
 
   end do
 
-  if(allocated(tarray))deallocate(tarray,larray,temparray,rarray,varray,marray)
+  if(allocated(tarray))deallocate(tarray,larray,temparray,rarray,varray,marray,ldiff)
   allocate(tarray(n))
-  allocate(larray,temparray,rarray,varray,marray,mold=tarray)
+  allocate(larray,temparray,rarray,varray,marray,ldiff,mold=tarray)
 
   tarray(1:n) = t_array(1:n)
   larray(1:n) = l_array(1:n)
   rarray(1:n) = r_array(1:n)
   varray(1:n) = v_array(1:n)
   marray(1:n) = m_array(1:n)
-  temparray(1:n) = temperature(larray(1:n),rarray(1:n))
+  ldiff(1:n) = ld_array(1:n)
+  if(paper_mode)then
+   temparray(1:n) = temperature(larray(1:n),rarray(1:n))
+  elseif(diffusion_enabled)then
+   temparray(1:n) = temperature(ldiff(1:n),rarray(1:n))
+  else
+   temparray(1:n) = temperature(larray(1:n),rarray(1:n))
+  end if
 
 !!$  do n = 1, size(tarray)
 !!$   print*,tarray(n),larray(n)
@@ -749,9 +796,8 @@ contains
   real(8):: dldiff, tp, tadv, tloss, tdiff, mdj, mdjp,tj,tjp
   real(8),allocatable,dimension(:):: tauprep, tau
 
-  ! Prepare quantities for optical depth calculation
   select case(csm_type)
-  case(1) ! explosion case
+  case(1)
    call get_tauprep_explosion(tauprep)
   end select
 
@@ -761,18 +807,17 @@ contains
 
   do i = 1, size(tarray)-1
    select case(csm_type)
-   case(1) ! arbitrary explosion
-    j = i_array(i)
+   case(1)
+    j = max(1,min(i_array(i),size(op(2)%v_grid)-1))
     tp = tarray(i) + op(2)%delay
-    tau(i) = intpol(rarray(i)/tp,op(2)%v_grid(j:j+1),tauprep(j:j+1)) &
-           / tp**2
-   case(2) ! arbitrary wind
+    tau(i) = intpol(rarray(i)/tp,op(2)%v_grid(j:j+1),tauprep(j:j+1))/tp**2
+   case(2)
     j = i_array(i)
     n = size(op(2)%t_grid)
     if(j==n)then
      tau(i) = op(2)%mdot(n)*op(2)%vwind/rarray(i)
     else
-     tau(i) = 0d0!op(2)%mdot(j+1)/(op(2)%t_grid(j+1)+tarray(i))
+     tau(i) = 0d0
      do k = n-1, j+1, -1
       if(op(2)%t_grid(k+1)-op(2)%t_grid(k)>1d-99)then
        tau(i) = tau(i) &
@@ -802,12 +847,15 @@ contains
       tau(i) = tau(i) &
              + mdj/(tj+tarray(i)) &
              + mdj*(op(2)%vwind/rarray(i)-1d0/(tj+tarray(i)))
-
      else
       tj   = op(2)%t_grid(j  )
       tjp  = op(2)%t_grid(j+1)
       mdj  = op(2)%mdot(j  )
       mdjp = op(2)%mdot(j+1)
+      if(tjp-tj<=1d-99 .and. j>1)then
+       tj   = op(2)%t_grid(j-1)
+       mdj  = op(2)%mdot(j-1)
+      end if
       tau(i) = tau(i) &
              + mdjp/(tjp+tarray(i))&
              + (mdj*(tjp+tarray(i))-mdjp*(tj+tarray(i)))&
@@ -817,7 +865,7 @@ contains
      end if
     end if
     tau(i) = tau(i)/(4d0*pi*op(2)%vwind**2)
-   case(3) ! broken power-law explosion
+   case(3)
     tp = tarray(i) + op(2)%delay
     if(rarray(i)/tp>=op(2)%bpl_vt)then
      tau(i) = op(2)%bpl_rho0*op(2)%bpl_vt/(4d0*pi*(op(2)%bpl_n-1d0)*tp**2) &
@@ -828,15 +876,15 @@ contains
                 /(1d0-op(2)%bpl_d) &
               + 1d0/(op(2)%bpl_n-1d0) )
     end if
-   case(4) ! exponential explosion
+   case(4)
     tp = tarray(i) + op(2)%delay
     tau(i) = op(2)%Mej/(8d0*pi*(op(2)%exp_v0*tp)**2)&
              *exp(-rarray(i)/(op(2)%exp_v0*tp))
    end select
    tau(i) = kappa*tau(i)
 
-   tdiff = tau(i)*rarray(i)/clight
-   tadv  = rarray(i)/varray(i)
+   tdiff = max(tau(i)*rarray(i)/clight,1d-30)
+   tadv  = max(rarray(i)/max(varray(i),1d-30),1d-30)
    tloss = 1d0/(1d0/tdiff+1d0/tadv)
    do j = i+1, size(tarray)
     dldiff = exp((tarray(i+1)-tarray(j))/tloss)&
@@ -844,7 +892,6 @@ contains
     ldiff(j) = ldiff(j)+larray(i)*dldiff*tloss/tdiff
     if(tarray(j)>tarray(i+1)+max(tdiff,tadv)*50d0)exit
    end do
-
   end do
 
   return

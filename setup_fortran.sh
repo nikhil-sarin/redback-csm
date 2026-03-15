@@ -22,6 +22,7 @@ python -m numpy.f2py -c \
     "$FORTRAN_DIR/constants.f90" \
     "$FORTRAN_DIR/get_vals.f90" \
     "$FORTRAN_DIR/integration.f90" \
+    "$FORTRAN_DIR/diffusion_runtime.f90" \
     "$FORTRAN_DIR/csm.f90" \
     -m csm
 

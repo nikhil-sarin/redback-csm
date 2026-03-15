@@ -2345,9 +2345,9 @@ def create_generic_csm_density(
     Parameters
     ----------
     r_inner : float
-        Inner radius in cm (default: 1e14 cm ~ 7 AU)
+        Inner radius in cm (default: 1e10 cm)
     r_outer : float
-        Outer radius in cm (default: 1e17 cm ~ 700 AU)
+        Outer radius in cm (default: 1e20 cm)
     n_points : int
         Number of grid points (default: 1000)
     base_density : float
@@ -2708,8 +2708,8 @@ def _get_lc_generic_csm_bpl(
     :param esn: SN explosion energy in foe
     :param eff: Efficiency of kinetic to radiation energy conversion (0-1)
     :param kwargs: Optional parameters
-        - r_inner: Inner CSM radius in cm (default: 1e14)
-        - r_outer: Outer CSM radius in cm (default: 1e17)
+        - r_inner: Inner CSM radius in cm (default: 1e10)
+        - r_outer: Outer CSM radius in cm (default: 1e20)
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
@@ -2870,8 +2870,8 @@ def _get_lc_generic_4shell_csm_bpl(
     :param esn: SN explosion energy in foe
     :param eff: Efficiency of kinetic to radiation energy conversion (0-1)
     :param kwargs: Optional parameters
-        - r_inner: Inner CSM radius in cm (default: 1e14)
-        - r_outer: Outer CSM radius in cm (default: 1e17)
+        - r_inner: Inner CSM radius in cm (default: 1e10)
+        - r_outer: Outer CSM radius in cm (default: 1e20)
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
@@ -3068,8 +3068,8 @@ def _get_lc_generic_8shell_csm_bpl(
     :param esn: SN explosion energy in foe
     :param eff: Efficiency of kinetic to radiation energy conversion (0-1)
     :param kwargs: Optional parameters
-        - r_inner: Inner CSM radius in cm (default: 1e13)
-        - r_outer: Outer CSM radius in cm (default: 1e17)
+        - r_inner: Inner CSM radius in cm (default: 1e10)
+        - r_outer: Outer CSM radius in cm (default: 1e20)
         - base_profile: 'powerlaw' or 'bpl' for base density (default: 'powerlaw')
         - base_bpl_params: dict with 'r_break', 'index_inner', 'index_outer' if base_profile='bpl'
         - kappa: (optional) Opacity in cm²/g for photon diffusion
@@ -4543,6 +4543,8 @@ def _call_csm(csm_model, **kwargs):
             f"Unknown CSM model '{csm_model}'. "
             f"Available models: {sorted(_DISPATCH.keys())}"
         )
+    paper_mode = bool(kwargs.pop("paper_mode", False))
+    _get_csm().lc_mod.set_model_mode(1 if paper_mode else 0)
     func, param_names = _DISPATCH[csm_model]
     args = [kwargs.pop(p) for p in param_names]
     return func(*args, **kwargs)

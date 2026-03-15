@@ -36,6 +36,27 @@ module get_vals
 
 contains
 
+ subroutine reset_outflow(op)
+  type(outflow_parameters),intent(inout):: op
+
+  op%eff = 0d0
+  if(associated(op%mdot))nullify(op%mdot)
+  if(associated(op%t_grid))nullify(op%t_grid)
+  op%vwind = 0d0
+  op%Mej = 0d0
+  op%Eej = 0d0
+  op%exp_v0 = 0d0
+  op%bpl_n = 0d0
+  op%bpl_d = 0d0
+  op%bpl_vt = 0d0
+  op%bpl_rho0 = 0d0
+  if(associated(op%rho_expl))nullify(op%rho_expl)
+  if(associated(op%v_grid))nullify(op%v_grid)
+  op%scan_i = 0
+  op%t_ref = 0d0
+  op%delay = 0d0
+ end subroutine reset_outflow
+
  subroutine get_tauprep_explosion(tauprep)
   ! Compute integral needed to compute optical depth for explosions
   ! tauprep = tau * t^2 / kappa
@@ -58,7 +79,7 @@ contains
 ! Computes frequently used quantities for exponential ejecta
   type(outflow_parameters),intent(inout):: op
   ! Velocity scale of ejecta as defined in Owocki+19
-  op%exp_v0 = sqrt(op%Eej/(6d0*op%Mej)) 
+  op%exp_v0 = sqrt(op%Eej/(6d0*op%Mej))
  end subroutine get_exp_v0
 
  function rho_exponential(r,t,op)
