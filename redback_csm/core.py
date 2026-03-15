@@ -104,6 +104,8 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
+    lbol_fs = _get_csm().lc_mod.lfs.copy()
+    lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
@@ -123,6 +125,8 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
             "time",
             "lbol",
             "lbol_shock",
+            "lbol_fs",
+            "lbol_rs",
             "lbol_diffuse",
             "rph",
             "temperature",
@@ -133,6 +137,8 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
+    outs.lbol_fs = lbol_fs
+    outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
     outs.temperature = temperature
@@ -199,6 +205,8 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
+    lbol_fs = _get_csm().lc_mod.lfs.copy()
+    lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
@@ -218,6 +226,8 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
             "time",
             "lbol",
             "lbol_shock",
+            "lbol_fs",
+            "lbol_rs",
             "lbol_diffuse",
             "rph",
             "temperature",
@@ -228,6 +238,8 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
+    outs.lbol_fs = lbol_fs
+    outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
     outs.temperature = temperature
@@ -291,6 +303,8 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
+    lbol_fs = _get_csm().lc_mod.lfs.copy()
+    lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
@@ -310,6 +324,8 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
             "time",
             "lbol",
             "lbol_shock",
+            "lbol_fs",
+            "lbol_rs",
             "lbol_diffuse",
             "rph",
             "temperature",
@@ -320,6 +336,8 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
+    outs.lbol_fs = lbol_fs
+    outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
     outs.temperature = temperature
@@ -998,6 +1016,8 @@ def _get_lc_boxwind_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
+    lbol_fs = _get_csm().lc_mod.lfs.copy()
+    lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
@@ -1016,6 +1036,8 @@ def _get_lc_boxwind_bpl(
             "time",
             "lbol",
             "lbol_shock",
+            "lbol_fs",
+            "lbol_rs",
             "lbol_diffuse",
             "rph",
             "temperature",
@@ -1026,6 +1048,8 @@ def _get_lc_boxwind_bpl(
     outs.time = time_array
     outs.lbol = lbol
     outs.lbol_shock = lbol_shock
+    outs.lbol_fs = lbol_fs
+    outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
     outs.temperature = temperature

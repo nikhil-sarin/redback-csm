@@ -7,6 +7,8 @@ python module csm ! in
             use constants, only: pi,year,clight
             real(kind=8), public,allocatable,dimension(:) :: tarray
             real(kind=8), public,allocatable,dimension(:) :: larray
+            real(kind=8), public,allocatable,dimension(:) :: lfs
+            real(kind=8), public,allocatable,dimension(:) :: lrs
             real(kind=8), public,allocatable,dimension(:) :: temparray
             real(kind=8), public,allocatable,dimension(:) :: rarray
             real(kind=8), public,allocatable,dimension(:) :: varray

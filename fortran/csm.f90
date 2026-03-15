@@ -8,7 +8,7 @@ module lc_mod
 
  implicit none
 
- real(8),allocatable,dimension(:),public:: tarray, Larray, temparray, rarray, varray, marray, ldiff
+ real(8),allocatable,dimension(:),public:: tarray, Larray, temparray, rarray, varray, marray, ldiff, lfs, lrs
  public:: lightcurve_wind_exponential, lightcurve_wind_bpl, &
           lightcurve_bpl_wind, lightcurve_exponential_wind, &
           lightcurve_wind_explosion, lightcurve_explosion_wind, &
@@ -19,10 +19,10 @@ module lc_mod
           set_model_mode
 
  private:: finalize_outputs, do_main_loop
- private:: shock_heating_rate, get_diffuse_lc
+ private:: get_diffuse_lc
  private
 integer,parameter:: ll=10000
- real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array
+ real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array, fs_array, rs_array
  integer,dimension(ll):: i_array
  real(8):: t_start=1d1, t_end=10d0*year
  real(8):: u,r,m,t
@@ -42,6 +42,8 @@ contains
   if(paper_mode)then
    if(present(eff))then
     larray = eff*larray
+    lfs = eff*lfs
+    lrs = eff*lrs
     temparray = eff**0.25d0*temparray
    end if
 
@@ -52,17 +54,6 @@ contains
    end if
   end if
  end subroutine finalize_outputs
-
-
-function shock_heating_rate(r_shell,t_shell,u_shell) result(lum_heat)
-  use get_vals,only: op
-  use integration,only: shock_luminosity
-
-  real(8),intent(in):: r_shell,t_shell,u_shell
-  real(8):: lum_heat
-
-  lum_heat = eff_global*shock_luminosity(r_shell,t_shell,u_shell,op)
-end function shock_heating_rate
 
  subroutine lightcurve_wind_exponential(Mdotinput, tinput, vwindinput, Mexp, Eexp, eff, kappa)
 
@@ -683,10 +674,12 @@ end subroutine lightcurve_wind_bpl
 
 	  integer:: n, scan_save
 	  real(8):: dt,ku,kr,km
-	  real(8):: lum_heat, lum_store, tau_now, r_ph_now, r_store
+	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, tau_now, r_ph_now, r_store, eta_fs
 
   t_array = -1d0
   ld_array = 0d0
+  fs_array = 0d0
+  rs_array = 0d0
   i_array = 0
   n = 0
   do while (t<=t_end)
@@ -695,10 +688,15 @@ end subroutine lightcurve_wind_bpl
 	   ku = dudt(u,r,m,t,op)
 	   kr = drdt(u,r,m,t,op)
 	   km = dmdt(u,r,m,t,op)
+	   lum_fs = forward_shock_luminosity(r,t,u,op)
+	   lum_rs = reverse_shock_luminosity(r,t,u,op)
 	   if(paper_mode)then
-	    lum_heat = shock_luminosity(r,t,u,op)
+	    lum_heat = lum_fs + lum_rs
 	   else
-	    lum_heat = shock_heating_rate(r,t,u)
+	    eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
+	    lum_fs = eta_fs*lum_fs
+	    lum_rs = eff_global*lum_rs
+	    lum_heat = lum_fs + lum_rs
 	   end if
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
@@ -752,6 +750,8 @@ end subroutine lightcurve_wind_bpl
 	    end if
     t_array(n) = t
     l_array(n) = lum_store
+    fs_array(n) = lum_fs
+    rs_array(n) = lum_rs
     r_array(n) = r_store
     m_array(n) = m
     v_array(n) = u
@@ -760,12 +760,14 @@ end subroutine lightcurve_wind_bpl
 
   end do
 
-  if(allocated(tarray))deallocate(tarray,larray,temparray,rarray,varray,marray,ldiff)
+  if(allocated(tarray))deallocate(tarray,larray,temparray,rarray,varray,marray,ldiff,lfs,lrs)
   allocate(tarray(n))
-  allocate(larray,temparray,rarray,varray,marray,ldiff,mold=tarray)
+  allocate(larray,temparray,rarray,varray,marray,ldiff,lfs,lrs,mold=tarray)
 
   tarray(1:n) = t_array(1:n)
   larray(1:n) = l_array(1:n)
+  lfs(1:n) = fs_array(1:n)
+  lrs(1:n) = rs_array(1:n)
   rarray(1:n) = r_array(1:n)
   varray(1:n) = v_array(1:n)
   marray(1:n) = m_array(1:n)
