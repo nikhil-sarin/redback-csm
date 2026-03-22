@@ -48,7 +48,8 @@ DAY = 86400  # seconds in a day
 YEAR_DAYS = YEAR / DAY  # 365.25 days in a year
 
 
-def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
+def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple', 
+                             n_rad_zones=40, hydrogen_fraction=0.7, **kwargs):
     """
     Calculate the light curve for a fixed mass-loss wind with an exponential profile explosion.
     i.e., windy CSM with a supernova.
@@ -57,14 +58,19 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
     :param vwind: Wind velocity in km/s
     :param mexp: Explosion mass in M☉
     :param eexp: Explosion energy in foe
-    :param eff: Efficiency of kinetic to radiation energy conversion (0-1)
+    :param eff: Efficiency factor (0-1). 
+                For simple mode: fraction of kinetic energy that radiates
+                For hybrid mode: ignored (efficiency emerges from radiation physics)
+    :param mode: 'simple' (thin shell only) or 'hybrid' (thin shell + radiation diffusion)
+    :param n_rad_zones: Number of radiation grid zones (for hybrid mode only, default 40)
+    :param hydrogen_fraction: Hydrogen mass fraction (for hybrid mode only, default 0.7)
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation.
                   Common values: 0.34 (electron scattering), 0.1 (lower bound)
     :return: Named tuple with fields:
              - time: Time array in seconds
-             - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
-             - lbol_shock: Shock luminosity (instantaneous energy deposition)
-             - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
+             - lbol: Bolometric luminosity (photospheric for hybrid, shock×eff for simple)
+             - lbol_shock: Shock luminosity (instantaneous kinetic energy deposition)
+             - lbol_diffuse: Diffuse luminosity (photospheric for hybrid, None otherwise)
              - rph: Photospheric radius
              - temperature: Temperature
              - vshell: Shell velocity
@@ -72,15 +78,15 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
 
     Example::
 
-        # Without diffusion - lbol = lbol_shock
+        # Simple mode (fast) - requires efficiency parameter
         lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0, eff=0.5)
-        plt.plot(lc.time, lc.lbol)  # Plots shock luminosity
+        plt.plot(lc.time, lc.lbol)  # Plots eff × shock luminosity
 
-        # With diffusion - lbol = lbol_diffuse (observed luminosity)
-        lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0, eff=0.5, kappa=0.34)
-        plt.plot(lc.time, lc.lbol)         # Plots diffuse (observed) luminosity
-        plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
-        plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
+        # Hybrid mode (accurate) - efficiency emerges naturally from diffusion
+        lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0,
+                                      mode='hybrid', kappa=0.34, n_rad_zones=40)
+        plt.plot(lc.time, lc.lbol)         # Plots photospheric luminosity
+        plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity (always higher early on)
     """
     kappa = kwargs.get("kappa", None)
 
@@ -91,6 +97,36 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
 
     mdot = np.array([mdot], dtype=np.float64)
     tgrid = np.array([1.0], dtype=np.float64)
+    
+    # Set run mode and handle efficiency
+    if mode == 'simple':
+        _get_csm().lc_mod.set_run_mode(1)
+        if eff is None:
+            raise ValueError("Simple mode requires 'eff' parameter (0-1)")
+    elif mode == 'hybrid':
+        _get_csm().lc_mod.set_run_mode(2)
+        
+        # Hybrid mode: efficiency emerges from physics, ignore eff parameter
+        if eff is not None and eff != 1.0:
+            import warnings
+            warnings.warn(
+                f"Hybrid mode: ignoring eff={eff}. Efficiency emerges from radiation physics. "
+                "Setting internal eff=1.0 to deposit full kinetic luminosity.",
+                UserWarning
+            )
+        eff = 1.0  # Always use full kinetic luminosity internally
+        
+        # Set hybrid parameters
+        if kappa is None:
+            kappa = 0.34  # Default opacity for hybrid mode
+        
+        _get_csm().lc_mod.set_hybrid_parameters(
+            n_zones=n_rad_zones,
+            h_frac=hydrogen_fraction,
+            kappa_val=kappa
+        )
+    else:
+        raise ValueError(f"mode must be 'simple' or 'hybrid', got {mode}")
 
     # Call Fortran with or without kappa
     if kappa is not None:
@@ -103,21 +139,37 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff, **kwargs):
         )
 
     time_array = _get_csm().lc_mod.tarray.copy()
-    lbol_shock = _get_csm().lc_mod.larray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
+    
+    # larray contains different things depending on mode:
+    # - Simple mode: larray = eff * (lfs + lrs) 
+    # - Hybrid mode: larray = surface luminosity from grid
+    larray_raw = _get_csm().lc_mod.larray.copy()
+    
+    # Shock luminosity is always lfs + lrs (total kinetic luminosity deposited)
+    lbol_shock_total = lbol_fs + lbol_rs
 
-    # Get diffuse luminosity if kappa was provided
-    if kappa is not None:
+    # Get diffuse/observed luminosity
+    if mode == 'hybrid':
+        # Hybrid: observed luminosity comes from radiation solver (stored in larray and ldiff)
         lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
-        lbol = lbol_diffuse  # Main output is diffuse when kappa provided
+        lbol = lbol_diffuse  # Main output is surface luminosity
+        lbol_shock = lbol_shock_total  # Store actual shock luminosity for comparison
+    elif kappa is not None:
+        # Simple with kappa: post-processed diffusion
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+        lbol_shock = larray_raw  # This is eff * (lfs + lrs)
     else:
+        # Simple without kappa: no diffusion
         lbol_diffuse = None
-        lbol = lbol_shock  # Main output is shock when no kappa
+        lbol = larray_raw  # This is eff * (lfs + lrs)
+        lbol_shock = larray_raw
 
     outs = namedtuple(
         "output",

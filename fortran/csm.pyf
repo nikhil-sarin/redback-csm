@@ -36,6 +36,14 @@ python module csm ! in
             subroutine set_efficiency_mode(mode) ! in :csm:csm.f90:lc_mod
                 integer intent(in) :: mode
             end subroutine set_efficiency_mode
+            subroutine set_run_mode(mode) ! in :csm:csm.f90:lc_mod
+                integer intent(in) :: mode
+            end subroutine set_run_mode
+            subroutine set_hybrid_parameters(n_zones,h_frac,kappa_val) ! in :csm:csm.f90:lc_mod
+                integer, optional,intent(in) :: n_zones
+                real(kind=8), optional,intent(in) :: h_frac
+                real(kind=8), optional,intent(in) :: kappa_val
+            end subroutine set_hybrid_parameters
             subroutine lightcurve_wind_exponential(mdotinput,tinput,vwindinput,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
                 use get_vals
                 real(kind=8), target,dimension(:),intent(in) :: mdotinput
