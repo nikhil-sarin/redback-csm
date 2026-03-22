@@ -7,6 +7,9 @@ module lc_mod
                               shell_optical_depth, photosphere_radius, &
                               solve_diffusion_step, set_runtime_mode, &
                               set_shock_efficiency_mode_runtime => set_shock_efficiency_mode
+ use radiation_physics, only: radiation_grid_type, initialize_local_grid, &
+                               update_local_grid, deposit_contact_heating, &
+                               radiation_step, find_photosphere
 
  implicit none
 
@@ -18,7 +21,7 @@ module lc_mod
           lightcurve_bpl_bpl, lightcurve_exponential_exponential, &
           lightcurve_explosion_bpl, lightcurve_bpl_exponential, &
           lightcurve_exponential_explosion, lightcurve_explosion_exponential, &
-          set_model_mode, set_efficiency_mode
+          set_model_mode, set_efficiency_mode, set_run_mode, set_hybrid_parameters
 
  private:: finalize_outputs, do_main_loop
  private:: get_diffuse_lc
@@ -28,6 +31,14 @@ integer,parameter:: ll=10000
  integer,dimension(ll):: i_array
  real(8):: t_start=1d1, t_end=10d0*year
  real(8):: u,r,m,t
+
+ ! Run mode: 1=simple, 2=hybrid
+ integer :: run_mode = 1
+ 
+ ! Hybrid mode parameters
+ integer :: n_rad_zones_global = 40
+ real(8) :: hydrogen_fraction_global = 0.7d0
+ real(8) :: opacity_const_global = 0.34d0
 
 contains
 
@@ -43,11 +54,34 @@ contains
   call set_shock_efficiency_mode_runtime(mode)
  end subroutine set_efficiency_mode
 
+ subroutine set_run_mode(mode)
+  integer, intent(in) :: mode
+  run_mode = mode
+  if (mode /= 1 .and. mode /= 2) then
+   print *, 'WARNING: Invalid run_mode', mode, 'using simple (1)'
+   run_mode = 1
+  endif
+  if (run_mode == 1) then
+   call set_runtime_mode(1)
+  else
+   call set_runtime_mode(0)
+  end if
+ end subroutine set_run_mode
+
+ subroutine set_hybrid_parameters(n_zones, h_frac, kappa_val)
+  integer, intent(in), optional :: n_zones
+  real(8), intent(in), optional :: h_frac, kappa_val
+  
+  if (present(n_zones)) n_rad_zones_global = n_zones
+  if (present(h_frac)) hydrogen_fraction_global = h_frac
+  if (present(kappa_val)) opacity_const_global = kappa_val
+ end subroutine set_hybrid_parameters
+
  subroutine finalize_outputs(csm_type, eff, kappa)
   integer,intent(in):: csm_type
   real(8),intent(in),optional:: eff, kappa
 
-  if(paper_mode)then
+  if(run_mode == 1)then
    if(present(eff))then
     larray = eff*larray
     lfs = eff*lfs
@@ -679,10 +713,22 @@ end subroutine lightcurve_wind_bpl
  subroutine do_main_loop
 
   use integration
+  use get_vals
 
 	  integer:: n, scan_save
 	  real(8):: dt,ku,kr,km
 	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, tau_now, r_ph_now, r_store, eta_fs
+	  real(8):: rho_csm, rho_ej
+	  type(radiation_grid_type) :: grid
+	  logical :: grid_initialized
+	  real(8) :: r_ph, L_ph, T_ph
+
+  grid_initialized = .false.
+  
+  ! Initialize photospheric quantities to zero
+  L_ph = 0.0d0
+  r_ph = 0.0d0
+  T_ph = 0.0d0
 
   t_array = -1d0
   ld_array = 0d0
@@ -698,23 +744,30 @@ end subroutine lightcurve_wind_bpl
 	   km = dmdt(u,r,m,t,op)
 	   lum_fs = forward_shock_luminosity(r,t,u,op)
 	   lum_rs = reverse_shock_luminosity(r,t,u,op)
-	   if(paper_mode)then
-	    lum_heat = lum_fs + lum_rs
+	   
+	   ! For hybrid mode, store raw shock luminosity (before efficiency)
+	   if(run_mode == 2)then
+	    lum_heat = lum_fs + lum_rs  ! Full kinetic luminosity
 	   else
-	    select case (shock_efficiency_mode)
-	    case (1)
-	     eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
-	     lum_fs = eta_fs*lum_fs
-	     lum_rs = eff_global*lum_rs
-	    case default
-	     lum_fs = eff_global*lum_fs
-	     lum_rs = eff_global*lum_rs
-	    end select
-	    lum_heat = lum_fs + lum_rs
+	    ! For simple mode, use old paper/simple heating and apply efficiency later
+	    if(run_mode == 1)then
+	     lum_heat = lum_fs + lum_rs
+	    else
+	     select case (shock_efficiency_mode)
+	     case (1)
+	      eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
+	      lum_fs = eta_fs*lum_fs
+	      lum_rs = eff_global*lum_rs
+	     case default
+	      lum_fs = eff_global*lum_fs
+	      lum_rs = eff_global*lum_rs
+	     end select
+	     lum_heat = lum_fs + lum_rs
+	    end if
 	   end if
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
-   if(paper_mode)then
+   if(run_mode == 1)then
     dt = 0.01d0*min(abs(u/ku),abs(r/kr),abs(m/km))
    else
     dt = huge(1d0)
@@ -727,41 +780,68 @@ end subroutine lightcurve_wind_bpl
 
    u = u + dt*ku
    r = r + dt*kr
-   if(paper_mode)then
+   if(run_mode == 1)then
     m = m + dt*km
    else
     m = max(m + dt*km,1d-30)
    end if
 
-	   if(paper_mode .or. .not.diffusion_enabled)then
+	   if(run_mode == 1 .or. .not.diffusion_enabled)then
 	    erad = 0d0
 	   end if
 
    t = t + dt
+
+   ! ===== HYBRID MODE: RADIATION DIFFUSION =====
+   if (run_mode == 2) then
+     
+     ! Get local densities (needed for grid)
+     rho_csm = rho4pir2_out(r, t, op(2)) / (4.0d0*pi*r**2)
+     rho_ej = rho4pir2_in(r, t, op(1)) / (4.0d0*pi*r**2)
+     
+     ! Initialize grid (first time only)
+     if (.not. grid_initialized) then
+       call initialize_local_grid(grid, r, m, rho_csm, rho_ej, &
+                                  n_rad_zones_global)
+       grid%opacity_const = opacity_const_global
+       grid%hydrogen_fraction = hydrogen_fraction_global
+       grid_initialized = .true.
+     endif
+     
+     ! Update grid geometry (every step)
+     call update_local_grid(grid, r, m, rho_csm, rho_ej)
+     
+     ! Deposit shock heating
+     call deposit_contact_heating(grid, r, lum_heat)
+     
+     ! Solve radiation diffusion
+     call radiation_step(grid, dt)
+     
+     ! Optional: get photosphere for diagnostics
+     call find_photosphere(grid, r_ph, L_ph, T_ph)
+     
+   endif
+
 ! Store output arrays
    if(t>1d4)then ! avoid first few steps that contain large errors
-    if(paper_mode)then
+    if(run_mode == 1)then
      if(n>=1)i_array(n) = op(2)%scan_i
     end if
     n = n+1
-	    if(paper_mode)then
-	     lum_store = lum_heat
-	     ld_array(n) = 0d0
-	     r_store = r
-	    else
-	     lum_store = lum_heat
-	     if(diffusion_enabled)then
-	      scan_save = op(2)%scan_i
-	      tau_now = shell_optical_depth(r,t)
-	      r_ph_now = photosphere_radius(r,t,tau_now)
-	      call solve_diffusion_step(dt,r,r_ph_now,t,lum_store,ld_array(n))
-	      op(2)%scan_i = scan_save
-	      r_store = r
-	     else
-	      ld_array(n) = 0d0
-	      r_store = r
-	     end if
-	    end if
+    
+    ! Determine what to output based on mode
+    if(run_mode == 2)then
+     ! HYBRID MODE: Output surface luminosity from radiation solver
+     lum_store = grid%lum(grid%n_zones)  ! Surface luminosity
+     ld_array(n) = grid%lum(grid%n_zones)
+     r_store = r_ph      ! Photospheric radius (for diagnostics)
+    else
+     ! SIMPLE MODE: store shock luminosity; diffusion is applied later in finalize_outputs
+     lum_store = lum_heat
+     r_store = r
+     ld_array(n) = 0d0
+    end if
+    
     t_array(n) = t
     l_array(n) = lum_store
     fs_array(n) = lum_fs
@@ -818,7 +898,7 @@ end subroutine lightcurve_wind_bpl
   do i = 1, size(tarray)-1
    select case(csm_type)
    case(1)
-    j = max(1,min(i_array(i),size(op(2)%v_grid)-1))
+    j = i_array(i)
     tp = tarray(i) + op(2)%delay
     tau(i) = intpol(rarray(i)/tp,op(2)%v_grid(j:j+1),tauprep(j:j+1))/tp**2
    case(2)
@@ -862,10 +942,6 @@ end subroutine lightcurve_wind_bpl
       tjp  = op(2)%t_grid(j+1)
       mdj  = op(2)%mdot(j  )
       mdjp = op(2)%mdot(j+1)
-      if(tjp-tj<=1d-99 .and. j>1)then
-       tj   = op(2)%t_grid(j-1)
-       mdj  = op(2)%mdot(j-1)
-      end if
       tau(i) = tau(i) &
              + mdjp/(tjp+tarray(i))&
              + (mdj*(tjp+tarray(i))-mdjp*(tj+tarray(i)))&
@@ -893,8 +969,8 @@ end subroutine lightcurve_wind_bpl
    end select
    tau(i) = kappa*tau(i)
 
-   tdiff = max(tau(i)*rarray(i)/clight,1d-30)
-   tadv  = max(rarray(i)/max(varray(i),1d-30),1d-30)
+   tdiff = tau(i)*rarray(i)/clight
+   tadv  = rarray(i)/varray(i)
    tloss = 1d0/(1d0/tdiff+1d0/tadv)
    do j = i+1, size(tarray)
     dldiff = exp((tarray(i+1)-tarray(j))/tloss)&
