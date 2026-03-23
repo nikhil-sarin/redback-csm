@@ -33,6 +33,7 @@ from redback_csm.core import _call_csm, _call_csm_radio
 
 DAY = 86400.0    # seconds per day
 _AU = 1.496e13   # cm per AU
+_SOLAR_MASS = 1.989e33
 
 __all__ = [
     "wind_exponential_bolometric",
@@ -115,6 +116,12 @@ __all__ = [
     "generic_csm_bpl",
     "generic_csm_bpl_nickel_bolometric",
     "generic_csm_bpl_nickel",
+    "generic_powerlaw_csm_exponential_bolometric",
+    "generic_powerlaw_csm_exponential",
+    "generic_powerlaw_csm_bpl_bolometric",
+    "generic_powerlaw_csm_bpl",
+    "generic_powerlaw_csm_exponential_radio",
+    "generic_powerlaw_csm_bpl_radio",
     "generic_4shell_csm_bpl_bolometric",
     "generic_4shell_csm_bpl",
     "generic_4shell_csm_bpl_nickel_bolometric",
@@ -3226,6 +3233,205 @@ def smooth_triple_powerlaw_wind_exponential_nickel(
             time, redshift, "smooth_triple_powerlaw_wind_exponential", csm_kwargs, dl
         ),
         **kwargs
+    )
+
+
+def _generic_powerlaw_csm(eta, r_inner, r_outer, m_csm):
+    """Return normalized finite-shell power-law CSM kwargs for the generic CSM backend."""
+    if not (r_outer > r_inner > 0):
+        raise ValueError("Require r_outer > r_inner > 0")
+    m_csm_cgs = m_csm * _SOLAR_MASS
+    if abs(eta + 3.0) < 1e-12:
+        mass_factor = 4.0 * _np.pi * r_inner**3 * _np.log(r_outer / r_inner)
+    else:
+        mass_factor = (
+            4.0
+            * _np.pi
+            * r_inner ** (-eta)
+            * (r_outer ** (eta + 3.0) - r_inner ** (eta + 3.0))
+            / (eta + 3.0)
+        )
+    rho_in = m_csm_cgs / mass_factor
+
+    return dict(
+        base_density=rho_in,
+        base_index=eta,
+        shell1_radius=0.0,
+        shell1_width=0.0,
+        shell1_density=0.0,
+        shell2_radius=0.0,
+        shell2_width=0.0,
+        shell2_density=0.0,
+        shell3_radius=0.0,
+        shell3_width=0.0,
+        shell3_density=0.0,
+        r_inner=r_inner,
+        r_outer=r_outer,
+    )
+
+
+@_citation_wrapper(CITATION)
+def generic_powerlaw_csm_exponential_bolometric(
+    time,
+    eta,
+    r_inner,
+    r_outer,
+    interval_sn,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs
+):
+    """Bolometric light curve for a finite power-law CSM shell plus exponential ejecta.
+
+    Radii are in cm. `m_csm` is the total CSM mass in Msun.
+    """
+    return _csm_bolometric_impl(
+        time,
+        "generic_csm_exponential",
+        interval_sn=interval_sn,
+        mej_sn=mej_sn,
+        esn=esn,
+        eff=eff,
+        **_generic_powerlaw_csm(eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm),
+        **kwargs
+    )
+
+
+@_citation_wrapper(CITATION)
+def generic_powerlaw_csm_exponential(
+    time,
+    redshift,
+    eta,
+    r_inner,
+    r_outer,
+    interval_sn,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs
+):
+    """Multiband light curve for a finite power-law CSM shell plus exponential ejecta."""
+    dl = kwargs.get("cosmology", _cosmo).luminosity_distance(redshift).cgs.value
+    csm_kwargs = dict(
+        interval_sn=interval_sn,
+        mej_sn=mej_sn,
+        esn=esn,
+        eff=eff,
+        **_generic_powerlaw_csm(eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm),
+        **kwargs
+    )
+    if kwargs.get("output_format") == "flux_density":
+        return _multiband_csm_flux_density(
+            time, redshift, "generic_csm_exponential", csm_kwargs, dl
+        )
+    return _multiband_output(
+        *_multiband_csm(time, redshift, "generic_csm_exponential", csm_kwargs, dl),
+        **kwargs
+    )
+
+
+@_citation_wrapper(CITATION)
+def generic_powerlaw_csm_bpl_bolometric(
+    time,
+    eta,
+    r_inner,
+    r_outer,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs
+):
+    """Bolometric light curve for a finite power-law CSM shell plus BPL ejecta."""
+    return _csm_bolometric_impl(
+        time,
+        "generic_csm_bpl",
+        interval_sn=interval_sn,
+        delta_sn=delta_sn,
+        nn_sn=nn_sn,
+        mej_sn=mej_sn,
+        esn=esn,
+        eff=eff,
+        **_generic_powerlaw_csm(eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm),
+        **kwargs
+    )
+
+
+@_citation_wrapper(CITATION)
+def generic_powerlaw_csm_bpl(
+    time,
+    redshift,
+    eta,
+    r_inner,
+    r_outer,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs
+):
+    """Multiband light curve for a finite power-law CSM shell plus BPL ejecta."""
+    dl = kwargs.get("cosmology", _cosmo).luminosity_distance(redshift).cgs.value
+    csm_kwargs = dict(
+        interval_sn=interval_sn,
+        delta_sn=delta_sn,
+        nn_sn=nn_sn,
+        mej_sn=mej_sn,
+        esn=esn,
+        eff=eff,
+        **_generic_powerlaw_csm(eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm),
+        **kwargs
+    )
+    if kwargs.get("output_format") == "flux_density":
+        return _multiband_csm_flux_density(
+            time, redshift, "generic_csm_bpl", csm_kwargs, dl
+        )
+    return _multiband_output(
+        *_multiband_csm(time, redshift, "generic_csm_bpl", csm_kwargs, dl), **kwargs
+    )
+
+
+@_citation_wrapper(CITATION)
+def generic_powerlaw_csm_exponential_radio(
+    time, redshift, eta, r_inner, r_outer, interval_sn, mej_sn, esn, eff, m_csm,
+    logepsb, logepse, p, **kwargs
+):
+    """Radio flux density (mJy) for a finite power-law CSM shell plus exponential ejecta."""
+    return _csm_radio_impl(
+        time, redshift, "generic_csm_exponential",
+        dict(
+            interval_sn=interval_sn, mej_sn=mej_sn, esn=esn, eff=eff,
+            logepsb=logepsb, logepse=logepse, p=p,
+            **_generic_powerlaw_csm(eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm),
+            **kwargs
+        ),
+    )
+
+
+@_citation_wrapper(CITATION)
+def generic_powerlaw_csm_bpl_radio(
+    time, redshift, eta, r_inner, r_outer, interval_sn, delta_sn, nn_sn, mej_sn, esn, eff, m_csm,
+    logepsb, logepse, p, **kwargs
+):
+    """Radio flux density (mJy) for a finite power-law CSM shell plus BPL ejecta."""
+    return _csm_radio_impl(
+        time, redshift, "generic_csm_bpl",
+        dict(
+            interval_sn=interval_sn, delta_sn=delta_sn, nn_sn=nn_sn,
+            mej_sn=mej_sn, esn=esn, eff=eff,
+            logepsb=logepsb, logepse=logepse, p=p,
+            **_generic_powerlaw_csm(eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm),
+            **kwargs
+        ),
     )
 
 

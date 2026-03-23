@@ -37,7 +37,7 @@ The naming convention is purely descriptive of the density profiles and does not
 
 ### Optical / bolometric model variants
 
-Each of the 22 CSM scenarios is exposed as four functions:
+Each of the 24 CSM scenarios is exposed as four functions:
 
 | Suffix | Output | Time frame |
 |---|---|---|
@@ -54,9 +54,29 @@ The `_nickel` variants add `f_nickel` (nickel mass fraction) and `kappa_gamma`
 emission. The ejecta mass and velocity for nickel diffusion are derived internally
 from `mexp` and `eexp`, so no additional mass parameter is needed.
 
+### Shared Runtime Options
+
+All optical / bolometric CSM wrappers also accept a common set of runtime
+keywords controlling the transport treatment:
+
+| Keyword | Meaning |
+|---|---|
+| `mode='simple'` | Default thin-shell calculation. If `kappa` is provided, this uses the legacy post-processed diffusion light curve. |
+| `mode='hybrid'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
+| `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In hybrid mode, defaults to `0.34` if not supplied. |
+| `n_rad_zones` | Number of radiation/transport zones in hybrid mode. Higher values reduce numerical roughness but increase runtime. |
+| `efficiency_mode` | Optional alternate forward-shock efficiency mode. Default is `0`, which keeps the user-supplied constant `eff`. |
+
+Current output convention:
+
+- `lbol` is the main observable luminosity
+- `lbol_shock` is the shock-powered luminosity
+- `lbol_diffuse` is the diffusion / transport luminosity when available
+- `rph` is the historical output field name, but currently stores the shell radius by convention
+
 ### Radio synchrotron model variants
 
-Each of the 22 CSM scenarios also has a `{name}_radio` function that computes
+Each of the 24 CSM scenarios also has a `{name}_radio` function that computes
 synchrotron radio emission from the CSM-interaction shock using the
 Chevalier (1998) formalism with self-absorption. These take additional parameters:
 
@@ -69,7 +89,7 @@ Chevalier (1998) formalism with self-absorption. These take additional parameter
 
 Output is flux density in mJy.
 
-### Available CSM scenarios (22 total)
+### Available CSM scenarios (24 total)
 
 **Steady wind CSM**
 - `wind_exponential` — steady wind CSM + exponential SN ejecta
@@ -100,8 +120,37 @@ Output is flux density in mJy.
 **Generic phenomenological CSM**
 - `generic_csm_exponential` — power-law base density + 3 shells + exponential SN
 - `generic_csm_bpl` — power-law base density + 3 shells + BPL SN
+- `generic_powerlaw_csm_exponential` — finite power-law CSM shell + exponential SN
+- `generic_powerlaw_csm_bpl` — finite power-law CSM shell + BPL SN
 - `generic_4shell_csm_bpl` — power-law base density + 4 shells + BPL SN
 - `generic_8shell_csm_bpl` — power-law base density + 8 shells + BPL SN
+
+### New finite power-law CSM shell models
+
+This is the classic power-law finite-support density profiles, 
+consistent with e.g., Chatzopoulos+2012 
+
+- `generic_powerlaw_csm_exponential`
+- `generic_powerlaw_csm_bpl`
+- and the matching `_bolometric` / `_radio` variants
+
+These have a density profile parameterized as 
+
+\[
+\rho(r) = \rho_{\rm in}\left(\frac{r}{r_{\rm inner}}\right)^\eta
+\]
+
+for `r_inner <= r <= r_outer`, and zero outside `r_outer`.
+
+Public parameters are:
+
+- `eta` — power-law slope
+- `r_inner` — inner shell radius in `cm`
+- `r_outer` — outer shell radius in `cm`
+- `m_csm` — total CSM mass in `Msun`
+
+The density normalization `rho_in` is derived internally from `m_csm`, so the
+public API does not ask for a redundant density parameter.
 
 ## Exploration utility
 
@@ -172,6 +221,21 @@ lbol = wind_bpl_bolometric(
     eexp=1.0,     # foe
     eff=0.5,
     kappa=0.34,   # cm^2/g — enables photon diffusion (optional)
+)
+
+# Hybrid transport mode
+lbol_hybrid = wind_bpl_bolometric(
+    time=time,
+    mdot=1e-3,
+    vwind=100,
+    delta=0.5,
+    nn=12,
+    mexp=10.0,
+    eexp=1.0,
+    eff=0.5,
+    mode='hybrid',
+    kappa=0.34,
+    n_rad_zones=120,
 )
 
 # Multiband (per-band magnitudes)

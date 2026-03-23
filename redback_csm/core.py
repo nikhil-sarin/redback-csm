@@ -48,8 +48,40 @@ DAY = 86400  # seconds in a day
 YEAR_DAYS = YEAR / DAY  # 365.25 days in a year
 
 
-def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple', 
-                             n_rad_zones=40, hydrogen_fraction=0.7, **kwargs):
+def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
+    """
+    Configure the shared Fortran runtime state for one wrapper call.
+
+    All Python wrappers support the same runtime kwargs:
+    - mode: 'simple' or 'hybrid'
+    - kappa: opacity
+    - n_rad_zones: hybrid transport resolution
+    - efficiency_mode: optional alternate FS efficiency mode
+    """
+    mode = kwargs.get("mode", "simple")
+    kappa = kwargs.get("kappa", None)
+    efficiency_mode = int(kwargs.get("efficiency_mode", 0))
+
+    if mode == "simple":
+        _get_csm().lc_mod.set_run_mode(1)
+    elif mode == "hybrid":
+        _get_csm().lc_mod.set_run_mode(2)
+        if kappa is None:
+            kappa = 0.34
+        n_rad_zones = int(kwargs.get("n_rad_zones", default_n_rad_zones))
+        _get_csm().lc_mod.set_hybrid_parameters(
+            n_zones=n_rad_zones,
+            kappa_val=float(kappa),
+        )
+    else:
+        raise ValueError(f"mode must be 'simple' or 'hybrid', got {mode}")
+
+    _get_csm().lc_mod.set_efficiency_mode(efficiency_mode)
+    return mode, kappa
+
+
+def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
+                             n_rad_zones=40, **kwargs):
     """
     Calculate the light curve for a fixed mass-loss wind with an exponential profile explosion.
     i.e., windy CSM with a supernova.
@@ -58,20 +90,19 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     :param vwind: Wind velocity in km/s
     :param mexp: Explosion mass in M☉
     :param eexp: Explosion energy in foe
-    :param eff: Efficiency factor (0-1). 
-                For simple mode: fraction of kinetic energy that radiates
-                For hybrid mode: ignored (efficiency emerges from radiation physics)
-    :param mode: 'simple' (thin shell only) or 'hybrid' (thin shell + radiation diffusion)
+    :param eff: Efficiency factor (0-1).
+                For simple mode: fraction of kinetic energy that radiates.
+                For hybrid mode: still passed through to the Fortran interaction model.
+    :param mode: 'simple' (thin shell only) or 'hybrid' (thin shell + transport solver)
     :param n_rad_zones: Number of radiation grid zones (for hybrid mode only, default 40)
-    :param hydrogen_fraction: Hydrogen mass fraction (for hybrid mode only, default 0.7)
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation.
                   Common values: 0.34 (electron scattering), 0.1 (lower bound)
     :return: Named tuple with fields:
              - time: Time array in seconds
-             - lbol: Bolometric luminosity (photospheric for hybrid, shock×eff for simple)
+             - lbol: Bolometric luminosity (transport/diffuse for hybrid, shock×eff for simple)
              - lbol_shock: Shock luminosity (instantaneous kinetic energy deposition)
-             - lbol_diffuse: Diffuse luminosity (photospheric for hybrid, None otherwise)
-             - rph: Photospheric radius
+             - lbol_diffuse: Diffuse luminosity (transport/diffuse for hybrid, None otherwise)
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -82,13 +113,17 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
         lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0, eff=0.5)
         plt.plot(lc.time, lc.lbol)  # Plots eff × shock luminosity
 
-        # Hybrid mode (accurate) - efficiency emerges naturally from diffusion
+        # Hybrid mode - uses the transport solver for the observed luminosity
+        # while still taking the supplied efficiency parameter
         lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0,
-                                      mode='hybrid', kappa=0.34, n_rad_zones=40)
-        plt.plot(lc.time, lc.lbol)         # Plots photospheric luminosity
+                                      eff=0.3, mode='hybrid', kappa=0.34, n_rad_zones=40)
+        plt.plot(lc.time, lc.lbol)         # Plots transport/diffuse luminosity
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity (always higher early on)
     """
-    kappa = kwargs.get("kappa", None)
+    kwargs = dict(kwargs)
+    kwargs["mode"] = mode
+    kwargs["n_rad_zones"] = n_rad_zones
+    mode, kappa = _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=n_rad_zones)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -98,35 +133,8 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     mdot = np.array([mdot], dtype=np.float64)
     tgrid = np.array([1.0], dtype=np.float64)
     
-    # Set run mode and handle efficiency
-    if mode == 'simple':
-        _get_csm().lc_mod.set_run_mode(1)
-        if eff is None:
-            raise ValueError("Simple mode requires 'eff' parameter (0-1)")
-    elif mode == 'hybrid':
-        _get_csm().lc_mod.set_run_mode(2)
-        
-        # Hybrid mode: efficiency emerges from physics, ignore eff parameter
-        if eff is not None and eff != 1.0:
-            import warnings
-            warnings.warn(
-                f"Hybrid mode: ignoring eff={eff}. Efficiency emerges from radiation physics. "
-                "Setting internal eff=1.0 to deposit full kinetic luminosity.",
-                UserWarning
-            )
-        eff = 1.0  # Always use full kinetic luminosity internally
-        
-        # Set hybrid parameters
-        if kappa is None:
-            kappa = 0.34  # Default opacity for hybrid mode
-        
-        _get_csm().lc_mod.set_hybrid_parameters(
-            n_zones=n_rad_zones,
-            h_frac=hydrogen_fraction,
-            kappa_val=kappa
-        )
-    else:
-        raise ValueError(f"mode must be 'simple' or 'hybrid', got {mode}")
+    if mode == 'simple' and eff is None:
+        raise ValueError("Simple mode requires 'eff' parameter (0-1)")
 
     # Call Fortran with or without kappa
     if kappa is not None:
@@ -147,8 +155,8 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     temperature = _get_csm().lc_mod.temparray.copy()
     
     # larray contains different things depending on mode:
-    # - Simple mode: larray = eff * (lfs + lrs) 
-    # - Hybrid mode: larray = surface luminosity from grid
+    # - Simple mode: larray = eff * (lfs + lrs)
+    # - Hybrid mode: larray = shock luminosity; ldiff stores transport luminosity
     larray_raw = _get_csm().lc_mod.larray.copy()
     
     # Shock luminosity is always lfs + lrs (total kinetic luminosity deposited)
@@ -156,9 +164,9 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
 
     # Get diffuse/observed luminosity
     if mode == 'hybrid':
-        # Hybrid: observed luminosity comes from radiation solver (stored in larray and ldiff)
+        # Hybrid: observed luminosity comes from the transport solver
         lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
-        lbol = lbol_diffuse  # Main output is surface luminosity
+        lbol = lbol_diffuse  # Main output is transport/diffuse luminosity
         lbol_shock = lbol_shock_total  # Store actual shock luminosity for comparison
     elif kappa is not None:
         # Simple with kappa: post-processed diffusion
@@ -218,7 +226,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Photospheric radius
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -235,7 +243,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -316,7 +324,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Photospheric radius
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -333,7 +341,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -416,7 +424,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Photospheric radius
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -433,7 +441,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -512,7 +520,7 @@ def _get_lc_exponential_exponential(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Photospheric radius
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -529,7 +537,7 @@ def _get_lc_exponential_exponential(
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Convert to CGS
     mexp = mexp * solar_mass  # Convert solar masses to grams
@@ -610,7 +618,7 @@ def _get_lc_exponential_bpl(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Photospheric radius
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -629,7 +637,7 @@ def _get_lc_exponential_bpl(
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
     time_ref_days = kwargs.get("time_ref", interval)
 
     csmclass = SequentialCSMModel(verbose=False, time_ref=time_ref_days)
@@ -742,7 +750,7 @@ def _get_lc_bpl_bpl(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Photospheric radius
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -761,7 +769,7 @@ def _get_lc_bpl_bpl(
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Convert to CGS
     mexp = mexp * solar_mass  # Convert solar masses to grams
@@ -863,7 +871,7 @@ def _get_lc_bpl_exponential(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Photospheric radius
+             - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -882,7 +890,7 @@ def _get_lc_bpl_exponential(
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Convert to CGS
     mexp_cgs = mexp * solar_mass
@@ -970,7 +978,7 @@ def _get_lc_boxwind_exponential(
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     mdot = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
@@ -1047,9 +1055,11 @@ def _get_lc_boxwind_bpl(
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    kappa = kwargs.get("kappa", None)
-    efficiency_mode = kwargs.get("efficiency_mode", None)
-
+    mode = kwargs.get("mode", "simple")
+    mode, kappa = _configure_runtime_from_kwargs(
+        kwargs,
+        default_n_rad_zones=default_n_rad_zones,
+    )
     mdot = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
     tgrid = np.array([t1, t1, t2, t2], dtype=np.float64)
@@ -1057,9 +1067,6 @@ def _get_lc_boxwind_bpl(
     vwind = vwind * 1e5  # Convert km/s to cm/s
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
-
-    if efficiency_mode is not None:
-        _get_csm().lc_mod.set_efficiency_mode(int(efficiency_mode))
 
     if kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_bpl(
@@ -1079,7 +1086,10 @@ def _get_lc_boxwind_bpl(
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
 
-    if kappa is not None:
+    if mode == "hybrid":
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+    elif kappa is not None:
         lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
         lbol = lbol_diffuse
     else:
@@ -1140,7 +1150,7 @@ def _get_lc_gausswind_exponential(
                                            mdot_peak=1e-3, vwind=100, mexp=10.0, eexp=1.0, eff=0.5)
     """
     n_points = kwargs.get("n_points", 50)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid for Gaussian profile
     t_start = t_peak - 4 * t_width  # Start 4 sigma before peak
@@ -1237,7 +1247,7 @@ def _get_lc_gausswind_bpl(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid for Gaussian profile
     t_start = t_peak - 4 * t_width  # Start 4 sigma before peak
@@ -1341,7 +1351,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1448,7 +1458,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1552,7 +1562,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1670,7 +1680,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1791,7 +1801,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
     """
     n_points = kwargs.get("n_points", 50)
     smooth_factor = kwargs.get("smooth_factor", 0.2)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -1916,7 +1926,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
     """
     n_points = kwargs.get("n_points", 50)
     smooth_factor = kwargs.get("smooth_factor", 0.2)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
     t_start = 0.1  # Start at 0.1 years to avoid t=0
@@ -2076,7 +2086,7 @@ def _get_lc_multi_eruption_bpl_sn(
     time_ref_seconds = time_ref_days * DAY
     interval_seconds = interval * DAY
     eff = kwargs.get("eff", 0.5)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create CSM model from eruption list
     csm_model = SequentialCSMModel(time_ref=time_ref_days, verbose=False)
@@ -2188,7 +2198,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     time_ref_seconds = time_ref_days * DAY
     interval_seconds = interval * DAY
     eff = kwargs.get("eff", 0.5)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create CSM model from eruption list
     csm_model = SequentialCSMModel(time_ref=time_ref_days, verbose=False)
@@ -2295,7 +2305,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
     time_ref_seconds = time_ref_days * DAY
     interval_seconds = interval * DAY
     eff = kwargs.get("eff", 0.5)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create CSM model from eruption list
     csm_model = SequentialCSMModel(time_ref=time_ref_days, verbose=False)
@@ -2646,7 +2656,7 @@ def _get_lc_generic_csm_exponential(
     """
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", 1e20)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Build shell parameters based on which shells are enabled
     shell_radii = []
@@ -2795,7 +2805,7 @@ def _get_lc_generic_csm_bpl(
     """
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", 1e20)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
     shell_widths = []
@@ -2957,7 +2967,7 @@ def _get_lc_generic_4shell_csm_bpl(
     """
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", 1e20)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
     shell_widths = []
@@ -3175,7 +3185,7 @@ def _get_lc_generic_8shell_csm_bpl(
     r_outer = kwargs.get("r_outer", 1e20)
     base_profile = kwargs.get("base_profile", "powerlaw")
     base_bpl_params = kwargs.get("base_bpl_params", None)
-    kappa = kwargs.get("kappa", None)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Build shell parameters based on which shells are enabled
     shell_radii = []

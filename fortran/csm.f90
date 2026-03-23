@@ -39,7 +39,6 @@ integer,parameter:: ll=10000
  
  ! Hybrid mode parameters
  integer :: n_rad_zones_global = 40
- real(8) :: hydrogen_fraction_global = 0.7d0
  real(8) :: opacity_const_global = 0.34d0
 
 contains
@@ -75,12 +74,11 @@ contains
   end if
  end subroutine set_run_mode
 
- subroutine set_hybrid_parameters(n_zones, h_frac, kappa_val)
+ subroutine set_hybrid_parameters(n_zones, kappa_val)
   integer, intent(in), optional :: n_zones
-  real(8), intent(in), optional :: h_frac, kappa_val
+  real(8), intent(in), optional :: kappa_val
   
   if (present(n_zones)) n_rad_zones_global = n_zones
-  if (present(h_frac)) hydrogen_fraction_global = h_frac
   if (present(kappa_val)) opacity_const_global = kappa_val
  end subroutine set_hybrid_parameters
 

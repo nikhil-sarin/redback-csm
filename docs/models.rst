@@ -17,6 +17,35 @@ Each physical scenario is exposed as four functions:
    * - ``{name}_nickel``
      - CSM + radioactive nickel/cobalt decay, multiband
 
+Shared Runtime Options
+----------------------
+
+All optical / bolometric model wrappers also accept a common set of runtime
+keywords controlling diffusion / transport:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Keyword
+     - Meaning
+   * - ``mode='simple'``
+     - Default thin-shell calculation. If ``kappa`` is supplied, this uses the legacy post-processed diffusion light curve.
+   * - ``mode='hybrid'``
+     - Use the newer transport solver for the observed luminosity while keeping the same shell dynamics.
+   * - ``kappa``
+     - Opacity in ``cm^2 g^-1``. Optional in simple mode. In hybrid mode it defaults to ``0.34`` if omitted.
+   * - ``n_rad_zones``
+     - Number of transport zones used in hybrid mode. Larger values reduce numerical roughness at higher runtime cost.
+   * - ``efficiency_mode``
+     - Optional alternate forward-shock efficiency mode. Default ``0`` keeps the user-supplied constant ``eff``.
+
+Output convention:
+
+- ``lbol`` is the main observable luminosity
+- ``lbol_shock`` is the shock-powered luminosity
+- ``lbol_diffuse`` is the diffusion / transport luminosity when available
+- ``rph`` is the historical field name, but currently stores the shell radius by convention
+
 Wind / Simple CSM Models
 ------------------------
 
@@ -98,6 +127,12 @@ poorly constrained.
 **generic_csm_exponential** / **generic_csm_bpl**
     Power-law base + up to 3 Gaussian shells + exponential or BPL supernova.
 
+**generic_powerlaw_csm_exponential** / **generic_powerlaw_csm_bpl**
+    Finite-support power-law CSM shell with
+    ``rho(r) = rho_in (r / r_inner)^eta`` on ``[r_inner, r_outer]``,
+    normalized by the total shell mass ``m_csm``. These also have matching
+    ``_radio`` variants.
+
 **generic_4shell_csm_bpl**
     Power-law base + up to 4 Gaussian shells + BPL supernova.
 
@@ -115,6 +150,26 @@ For example, ``wind_exponential`` means a steady wind CSM with an exponential SN
 
 Note some models are the other way round, e.g. ``exponential_wind`` means an exponential eruption
 followed by a steady wind, and ``bpl_exponential`` means a BPL eruption followed by an exponential eruption.
+
+Example with hybrid transport:
+
+.. code-block:: python
+
+   from redback_csm.models import wind_bpl_bolometric
+
+   lbol = wind_bpl_bolometric(
+       time=time,
+       mdot=1e-3,
+       vwind=100,
+       delta=0.5,
+       nn=12,
+       mexp=10.0,
+       eexp=1.0,
+       eff=0.5,
+       mode='hybrid',
+       kappa=0.34,
+       n_rad_zones=120,
+   )
 
 Exploration: Arbitrary Density Profile
 ---------------------------------------
