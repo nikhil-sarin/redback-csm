@@ -11,7 +11,7 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
                                    interaction_transport_step, shock_has_emerged, &
                                    initialize_cooling_state_from_interaction, &
                                    cooling_transport_step, transport_timestep_limit, &
-                                   find_transport_photosphere
+                                   shock_motion_timestep_limit, find_transport_photosphere
 
  implicit none
 
@@ -723,10 +723,11 @@ end subroutine lightcurve_wind_bpl
 
 	  integer:: n, nsub, isub, nsub_cool, jsub
 	  real(8):: dt,ku,kr,km, t_end_run
-	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs
-	  real(8) :: r_ph, L_ph, dt_rad, dt_sub, dt_remain, dt_cool, dt_cool_cap
+	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, lum_heat_sub
+	  real(8) :: r_ph, L_ph, dt_rad, dt_sub, dt_remain, dt_cool, dt_cool_cap, dt_int_cap, dt_move
 	  real(8) :: t_old, r_old, u_old, m_old, lum_heat_old, r_sub, m_sub, t_sub
 	  real(8) :: t_sub_prev, r_sub_prev, m_sub_prev, r_out_prev, r_out_sub, f_emerge
+	  real(8) :: r_in_sub, shell_span_sub, gap_to_edge, u_sub, u_emerge, lum_heat_emerge
    type(transport_state_type) :: tr_state
 
   call reset_transport_state(tr_state)
@@ -820,6 +821,29 @@ end subroutine lightcurve_wind_bpl
        else
         nsub = 1
        end if
+       dt_move = shock_motion_timestep_limit(tr_state, u_old)
+       if(dt_move > 0d0 .and. dt_move < huge(1d0))then
+        nsub = min(256, max(nsub, ceiling(dt / max(dt_move, 1d-30))))
+       end if
+       dt_int_cap = huge(1d0)
+       if(.not.tr_state%in_cooling_phase)then
+        if(tr_state%initialized .and. tr_state%r_outer_support > tr_state%r_inner)then
+         r_out_sub = tr_state%r_outer_support
+         r_in_sub = tr_state%r_inner
+        else
+         r_out_sub = query_csm_outer_edge(t, op(2))
+         r_in_sub = query_csm_inner_edge(t, op(2))
+        end if
+        shell_span_sub = max(r_out_sub - r_in_sub, 1d-30)
+        gap_to_edge = r_out_sub - r
+        if(gap_to_edge > 0d0 .and. gap_to_edge < 0.1d0*shell_span_sub)then
+         dt_int_cap = 0.0025d0*86400d0
+         if(gap_to_edge < 0.05d0*shell_span_sub) dt_int_cap = 0.001d0*86400d0
+        end if
+       end if
+       if(dt_int_cap < huge(1d0))then
+        nsub = min(256, max(nsub, ceiling(dt / dt_int_cap)))
+       end if
       end if
       dt_sub = dt / dble(max(nsub,1))
       do isub = 1, nsub
@@ -828,22 +852,35 @@ end subroutine lightcurve_wind_bpl
        m_sub_prev = m_old + (m - m_old) * dble(isub-1) / dble(max(nsub,1))
        t_sub = t_old + dble(isub) * dt_sub
        r_sub = r_old + (r - r_old) * dble(isub) / dble(max(nsub,1))
+       u_sub = u_old + (u - u_old) * (dble(isub) - 0.5d0) / dble(max(nsub,1))
        m_sub = m_old + (m - m_old) * dble(isub) / dble(max(nsub,1))
+       lum_heat_sub = lum_heat_old + (lum_heat - lum_heat_old) * &
+            (dble(isub) - 0.5d0) / dble(max(nsub,1))
+       lum_heat_sub = max(lum_heat_sub, 0d0)
        if(.not.tr_state%in_cooling_phase)then
-        if(shock_has_emerged(r_sub,t_sub))then
-         if(.not.shock_has_emerged(r_sub_prev,t_sub_prev))then
-          r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
-          r_out_sub = query_csm_outer_edge(t_sub, op(2))
-          f_emerge = (r_out_prev - r_sub_prev) / max((r_sub - r_sub_prev) - (r_out_sub - r_out_prev), 1d-30)
-          f_emerge = min(max(f_emerge, 0d0), 1d0)
+        if(tr_state%initialized .and. tr_state%r_outer_support > tr_state%r_inner)then
+         r_out_prev = tr_state%r_outer_support
+         r_out_sub = tr_state%r_outer_support
+        else
+         r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
+         r_out_sub = query_csm_outer_edge(t_sub, op(2))
+        end if
+        if(r_sub >= r_out_sub)then
+         if(r_sub_prev < r_out_prev)then
+         f_emerge = (r_out_prev - r_sub_prev) / max((r_sub - r_sub_prev) - (r_out_sub - r_out_prev), 1d-30)
+         f_emerge = min(max(f_emerge, 0d0), 1d0)
+         u_emerge = u_old + (u - u_old) * (dble(isub-1) + f_emerge) / dble(max(nsub,1))
+         lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * &
+              (dble(isub-1) + f_emerge) / dble(max(nsub,1))
+         lum_heat_emerge = max(lum_heat_emerge, 0d0)
           if(f_emerge > 0d0)then
            call interaction_transport_step(tr_state, f_emerge*dt_sub, &
-                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_old, &
+                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
                 t_sub_prev + f_emerge*(t_sub-t_sub_prev), &
-                m_sub_prev + f_emerge*(m_sub-m_sub_prev), lum_heat_old, L_ph, r_ph)
+                m_sub_prev + f_emerge*(m_sub-m_sub_prev), lum_heat_emerge, L_ph, r_ph)
           end if
           call initialize_cooling_state_from_interaction(tr_state, &
-               r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_old, &
+               r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
                m_sub_prev + f_emerge*(m_sub-m_sub_prev), &
                t_sub_prev + f_emerge*(t_sub-t_sub_prev))
           dt_remain = (1d0-f_emerge)*dt_sub
@@ -892,11 +929,26 @@ end subroutine lightcurve_wind_bpl
          call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph)
         end if
        end if
-      else
-         call interaction_transport_step(tr_state, dt_sub, r_sub, u_old, t_sub, m_sub, lum_heat_old, L_ph, r_ph)
+       else
+         call interaction_transport_step(tr_state, dt_sub, r_sub, u_sub, t_sub, m_sub, lum_heat_sub, L_ph, r_ph)
         end if
        else
         call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph)
+       end if
+
+       if(t_sub > t_start)then
+        if (n < 1 .or. t_sub > t_array(n) * (1.0d0 + 1.0d-3)) then
+         n = n + 1
+         ld_array(n) = L_ph
+         t_array(n) = t_sub
+         l_array(n) = lum_heat_sub
+         fs_array(n) = lum_fs
+         rs_array(n) = lum_rs
+         r_array(n) = r_sub
+         m_array(n) = m_sub
+         v_array(n) = u
+         if(n>=ll)exit
+        end if
        end if
       end do
      else
@@ -906,7 +958,7 @@ end subroutine lightcurve_wind_bpl
    endif
 
 ! Store output arrays
-   if((run_mode == 1 .and. t>1d4) .or. (run_mode == 2 .and. t>t_start))then
+   if((run_mode == 1 .and. t>1d4) .or. (run_mode == 2 .and. t>t_start .and. .not.diffusion_enabled))then
     if (n >= 1) then
       if (run_mode == 2) then
         if (t <= t_array(n) * (1.0d0 + 1.0d-3)) cycle

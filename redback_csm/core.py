@@ -1055,11 +1055,7 @@ def _get_lc_boxwind_bpl(
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
-    mode = kwargs.get("mode", "simple")
-    mode, kappa = _configure_runtime_from_kwargs(
-        kwargs,
-        default_n_rad_zones=default_n_rad_zones,
-    )
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
     mdot = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
     tgrid = np.array([t1, t1, t2, t2], dtype=np.float64)
