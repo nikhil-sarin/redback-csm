@@ -213,12 +213,178 @@ contains
   v_wind = op%vwind
  end function v_wind
 
- function v_explosion(r,t,op)
+function v_explosion(r,t,op)
   type(outflow_parameters),intent(inout):: op
   real(8),intent(in):: r,t
   real(8):: v_explosion, tp
   tp = t+op%delay
   v_explosion = r/tp
  end function v_explosion
+
+ function query_csm_density(r,t,op_in) result(rho_csm)
+! Side-effect-safe CSM density query for transport modules.
+  use constants,only:pi
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r,t
+  real(8):: rho_csm
+  type(outflow_parameters):: op_local
+
+  op_local = op_in
+ rho_csm = rho4pir2_out(r,t,op_local)/(4d0*pi*max(r,1d0)**2)
+ end function query_csm_density
+
+ function query_ejecta_density(r,t,op_in) result(rho_ej)
+! Side-effect-safe ejecta density query for transport modules.
+  use constants,only:pi
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r,t
+  real(8):: rho_ej
+  type(outflow_parameters):: op_local
+
+  op_local = op_in
+  rho_ej = rho4pir2_in(r,t,op_local)/(4d0*pi*max(r,1d0)**2)
+ end function query_ejecta_density
+
+ function query_csm_velocity(r,t,op_in) result(v_csm)
+! Side-effect-safe CSM velocity query for transport modules.
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r,t
+  real(8):: v_csm
+  type(outflow_parameters):: op_local
+
+  op_local = op_in
+ v_csm = v_out(r,t,op_local)
+ end function query_csm_velocity
+
+ function query_ejecta_velocity(r,t,op_in) result(v_ej)
+! Side-effect-safe ejecta velocity query for transport modules.
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r,t
+  real(8):: v_ej
+  type(outflow_parameters):: op_local
+
+  op_local = op_in
+  v_ej = v_in(r,t,op_local)
+ end function query_ejecta_velocity
+
+ function query_csm_inner_edge(t,op_in) result(r_in)
+! Estimate the inner support of the supplied CSM profile.
+  real(8),intent(in):: t
+  type(outflow_parameters),intent(in):: op_in
+  real(8):: r_in
+  integer:: n
+
+  r_in = 1d0
+
+  if(associated(op_in%t_grid).and.associated(op_in%mdot))then
+   n = size(op_in%t_grid)
+   if(n>0.and.op_in%vwind>0d0)then
+    r_in = max(op_in%vwind*(t + minval(op_in%t_grid(1:n))), 1d0)
+   end if
+  elseif(associated(op_in%v_grid).and.associated(op_in%rho_expl))then
+   n = size(op_in%v_grid)
+   if(n>0)r_in = max(op_in%v_grid(1)*(t + op_in%delay), 1d0)
+  elseif(op_in%exp_v0>0d0)then
+   r_in = max(0.05d0*op_in%exp_v0*(t + op_in%delay), 1d0)
+  elseif(op_in%bpl_vt>0d0)then
+   r_in = max(0.05d0*op_in%bpl_vt*(t + op_in%delay), 1d0)
+  end if
+ end function query_csm_inner_edge
+
+ function query_csm_outer_edge(t,op_in) result(r_out)
+! Estimate the finite outer support of the supplied CSM profile.
+! For effectively steady winds this returns a very large radius so the
+! transport layer can treat them as non-emergent / interaction-phase only.
+  real(8),intent(in):: t
+  type(outflow_parameters),intent(in):: op_in
+  real(8):: r_out
+  integer:: n
+
+  r_out = huge(1d0)
+
+  if(associated(op_in%t_grid).and.associated(op_in%mdot))then
+   n = size(op_in%t_grid)
+   if(n>0.and.op_in%vwind>0d0)then
+    r_out = op_in%vwind*(t + maxval(op_in%t_grid(1:n)))
+   end if
+  elseif(associated(op_in%v_grid).and.associated(op_in%rho_expl))then
+   n = size(op_in%v_grid)
+   if(n>0)r_out = op_in%v_grid(n)*(t + op_in%delay)
+  elseif(op_in%exp_v0>0d0)then
+   r_out = 20d0*op_in%exp_v0*(t + op_in%delay)
+  elseif(op_in%bpl_vt>0d0)then
+   r_out = 20d0*op_in%bpl_vt*(t + op_in%delay)
+  end if
+ end function query_csm_outer_edge
+
+ function query_tau_to_edge(r,t,op_in,kappa) result(tau_out)
+! Side-effect-safe optical depth from radius r to the outer edge of the CSM.
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r,t,kappa
+  real(8):: tau_out
+  real(8):: r0, r1, rout, dr, rho0, rho1, ratio
+  integer:: i, nseg
+
+  tau_out = 0d0
+  if(kappa<=0d0)return
+
+  r0 = max(r,1d0)
+  rout = query_csm_outer_edge(t,op_in)
+  if(.not.(rout>r0))return
+
+  ! For effectively steady winds, do not integrate to an absurd outer radius.
+  if(rout>r0*1d4)rout = r0*1d4
+
+  nseg = 128
+  ratio = (rout/r0)**(1d0/dble(nseg))
+  r1 = r0
+  rho1 = query_csm_density(r1,t,op_in)
+
+  do i = 1, nseg
+   r0 = r1
+   rho0 = rho1
+   r1 = min(rout, r1*ratio)
+   rho1 = query_csm_density(r1,t,op_in)
+   dr = r1-r0
+   tau_out = tau_out + 0.5d0*kappa*(rho0+rho1)*dr
+   if(r1>=rout)exit
+  end do
+ end function query_tau_to_edge
+
+ function query_csm_photosphere_radius(r_inner,t,op_in,kappa) result(r_ph)
+! Side-effect-safe estimate of the radius where tau(r)=2/3.
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r_inner,t,kappa
+  real(8):: r_ph
+  real(8):: rlo, rhi, rmid, tau_mid, rout
+  integer:: iter
+
+  rlo = max(r_inner,1d0)
+  rout = query_csm_outer_edge(t,op_in)
+  if(.not.(rout>rlo))then
+   r_ph = rlo
+   return
+  end if
+
+  if(query_tau_to_edge(rlo,t,op_in,kappa)<=2d0/3d0)then
+   r_ph = rlo
+   return
+  end if
+
+  rhi = rout
+  if(rhi>rlo*1d4)rhi = rlo*1d4
+
+  do iter = 1, 60
+   rmid = sqrt(rlo*rhi)
+   tau_mid = query_tau_to_edge(rmid,t,op_in,kappa)
+   if(tau_mid>2d0/3d0)then
+    rlo = rmid
+   else
+    rhi = rmid
+   end if
+  end do
+
+  r_ph = rhi
+ end function query_csm_photosphere_radius
 
 end module get_vals

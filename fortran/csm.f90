@@ -1,15 +1,17 @@
 module lc_mod
 
  use constants,only:pi,year,clight,intpol,temperature
- use diffusion_runtime, only: paper_mode, diffusion_enabled, eff_global, erad, &
-                              shock_efficiency_mode, &
-                              configure_runtime, reset_diffusion_state, &
-                              shell_optical_depth, photosphere_radius, &
-                              solve_diffusion_step, set_runtime_mode, &
-                              set_shock_efficiency_mode_runtime => set_shock_efficiency_mode
- use radiation_physics, only: radiation_grid_type, initialize_local_grid, &
-                               update_local_grid, deposit_contact_heating, &
-                               radiation_step, find_photosphere
+ use csm_runtime, only: paper_mode, diffusion_enabled, eff_global, erad, &
+                        shock_efficiency_mode, &
+                        configure_runtime, reset_diffusion_state, &
+                        shell_optical_depth, photosphere_radius, &
+                        solve_diffusion_step, set_runtime_mode, &
+                        set_shock_efficiency_mode_runtime => set_shock_efficiency_mode
+use csm_transport, only: transport_state_type, reset_transport_state, &
+                                   interaction_transport_step, shock_has_emerged, &
+                                   initialize_cooling_state_from_interaction, &
+                                   cooling_transport_step, transport_timestep_limit, &
+                                   find_transport_photosphere
 
  implicit none
 
@@ -45,7 +47,12 @@ contains
  subroutine set_model_mode(mode)
   integer,intent(in):: mode
 
- call set_runtime_mode(mode)
+  call set_runtime_mode(mode)
+  if(mode==1)then
+   run_mode = 1
+  else
+   run_mode = 2
+  end if
  end subroutine set_model_mode
 
  subroutine set_efficiency_mode(mode)
@@ -91,6 +98,7 @@ contains
 
    if(present(kappa))then
     call get_diffuse_lc(csm_type,kappa)
+    temparray = temperature(ldiff,rarray)
    elseif(allocated(ldiff))then
     deallocate(ldiff)
    end if
@@ -715,20 +723,23 @@ end subroutine lightcurve_wind_bpl
   use integration
   use get_vals
 
-	  integer:: n, scan_save
-	  real(8):: dt,ku,kr,km
-	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, tau_now, r_ph_now, r_store, eta_fs
-	  real(8):: rho_csm, rho_ej
-	  type(radiation_grid_type) :: grid
-	  logical :: grid_initialized
-	  real(8) :: r_ph, L_ph, T_ph
+	  integer:: n, nsub, isub, nsub_cool, jsub
+	  real(8):: dt,ku,kr,km, t_end_run
+	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs
+	  real(8) :: r_ph, L_ph, dt_rad, dt_sub, dt_remain, dt_cool, dt_cool_cap
+	  real(8) :: t_old, r_old, u_old, m_old, lum_heat_old, r_sub, m_sub, t_sub
+	  real(8) :: t_sub_prev, r_sub_prev, m_sub_prev, r_out_prev, r_out_sub, f_emerge
+   type(transport_state_type) :: tr_state
 
-  grid_initialized = .false.
+  call reset_transport_state(tr_state)
+  if(run_mode == 2)then
+   t_end_run = min(t_end, 300d0*86400d0)
+  else
+   t_end_run = t_end
+  end if
   
-  ! Initialize photospheric quantities to zero
   L_ph = 0.0d0
   r_ph = 0.0d0
-  T_ph = 0.0d0
 
   t_array = -1d0
   ld_array = 0d0
@@ -736,7 +747,7 @@ end subroutine lightcurve_wind_bpl
   rs_array = 0d0
   i_array = 0
   n = 0
-  do while (t<=t_end)
+  do while (t<=t_end_run)
 
 ! Evolve shell properties
 	   ku = dudt(u,r,m,t,op)
@@ -774,9 +785,15 @@ end subroutine lightcurve_wind_bpl
     if(abs(ku)>1d-30)dt = min(dt,abs(u/ku))
     if(abs(kr)>1d-30)dt = min(dt,abs(r/kr))
     if(abs(km)>1d-30)dt = min(dt,abs(m/km))
-    dt = 0.01d0*dt
+   dt = 0.01d0*dt
     if(.not.(dt>0d0.and.dt<huge(1d0)))exit
    end if
+
+	   t_old = t
+	   r_old = r
+	   u_old = u
+	   m_old = m
+	   lum_heat_old = lum_heat
 
    u = u + dt*ku
    r = r + dt*kr
@@ -792,49 +809,124 @@ end subroutine lightcurve_wind_bpl
 
    t = t + dt
 
-   ! ===== HYBRID MODE: RADIATION DIFFUSION =====
    if (run_mode == 2) then
-     
-     ! Get local densities (needed for grid)
-     rho_csm = rho4pir2_out(r, t, op(2)) / (4.0d0*pi*r**2)
-     rho_ej = rho4pir2_in(r, t, op(1)) / (4.0d0*pi*r**2)
-     
-     ! Initialize grid (first time only)
-     if (.not. grid_initialized) then
-       call initialize_local_grid(grid, r, m, rho_csm, rho_ej, &
-                                  n_rad_zones_global)
-       grid%opacity_const = opacity_const_global
-       grid%hydrogen_fraction = hydrogen_fraction_global
-       grid_initialized = .true.
-     endif
-     
-     ! Update grid geometry (every step)
-     call update_local_grid(grid, r, m, rho_csm, rho_ej)
-     
-     ! Deposit shock heating
-     call deposit_contact_heating(grid, r, lum_heat)
-     
-     ! Solve radiation diffusion
-     call radiation_step(grid, dt)
-     
-     ! Optional: get photosphere for diagnostics
-     call find_photosphere(grid, r_ph, L_ph, T_ph)
-     
+     if(diffusion_enabled)then
+      if(.not.tr_state%initialized)then
+       tr_state%kappa = opacity_const_global
+       tr_state%n_zones = n_rad_zones_global
+       nsub = 1
+      else
+       dt_rad = transport_timestep_limit(tr_state)
+       if(dt_rad > 0d0 .and. dt_rad < huge(1d0))then
+        nsub = min(128, max(1, ceiling(dt / max(dt_rad, 1d-30))))
+       else
+        nsub = 1
+       end if
+      end if
+      dt_sub = dt / dble(max(nsub,1))
+      do isub = 1, nsub
+       t_sub_prev = t_old + dble(isub-1) * dt_sub
+       r_sub_prev = r_old + (r - r_old) * dble(isub-1) / dble(max(nsub,1))
+       m_sub_prev = m_old + (m - m_old) * dble(isub-1) / dble(max(nsub,1))
+       t_sub = t_old + dble(isub) * dt_sub
+       r_sub = r_old + (r - r_old) * dble(isub) / dble(max(nsub,1))
+       m_sub = m_old + (m - m_old) * dble(isub) / dble(max(nsub,1))
+       if(.not.tr_state%in_cooling_phase)then
+        if(shock_has_emerged(r_sub,t_sub))then
+         if(.not.shock_has_emerged(r_sub_prev,t_sub_prev))then
+          r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
+          r_out_sub = query_csm_outer_edge(t_sub, op(2))
+          f_emerge = (r_out_prev - r_sub_prev) / max((r_sub - r_sub_prev) - (r_out_sub - r_out_prev), 1d-30)
+          f_emerge = min(max(f_emerge, 0d0), 1d0)
+          if(f_emerge > 0d0)then
+           call interaction_transport_step(tr_state, f_emerge*dt_sub, &
+                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_old, &
+                t_sub_prev + f_emerge*(t_sub-t_sub_prev), &
+                m_sub_prev + f_emerge*(m_sub-m_sub_prev), lum_heat_old, L_ph, r_ph)
+          end if
+          call initialize_cooling_state_from_interaction(tr_state, &
+               r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_old, &
+               m_sub_prev + f_emerge*(m_sub-m_sub_prev), &
+               t_sub_prev + f_emerge*(t_sub-t_sub_prev))
+          dt_remain = (1d0-f_emerge)*dt_sub
+          if(dt_remain > 0d0)then
+           dt_rad = transport_timestep_limit(tr_state)
+           if(dt_rad > 0d0 .and. dt_rad < huge(1d0))then
+            nsub_cool = min(32, max(1, ceiling(dt_remain / max(0.5d0*dt_rad, 1d-30))))
+           else
+            nsub_cool = 1
+           end if
+           dt_cool_cap = huge(1d0)
+           if (tr_state%t_emerge > 0d0) then
+           if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.05d0*86400d0) then
+             dt_cool_cap = 0.001d0*86400d0
+            else if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.1d0*86400d0) then
+             dt_cool_cap = 0.0025d0*86400d0
+            end if
+           end if
+           if (dt_cool_cap < huge(1d0)) then
+            nsub_cool = min(128, max(nsub_cool, ceiling(dt_remain / dt_cool_cap)))
+           end if
+           dt_cool = dt_remain / dble(max(nsub_cool,1))
+           do jsub = 1, nsub_cool
+            call cooling_transport_step(tr_state, dt_cool, &
+                 t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool, L_ph, r_ph)
+           end do
+          else
+           call find_transport_photosphere(tr_state, r_ph, L_ph)
+          end if
+       else
+        dt_cool_cap = huge(1d0)
+        if (tr_state%t_emerge > 0d0) then
+         if (t_sub - tr_state%t_emerge < 0.05d0*86400d0) then
+          dt_cool_cap = 0.001d0*86400d0
+         else if (t_sub - tr_state%t_emerge < 0.1d0*86400d0) then
+          dt_cool_cap = 0.0025d0*86400d0
+         end if
+        end if
+        if (dt_cool_cap < huge(1d0) .and. dt_sub > dt_cool_cap) then
+         nsub_cool = min(128, max(1, ceiling(dt_sub / dt_cool_cap)))
+         dt_cool = dt_sub / dble(max(nsub_cool,1))
+         do jsub = 1, nsub_cool
+          call cooling_transport_step(tr_state, dt_cool, t_sub_prev + dble(jsub)*dt_cool, L_ph, r_ph)
+         end do
+        else
+         call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph)
+        end if
+       end if
+      else
+         call interaction_transport_step(tr_state, dt_sub, r_sub, u_old, t_sub, m_sub, lum_heat_old, L_ph, r_ph)
+        end if
+       else
+        call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph)
+       end if
+      end do
+     else
+      L_ph = lum_heat
+      r_ph = r
+     end if
    endif
 
 ! Store output arrays
-   if(t>1d4)then ! avoid first few steps that contain large errors
+   if((run_mode == 1 .and. t>1d4) .or. (run_mode == 2 .and. t>t_start))then
+    if (n >= 1) then
+      if (run_mode == 2) then
+        if (t <= t_array(n) * (1.0d0 + 1.0d-3)) cycle
+      else
+        if (t <= t_array(n) * (1.0d0 + 1.0d-10)) cycle
+      end if
+    end if
     if(run_mode == 1)then
      if(n>=1)i_array(n) = op(2)%scan_i
     end if
     n = n+1
     
     ! Determine what to output based on mode
-    if(run_mode == 2)then
-     ! HYBRID MODE: Output surface luminosity from radiation solver
-     lum_store = grid%lum(grid%n_zones)  ! Surface luminosity
-     ld_array(n) = grid%lum(grid%n_zones)
-     r_store = r_ph      ! Photospheric radius (for diagnostics)
+     if(run_mode == 2)then
+     ! HYBRID MODE: store shock power and emergent diffuse luminosity separately.
+     lum_store = lum_heat
+     ld_array(n) = L_ph
+     r_store = r
     else
      ! SIMPLE MODE: store shock luminosity; diffusion is applied later in finalize_outputs
      lum_store = lum_heat
@@ -971,7 +1063,9 @@ end subroutine lightcurve_wind_bpl
 
    tdiff = tau(i)*rarray(i)/clight
    tadv  = rarray(i)/varray(i)
+   if(tdiff<=0d0.or.tadv<=0d0)cycle
    tloss = 1d0/(1d0/tdiff+1d0/tadv)
+   if(tloss<=0d0)cycle
    do j = i+1, size(tarray)
     dldiff = exp((tarray(i+1)-tarray(j))/tloss)&
            - exp((tarray(i  )-tarray(j))/tloss)

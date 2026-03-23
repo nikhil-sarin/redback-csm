@@ -1,4 +1,4 @@
-module diffusion_runtime
+module csm_runtime
 
  use constants, only: pi, clight, intpol
  use get_vals, only: op, get_tauprep_explosion, rho4pir2_out
@@ -441,4 +441,4 @@ contains
   erad = diffusion_total_energy()
  end subroutine solve_diffusion_step
 
-end module diffusion_runtime
+end module csm_runtime
