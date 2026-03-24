@@ -11,7 +11,8 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
                                    interaction_transport_step, shock_has_emerged, &
                                    initialize_cooling_state_from_interaction, &
                                    cooling_transport_step, transport_timestep_limit, &
-                                   shock_motion_timestep_limit, find_transport_photosphere
+                                   shock_motion_timestep_limit, find_transport_photosphere, &
+                                   forward_shock_radius
 
  implicit none
 
@@ -857,18 +858,21 @@ end subroutine lightcurve_wind_bpl
        lum_heat_sub = lum_heat_old + (lum_heat - lum_heat_old) * &
             (dble(isub) - 0.5d0) / dble(max(nsub,1))
        lum_heat_sub = max(lum_heat_sub, 0d0)
-       if(.not.tr_state%in_cooling_phase)then
-        if(tr_state%initialized .and. tr_state%r_outer_support > tr_state%r_inner)then
-         r_out_prev = tr_state%r_outer_support
-         r_out_sub = tr_state%r_outer_support
-        else
-         r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
-         r_out_sub = query_csm_outer_edge(t_sub, op(2))
-        end if
-        if(r_sub >= r_out_sub)then
-         if(r_sub_prev < r_out_prev)then
-         f_emerge = (r_out_prev - r_sub_prev) / max((r_sub - r_sub_prev) - (r_out_sub - r_out_prev), 1d-30)
-         f_emerge = min(max(f_emerge, 0d0), 1d0)
+	       if(.not.tr_state%in_cooling_phase)then
+	        if(tr_state%initialized .and. tr_state%r_outer_support > tr_state%r_inner)then
+	         r_out_prev = tr_state%r_outer_support
+	         r_out_sub = tr_state%r_outer_support
+	        else
+	         r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
+	         r_out_sub = query_csm_outer_edge(t_sub, op(2))
+	        end if
+	        if(forward_shock_radius(tr_state, r_sub, t_sub, m_sub) >= r_out_sub)then
+	         if(forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev) < r_out_prev)then
+	         f_emerge = (r_out_prev - forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)) / &
+	              max((forward_shock_radius(tr_state, r_sub, t_sub, m_sub) - &
+	                   forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)) - &
+	                   (r_out_sub - r_out_prev), 1d-30)
+	         f_emerge = min(max(f_emerge, 0d0), 1d0)
          u_emerge = u_old + (u - u_old) * (dble(isub-1) + f_emerge) / dble(max(nsub,1))
          lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * &
               (dble(isub-1) + f_emerge) / dble(max(nsub,1))
