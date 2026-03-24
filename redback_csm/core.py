@@ -2681,6 +2681,78 @@ def create_generic_csm_density(
     return r_grid, v_grid, csm_density
 
 
+def create_static_powerlaw_csm_density(
+    eta,
+    r_inner,
+    r_outer,
+    m_csm,
+    n_points=200,
+):
+    """
+    Create a static finite-support power-law CSM density profile at explosion time.
+
+    Parameters
+    ----------
+    eta : float
+        Density slope in rho(r) \propto r^eta.
+    r_inner, r_outer : float
+        Inner and outer shell radii in cm.
+    m_csm : float
+        Total CSM mass in Msun.
+    n_points : int
+        Number of radial grid points.
+
+    Returns
+    -------
+    r_grid : ndarray
+        Radius grid in cm.
+    rho_grid : ndarray
+        Density profile in g/cm^3 defined at explosion time.
+    """
+    if not (r_outer > r_inner > 0.0):
+        raise ValueError("Require r_outer > r_inner > 0")
+
+    r_grid = np.logspace(np.log10(r_inner), np.log10(r_outer), n_points)
+    m_csm_cgs = m_csm * solar_mass
+    if abs(eta + 3.0) < 1e-12:
+        mass_factor = 4.0 * np.pi * r_inner**3 * np.log(r_outer / r_inner)
+    else:
+        mass_factor = (
+            4.0
+            * np.pi
+            * r_inner ** (-eta)
+            * (r_outer ** (eta + 3.0) - r_inner ** (eta + 3.0))
+            / (eta + 3.0)
+        )
+    rho_inner = m_csm_cgs / mass_factor
+    rho_grid = rho_inner * (r_grid / r_inner) ** eta
+    return r_grid, rho_grid
+
+
+def _rho_static_powerlaw_at_r(r_array, **kwargs):
+    """Static finite-support power-law CSM density evaluated directly in radius."""
+    eta = kwargs["eta"]
+    r_inner = kwargs["r_inner"]
+    r_outer = kwargs["r_outer"]
+    m_csm_cgs = kwargs["m_csm"] * solar_mass
+
+    rho = np.zeros_like(r_array, dtype=float)
+    if abs(eta + 3.0) < 1e-12:
+        mass_factor = 4.0 * np.pi * r_inner**3 * np.log(r_outer / r_inner)
+    else:
+        mass_factor = (
+            4.0
+            * np.pi
+            * r_inner ** (-eta)
+            * (r_outer ** (eta + 3.0) - r_inner ** (eta + 3.0))
+            / (eta + 3.0)
+        )
+    rho_inner = m_csm_cgs / mass_factor
+    mask = (r_array >= r_inner) & (r_array <= r_outer)
+    rho[mask] = rho_inner * (r_array[mask] / r_inner) ** eta
+    return rho
+
+
 def _get_lc_generic_csm_exponential(
     base_density,
     base_index,
@@ -2996,6 +3068,151 @@ def _get_lc_generic_csm_bpl(
     outs.vshell = vshell
     outs.shell_mass = shell_mass
 
+    return _freeze_output(outs)
+
+
+def _get_lc_static_powerlaw_csm_exponential(
+    eta,
+    r_inner,
+    r_outer,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs,
+):
+    """Static finite-support power-law CSM shell interacting with an exponential SN."""
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
+    n_points = kwargs.get("n_points", 200)
+
+    r_grid, csm_density = create_static_powerlaw_csm_density(
+        eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm, n_points=n_points
+    )
+
+    mej_sn_grams = mej_sn * solar_mass
+    esn_ergs = esn * foe
+
+    if kappa is not None:
+        _get_csm().lc_mod.lightcurve_static_exponential(
+            csm_density, r_grid, mej_sn_grams, esn_ergs, eff, kappa
+        )
+    else:
+        _get_csm().lc_mod.lightcurve_static_exponential(
+            csm_density, r_grid, mej_sn_grams, esn_ergs, eff
+        )
+
+    time_array = _get_csm().lc_mod.tarray.copy()
+    lbol_shock = _get_csm().lc_mod.larray.copy()
+    rph = _get_csm().lc_mod.rarray.copy()
+    vshell = _get_csm().lc_mod.varray.copy()
+    shell_mass = _get_csm().lc_mod.marray.copy()
+    temperature = _get_csm().lc_mod.temparray.copy()
+
+    if kappa is not None:
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+    else:
+        lbol_diffuse = None
+        lbol = lbol_shock
+
+    outs = _output_builder(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
+    outs.time = time_array
+    outs.lbol = lbol
+    outs.lbol_shock = lbol_shock
+    outs.lbol_diffuse = lbol_diffuse
+    outs.rph = rph
+    outs.temperature = temperature
+    outs.vshell = vshell
+    outs.shell_mass = shell_mass
+    return _freeze_output(outs)
+
+
+def _get_lc_static_powerlaw_csm_bpl(
+    eta,
+    r_inner,
+    r_outer,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs,
+):
+    """Static finite-support power-law CSM shell interacting with a BPL SN."""
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
+    n_points = kwargs.get("n_points", 1000)
+
+    r_grid, csm_density = create_static_powerlaw_csm_density(
+        eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm, n_points=n_points
+    )
+
+    mej_sn_grams = mej_sn * solar_mass
+    esn_ergs = esn * foe
+
+    if kappa is not None:
+        _get_csm().lc_mod.lightcurve_static_bpl(
+            csm_density,
+            r_grid,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            eff,
+            kappa,
+        )
+    else:
+        _get_csm().lc_mod.lightcurve_static_bpl(
+            csm_density, r_grid, delta_sn, nn_sn, mej_sn_grams, esn_ergs, eff
+        )
+
+    time_array = _get_csm().lc_mod.tarray.copy()
+    lbol_shock = _get_csm().lc_mod.larray.copy()
+    rph = _get_csm().lc_mod.rarray.copy()
+    vshell = _get_csm().lc_mod.varray.copy()
+    shell_mass = _get_csm().lc_mod.marray.copy()
+    temperature = _get_csm().lc_mod.temparray.copy()
+
+    if kappa is not None:
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+    else:
+        lbol_diffuse = None
+        lbol = lbol_shock
+
+    outs = _output_builder(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
+    outs.time = time_array
+    outs.lbol = lbol
+    outs.lbol_shock = lbol_shock
+    outs.lbol_diffuse = lbol_diffuse
+    outs.rph = rph
+    outs.temperature = temperature
+    outs.vshell = vshell
+    outs.shell_mass = shell_mass
     return _freeze_output(outs)
 
 
@@ -4641,6 +4858,32 @@ _DISPATCH = {
             "eff",
         ],
     ),
+    "static_powerlaw_csm_exponential": (
+        _get_lc_static_powerlaw_csm_exponential,
+        [
+            "eta",
+            "r_inner",
+            "r_outer",
+            "mej_sn",
+            "esn",
+            "eff",
+            "m_csm",
+        ],
+    ),
+    "static_powerlaw_csm_bpl": (
+        _get_lc_static_powerlaw_csm_bpl,
+        [
+            "eta",
+            "r_inner",
+            "r_outer",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+            "m_csm",
+        ],
+    ),
     "generic_4shell_csm_bpl": (
         _get_lc_generic_4shell_csm_bpl,
         [
@@ -4950,6 +5193,8 @@ _CSM_DENSITY_TYPE = {
     'generic_csm_bpl':                     'generic',
     'generic_4shell_csm_bpl':              'generic',
     'generic_8shell_csm_bpl':              'generic',
+    'static_powerlaw_csm_exponential':     'static_powerlaw',
+    'static_powerlaw_csm_bpl':             'static_powerlaw',
 }
 
 
@@ -4996,6 +5241,9 @@ def _get_rho_csm_at_shock(csm_model, lc, **kwargs):
 
     elif density_type == 'generic':
         return _rho_generic_at_r(r_sh, **kwargs)
+
+    elif density_type == 'static_powerlaw':
+        return _rho_static_powerlaw_at_r(r_sh, **kwargs)
 
     else:
         raise ValueError(f"Unhandled density type '{density_type}'")

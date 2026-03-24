@@ -14,8 +14,10 @@ module get_vals
   real(8):: exp_v0
   ! Additional parameters for broken power-law density distribution
   real(8):: bpl_n, bpl_d, bpl_vt, bpl_rho0
-  ! Arrays for setting arbitrary density distribution in an explosion
+ ! Arrays for setting arbitrary density distribution in an explosion
   real(8),pointer:: rho_expl(:),v_grid(:)
+  ! Arrays for setting arbitrary static CSM density distribution in radius
+  real(8),pointer:: rho_static(:),r_grid_static(:)
   integer:: scan_i
   real(8):: t_ref
   ! Interval between two explosions
@@ -52,6 +54,8 @@ contains
   op%bpl_rho0 = 0d0
   if(associated(op%rho_expl))nullify(op%rho_expl)
   if(associated(op%v_grid))nullify(op%v_grid)
+  if(associated(op%rho_static))nullify(op%rho_static)
+  if(associated(op%r_grid_static))nullify(op%r_grid_static)
   op%scan_i = 0
   op%t_ref = 0d0
   op%delay = 0d0
@@ -203,8 +207,54 @@ contains
    op%scan_i = i*increment
    Mdot_wind = intpol(t_wind,op%t_grid(i:i+1),op%mdot(i:i+1))
   end if
-  rho_wind = Mdot_wind/op%vwind
+ rho_wind = Mdot_wind/op%vwind
  end function rho_wind
+
+ function rho_static_profile(r,t,op)
+ ! Computes 4*pi*r^2*rho at a given location for a static CSM density profile.
+  use constants,only:pi,intpol
+  type(outflow_parameters),intent(inout):: op
+  real(8),intent(in):: r,t
+  real(8):: rho_static_profile, rho_here
+  integer:: i,n, is,ie,increment
+
+  n = size(op%r_grid_static)
+  if(n<=0)then
+   rho_static_profile = 0d0
+   return
+  end if
+
+  if(r<op%r_grid_static(1).or.r>op%r_grid_static(n))then
+   rho_static_profile = 0d0
+   return
+  end if
+
+  if(op%scan_i>0)then
+   is = op%scan_i
+   ie = n-1
+   increment = 1
+  else
+   is = max(1,-op%scan_i)
+   ie = 1
+   increment = -1
+  end if
+
+  if(r<=op%r_grid_static(1))then
+   op%scan_i = 1
+   rho_here = op%rho_static(1)
+  elseif(r>=op%r_grid_static(n))then
+   op%scan_i = n
+   rho_here = op%rho_static(n)
+  else
+   do i = is, ie, increment
+    if(op%r_grid_static(i)<=r.and.op%r_grid_static(i+1)>r)exit
+   end do
+   op%scan_i = i
+   rho_here = intpol(r,op%r_grid_static(i:i+1),op%rho_static(i:i+1))
+  end if
+
+  rho_static_profile = 4d0*pi*rho_here*r*r
+ end function rho_static_profile
 
  function v_wind(r,t,op)
   type(outflow_parameters),intent(inout):: op
@@ -212,6 +262,13 @@ contains
   real(8):: v_wind
   v_wind = op%vwind
  end function v_wind
+
+ function v_static(r,t,op)
+  type(outflow_parameters),intent(inout):: op
+  real(8),intent(in):: r,t
+  real(8):: v_static
+  v_static = 0d0
+ end function v_static
 
 function v_explosion(r,t,op)
   type(outflow_parameters),intent(inout):: op
@@ -281,6 +338,9 @@ function v_explosion(r,t,op)
    if(n>0.and.op_in%vwind>0d0)then
     r_in = max(op_in%vwind*(t + minval(op_in%t_grid(1:n))), 1d0)
    end if
+  elseif(associated(op_in%r_grid_static).and.associated(op_in%rho_static))then
+   n = size(op_in%r_grid_static)
+   if(n>0)r_in = max(op_in%r_grid_static(1), 1d0)
   elseif(associated(op_in%v_grid).and.associated(op_in%rho_expl))then
    n = size(op_in%v_grid)
    if(n>0)r_in = max(op_in%v_grid(1)*(t + op_in%delay), 1d0)
@@ -307,6 +367,9 @@ function v_explosion(r,t,op)
    if(n>0.and.op_in%vwind>0d0)then
     r_out = op_in%vwind*(t + maxval(op_in%t_grid(1:n)))
    end if
+  elseif(associated(op_in%r_grid_static).and.associated(op_in%rho_static))then
+   n = size(op_in%r_grid_static)
+   if(n>0)r_out = op_in%r_grid_static(n)
   elseif(associated(op_in%v_grid).and.associated(op_in%rho_expl))then
    n = size(op_in%v_grid)
    if(n>0)r_out = op_in%v_grid(n)*(t + op_in%delay)

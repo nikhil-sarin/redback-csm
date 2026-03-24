@@ -170,6 +170,17 @@ python module csm ! in
                 real(kind=8), optional,intent(in) :: eff
                 real(kind=8), optional,intent(in) :: kappa
             end subroutine lightcurve_explosion_bpl
+            subroutine lightcurve_static_bpl(rho_input,rinput,inner_slope,outer_slope,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: rho_input
+                real(kind=8), target,dimension(:),intent(in) :: rinput
+                real(kind=8) intent(in) :: inner_slope
+                real(kind=8) intent(in) :: outer_slope
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_static_bpl
             subroutine lightcurve_bpl_exponential(inner_slope,outer_slope,mexp,eexp,mexp_out,eexp_out,interval,eff,kappa) ! in :csm:csm.f90:lc_mod
                 use get_vals
                 real(kind=8) intent(in) :: inner_slope
@@ -204,6 +215,15 @@ python module csm ! in
                 real(kind=8), optional,intent(in) :: eff
                 real(kind=8), optional,intent(in) :: kappa
             end subroutine lightcurve_explosion_exponential
+            subroutine lightcurve_static_exponential(rho_input,rinput,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
+                use get_vals
+                real(kind=8), target,dimension(:),intent(in) :: rho_input
+                real(kind=8), target,dimension(:),intent(in) :: rinput
+                real(kind=8) intent(in) :: mexp
+                real(kind=8) intent(in) :: eexp
+                real(kind=8), optional,intent(in) :: eff
+                real(kind=8), optional,intent(in) :: kappa
+            end subroutine lightcurve_static_exponential
         end module lc_mod
     end interface
 end python module csm

@@ -24,6 +24,7 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
           lightcurve_bpl_bpl, lightcurve_exponential_exponential, &
           lightcurve_explosion_bpl, lightcurve_bpl_exponential, &
           lightcurve_exponential_explosion, lightcurve_explosion_exponential, &
+          lightcurve_static_bpl, lightcurve_static_exponential, &
           set_model_mode, set_efficiency_mode, set_run_mode, set_hybrid_parameters
 
  private:: finalize_outputs, do_main_loop
@@ -573,6 +574,49 @@ end subroutine lightcurve_wind_bpl
 
  end subroutine lightcurve_explosion_bpl
 
+ subroutine lightcurve_static_bpl(rho_input, rinput, inner_slope, outer_slope, Mexp, Eexp, eff, kappa)
+
+! purpose: To compute LC for static arbitrary CSM (outer) interacting with BPL SN (inner)
+
+  use get_vals
+
+  real(8),intent(in):: inner_slope, outer_slope, Mexp, Eexp
+  real(8),intent(in),target:: rho_input(:), rinput(:)
+  real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
+
+  v_in  => v_explosion
+  v_out => v_static
+  rho4pir2_in  => rho_bpl
+  rho4pir2_out => rho_static_profile
+
+  op(1)%scan_i = -1
+  op(2)%scan_i =  1
+
+  op(1)%Mej = Mexp
+  op(1)%Eej = Eexp
+  op(1)%bpl_d = inner_slope
+  op(1)%bpl_n = outer_slope
+  op(1)%delay = 0d0
+  op(2)%rho_static => rho_input
+  op(2)%r_grid_static => rinput
+
+  call get_bpl_coeffs(op(1))
+
+  t = t_start
+  u = 1.d2*op(1)%bpl_vt
+  r = u*t*1.2d0
+  m = 1d0
+  erad = 0d0
+  call configure_runtime(1,eff,kappa)
+
+  call do_main_loop
+  call finalize_outputs(1,eff,kappa)
+
+ end subroutine lightcurve_static_bpl
+
 ! ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
  subroutine lightcurve_bpl_exponential(inner_slope, outer_slope, Mexp, Eexp, Mexp_out, Eexp_out, interval, eff, kappa)
@@ -714,6 +758,47 @@ end subroutine lightcurve_wind_bpl
   call finalize_outputs(1,eff,kappa)
 
  end subroutine lightcurve_explosion_exponential
+
+ subroutine lightcurve_static_exponential(rho_input, rinput, Mexp, Eexp, eff, kappa)
+
+! purpose: To compute LC for static arbitrary CSM (outer) interacting with exponential SN (inner)
+
+  use get_vals
+
+  real(8),intent(in):: Mexp, Eexp
+  real(8),intent(in),target:: rho_input(:), rinput(:)
+  real(8),intent(in),optional:: eff, kappa
+
+  call reset_outflow(op(1))
+  call reset_outflow(op(2))
+
+  v_in  => v_explosion
+  v_out => v_static
+  rho4pir2_in  => rho_exponential
+  rho4pir2_out => rho_static_profile
+
+  op(1)%scan_i = -1
+  op(2)%scan_i = 1
+
+  op(1)%Mej = Mexp
+  op(1)%Eej = Eexp
+  op(1)%delay = 0d0
+  op(2)%rho_static => rho_input
+  op(2)%r_grid_static => rinput
+
+  call get_exp_v0(op(1))
+
+  t = t_start
+  u = 1.d2*op(1)%exp_v0
+  r = u*t*1.2d0
+  m = 1d0
+  erad = 0d0
+  call configure_runtime(1,eff,kappa)
+
+  call do_main_loop
+  call finalize_outputs(1,eff,kappa)
+
+ end subroutine lightcurve_static_exponential
 
 ! ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
