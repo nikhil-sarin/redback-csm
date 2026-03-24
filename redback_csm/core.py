@@ -48,6 +48,94 @@ DAY = 86400  # seconds in a day
 YEAR_DAYS = YEAR / DAY  # 365.25 days in a year
 
 
+_NAMEDTUPLE_TYPE_CACHE = {}
+
+
+def _normalize_field_names(field_names):
+    if isinstance(field_names, str):
+        field_names = field_names.replace(",", " ").split()
+    return tuple(field_names)
+
+
+def _namedtuple_type(typename, field_names):
+    fields = _normalize_field_names(field_names)
+    key = (typename, fields)
+    if key not in _NAMEDTUPLE_TYPE_CACHE:
+        _NAMEDTUPLE_TYPE_CACHE[key] = namedtuple(typename, fields)
+    return _NAMEDTUPLE_TYPE_CACHE[key]
+
+
+class _OutputBuilder:
+    """
+    Transitional mutable builder for legacy wrappers.
+
+    Wrappers in this file were written to populate fields incrementally.
+    Returned objects are frozen into real ``collections.namedtuple`` instances.
+    """
+
+    def __init__(self, typename, field_names, *args, **kwargs):
+        object.__setattr__(self, "_typename", typename)
+        object.__setattr__(self, "_fields", _normalize_field_names(field_names))
+        for field in self._fields:
+            object.__setattr__(self, field, None)
+        if args or kwargs:
+            self._populate(*args, **kwargs)
+
+    def _populate(self, *args, **kwargs):
+        if len(args) > len(self._fields):
+            raise TypeError(
+                f"{self._typename} expected at most {len(self._fields)} positional values, "
+                f"got {len(args)}"
+            )
+        for field, value in zip(self._fields, args):
+            object.__setattr__(self, field, value)
+        for field in self._fields[len(args):]:
+            if field in kwargs:
+                object.__setattr__(self, field, kwargs.pop(field))
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"{self._typename} got unexpected field(s): {unexpected}")
+
+    def __call__(self, *args, **kwargs):
+        return _OutputBuilder(self._typename, self._fields, *args, **kwargs)
+
+    def __iter__(self):
+        for field in self._fields:
+            yield getattr(self, field)
+
+    def __len__(self):
+        return len(self._fields)
+
+    def __getitem__(self, item):
+        if isinstance(item, str):
+            return getattr(self, item)
+        return getattr(self, self._fields[item])
+
+    def __setattr__(self, name, value):
+        if name in {"_typename", "_fields"} or name in self._fields:
+            object.__setattr__(self, name, value)
+            return
+        raise AttributeError(f"{self._typename} has no field '{name}'")
+
+    def _asdict(self):
+        return {field: getattr(self, field) for field in self._fields}
+
+    def __repr__(self):
+        values = ", ".join(f"{field}={getattr(self, field)!r}" for field in self._fields)
+        return f"{self._typename}({values})"
+
+
+def _output_builder(typename, field_names):
+    return _OutputBuilder(typename, field_names)
+
+
+def _freeze_output(record):
+    if isinstance(record, tuple) and hasattr(record, "_fields"):
+        return record
+    OutputType = _namedtuple_type(record._typename, record._fields)
+    return OutputType(*(getattr(record, field) for field in record._fields))
+
+
 def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     """
     Configure the shared Fortran runtime state for one wrapper call.
@@ -179,7 +267,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
         lbol = larray_raw  # This is eff * (lfs + lrs)
         lbol_shock = larray_raw
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -204,7 +292,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
@@ -280,7 +368,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -305,7 +393,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
@@ -378,7 +466,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -403,7 +491,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
@@ -476,7 +564,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -497,7 +585,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_exponential_exponential(
@@ -571,7 +659,7 @@ def _get_lc_exponential_exponential(
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -592,7 +680,7 @@ def _get_lc_exponential_exponential(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_exponential_bpl(
@@ -691,7 +779,7 @@ def _get_lc_exponential_bpl(
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -712,7 +800,7 @@ def _get_lc_exponential_bpl(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_bpl_bpl(
@@ -822,7 +910,7 @@ def _get_lc_bpl_bpl(
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -843,7 +931,7 @@ def _get_lc_bpl_bpl(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_bpl_exponential(
@@ -936,7 +1024,7 @@ def _get_lc_bpl_exponential(
         lbol_diffuse = None
         lbol = lbol_shock  # Main output is shock when no kappa
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -957,7 +1045,7 @@ def _get_lc_bpl_exponential(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_boxwind_exponential(
@@ -1011,7 +1099,7 @@ def _get_lc_boxwind_exponential(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1032,7 +1120,7 @@ def _get_lc_boxwind_exponential(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_boxwind_bpl(
@@ -1092,7 +1180,7 @@ def _get_lc_boxwind_bpl(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1117,7 +1205,7 @@ def _get_lc_boxwind_bpl(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_gausswind_exponential(
@@ -1187,7 +1275,7 @@ def _get_lc_gausswind_exponential(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1208,7 +1296,7 @@ def _get_lc_gausswind_exponential(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_gausswind_bpl(
@@ -1284,7 +1372,7 @@ def _get_lc_gausswind_bpl(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1305,7 +1393,7 @@ def _get_lc_gausswind_bpl(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_triple_powerlaw_wind_bpl(
@@ -1405,7 +1493,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1426,7 +1514,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_triple_powerlaw_wind_exponential(
@@ -1512,7 +1600,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1533,7 +1621,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_exponential_triple_powerlaw_wind(
@@ -1616,7 +1704,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1637,7 +1725,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_bpl_triple_powerlaw_wind(
@@ -1734,7 +1822,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1755,7 +1843,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_smooth_triple_powerlaw_wind_bpl(
@@ -1873,7 +1961,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -1894,7 +1982,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_smooth_triple_powerlaw_wind_exponential(
@@ -1998,7 +2086,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -2019,7 +2107,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def create_wind_density_profile(mdot, vwind, time_ref):
@@ -2145,7 +2233,7 @@ def _get_lc_multi_eruption_bpl_sn(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -2167,7 +2255,7 @@ def _get_lc_multi_eruption_bpl_sn(
     outs.vshell = vshell
     outs.shell_mass = shell_mass
 
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **kwargs):
@@ -2257,7 +2345,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -2279,7 +2367,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     outs.vshell = vshell
     outs.shell_mass = shell_mass
 
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_multi_eruption_arbitrary_sn(
@@ -2381,7 +2469,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -2403,7 +2491,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
     outs.vshell = vshell
     outs.shell_mass = shell_mass
 
-    return outs
+    return _freeze_output(outs)
 
 
 def create_generic_csm_density(
@@ -2728,7 +2816,7 @@ def _get_lc_generic_csm_exponential(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -2749,7 +2837,7 @@ def _get_lc_generic_csm_exponential(
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_generic_csm_bpl(
@@ -2886,7 +2974,7 @@ def _get_lc_generic_csm_bpl(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -2908,7 +2996,7 @@ def _get_lc_generic_csm_bpl(
     outs.vshell = vshell
     outs.shell_mass = shell_mass
 
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_generic_4shell_csm_bpl(
@@ -3053,7 +3141,7 @@ def _get_lc_generic_4shell_csm_bpl(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -3075,7 +3163,7 @@ def _get_lc_generic_4shell_csm_bpl(
     outs.vshell = vshell
     outs.shell_mass = shell_mass
 
-    return outs
+    return _freeze_output(outs)
 
 
 def _get_lc_generic_8shell_csm_bpl(
@@ -3293,7 +3381,7 @@ def _get_lc_generic_8shell_csm_bpl(
         lbol_diffuse = None
         lbol = lbol_shock
 
-    outs = namedtuple(
+    outs = _output_builder(
         "output",
         [
             "time",
@@ -3315,7 +3403,7 @@ def _get_lc_generic_8shell_csm_bpl(
     outs.vshell = vshell
     outs.shell_mass = shell_mass
 
-    return outs
+    return _freeze_output(outs)
 
 
 def combine_lightcurves(lc1, lc2, theta_polar):
