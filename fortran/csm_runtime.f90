@@ -1,7 +1,7 @@
 module csm_runtime
 
  use constants, only: pi, clight, intpol
- use get_vals, only: op, get_tauprep_explosion, rho4pir2_out
+ use get_vals, only: op, get_tauprep_explosion, rho4pir2_out, query_tau_to_edge, query_csm_outer_edge
 
  implicit none
 
@@ -155,6 +155,8 @@ contains
    tp = t_shell + op(2)%delay
    tau = op(2)%Mej / (8d0 * pi * (op(2)%exp_v0 * tp)**2) &
         * exp(-r_shell / (op(2)%exp_v0 * tp))
+  case (5)
+   tau = query_tau_to_edge(r_shell, t_shell, op(2), 1d0)
   end select
 
   tau = max(kappa_global * tau, 0d0)
@@ -262,6 +264,8 @@ contains
   case (4)
    tp = t_shell + op(2)%delay
    r_outer = max(20d0 * op(2)%exp_v0 * tp, 1d0)
+  case (5)
+   r_outer = max(query_csm_outer_edge(t_shell, op(2)), 1d0)
   case default
    r_outer = 1d0
   end select

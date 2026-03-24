@@ -30,7 +30,7 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
  private:: finalize_outputs, do_main_loop
  private:: get_diffuse_lc
  private
-integer,parameter:: ll=10000
+integer,parameter:: ll=200000
  real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array, fs_array, rs_array
  integer,dimension(ll):: i_array
  real(8):: t_start=1d1, t_end=10d0*year
@@ -352,10 +352,10 @@ end subroutine lightcurve_wind_bpl
   u = r/t
   m = 1d0
   erad = 0d0
-  call configure_runtime(1,eff,kappa)
+  call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(1,eff,kappa)
+  call finalize_outputs(5,eff,kappa)
 
  end subroutine lightcurve_explosion_wind
 
@@ -518,10 +518,10 @@ end subroutine lightcurve_wind_bpl
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
-  call configure_runtime(1,eff,kappa)
+  call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(1,eff,kappa)
+  call finalize_outputs(5,eff,kappa)
 
  end subroutine lightcurve_explosion_explosion
 
@@ -567,10 +567,10 @@ end subroutine lightcurve_wind_bpl
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
-  call configure_runtime(1,eff,kappa)
+  call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(1,eff,kappa)
+  call finalize_outputs(5,eff,kappa)
 
  end subroutine lightcurve_explosion_bpl
 
@@ -610,10 +610,10 @@ end subroutine lightcurve_wind_bpl
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
-  call configure_runtime(1,eff,kappa)
+  call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(1,eff,kappa)
+  call finalize_outputs(5,eff,kappa)
 
  end subroutine lightcurve_static_bpl
 
@@ -1026,7 +1026,8 @@ end subroutine lightcurve_wind_bpl
        end if
 
        if(t_sub > t_start)then
-        if (n < 1 .or. t_sub > t_array(n) * (1.0d0 + 1.0d-3)) then
+        if (n < 1) then
+         if (n >= ll) exit
          n = n + 1
          ld_array(n) = L_ph
          t_array(n) = t_sub
@@ -1036,10 +1037,21 @@ end subroutine lightcurve_wind_bpl
          r_array(n) = r_sub
          m_array(n) = m_sub
          v_array(n) = u
-         if(n>=ll)exit
+        else if (t_sub > t_array(n) * (1.0d0 + 1.0d-3)) then
+         if (n >= ll) exit
+         n = n + 1
+         ld_array(n) = L_ph
+         t_array(n) = t_sub
+         l_array(n) = lum_heat_sub
+         fs_array(n) = lum_fs
+         rs_array(n) = lum_rs
+         r_array(n) = r_sub
+         m_array(n) = m_sub
+         v_array(n) = u
         end if
        end if
       end do
+      if (n >= ll) exit
      else
       L_ph = lum_heat
       r_ph = r
@@ -1055,9 +1067,10 @@ end subroutine lightcurve_wind_bpl
         if (t <= t_array(n) * (1.0d0 + 1.0d-10)) cycle
       end if
     end if
-    if(run_mode == 1)then
-     if(n>=1)i_array(n) = op(2)%scan_i
-    end if
+   if(run_mode == 1)then
+    if(n>=1)i_array(n) = op(2)%scan_i
+   end if
+   if (n >= ll) exit
     n = n+1
     
     ! Determine what to output based on mode
@@ -1080,12 +1093,19 @@ end subroutine lightcurve_wind_bpl
     r_array(n) = r_store
     m_array(n) = m
     v_array(n) = u
-    if(n>=ll)exit
    end if
 
   end do
 
-  if(allocated(tarray))deallocate(tarray,larray,temparray,rarray,varray,marray,ldiff,lfs,lrs)
+  if(allocated(tarray))deallocate(tarray)
+  if(allocated(larray))deallocate(larray)
+  if(allocated(temparray))deallocate(temparray)
+  if(allocated(rarray))deallocate(rarray)
+  if(allocated(varray))deallocate(varray)
+  if(allocated(marray))deallocate(marray)
+  if(allocated(ldiff))deallocate(ldiff)
+  if(allocated(lfs))deallocate(lfs)
+  if(allocated(lrs))deallocate(lrs)
   allocate(tarray(n))
   allocate(larray,temparray,rarray,varray,marray,ldiff,lfs,lrs,mold=tarray)
 
@@ -1128,7 +1148,7 @@ end subroutine lightcurve_wind_bpl
 
   do i = 1, size(tarray)-1
    select case(csm_type)
-   case(1)
+  case(1)
     j = i_array(i)
     tp = tarray(i) + op(2)%delay
     tau(i) = intpol(rarray(i)/tp,op(2)%v_grid(j:j+1),tauprep(j:j+1))/tp**2
@@ -1197,6 +1217,8 @@ end subroutine lightcurve_wind_bpl
     tp = tarray(i) + op(2)%delay
     tau(i) = op(2)%Mej/(8d0*pi*(op(2)%exp_v0*tp)**2)&
              *exp(-rarray(i)/(op(2)%exp_v0*tp))
+   case(5)
+    tau(i) = query_tau_to_edge(rarray(i), tarray(i), op(2), 1d0)
    end select
    tau(i) = kappa*tau(i)
 
