@@ -7,3 +7,7 @@ build/
 fortran/*.f90
 .DS_Store
 scripts/
+*.png
+.idea/
+*.tmp_runtime
+*.tex
