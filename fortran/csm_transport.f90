@@ -28,6 +28,7 @@ module csm_transport
  real(8) :: r_emerge_shell = 0d0
  real(8) :: u_emerge_shell = 0d0
  real(8) :: cooling_scale = 1d0
+ real(8) :: compact_tail_drain = 0d0
   real(8) :: m_emerge_csm = 0d0
   real(8) :: m_emerge_ej = 0d0
   real(8) :: m_emerge_shell = 0d0
@@ -45,7 +46,7 @@ module csm_transport
            interaction_transport_step, find_transport_photosphere, &
            shock_has_emerged, initialize_cooling_state_from_interaction, &
            cooling_transport_step, transport_timestep_limit, shock_motion_timestep_limit, &
-           forward_shock_radius
+           forward_shock_radius, shell_leakage_timescale, total_radiation_energy
 
 contains
 
@@ -80,6 +81,7 @@ contains
   state%r_emerge_shell = 0d0
   state%u_emerge_shell = 0d0
   state%cooling_scale = 1d0
+  state%compact_tail_drain = 0d0
   state%m_emerge_csm = 0d0
   state%m_emerge_ej = 0d0
   state%m_emerge_shell = 0d0
@@ -399,6 +401,24 @@ real(8) function shell_leakage_timescale(state, r_shell, t_shell, m_shell) resul
   call shell_structure_estimate(state, r_shell, t_shell, m_shell, delta_r, tau_sh, tleak)
 end function shell_leakage_timescale
 
+real(8) function total_radiation_energy(state) result(e_tot)
+  type(transport_state_type), intent(in) :: state
+  integer :: i
+  real(8) :: r_face_l, r_face_r, vol_i
+
+  e_tot = 0d0
+  if (.not. state%initialized) return
+
+  do i = 1, state%n_zones
+   if (state%in_cooling_phase) then
+    call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
+   else
+    call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
+   end if
+   e_tot = e_tot + a_rad * max(state%y(i), 0d0) * vol_i
+  end do
+end function total_radiation_energy
+
 real(8) function interaction_shell_leakage_timescale(state, r_shell, t_shell, m_shell) result(tleak)
   type(transport_state_type), intent(in) :: state
   real(8), intent(in) :: r_shell, t_shell, m_shell
@@ -445,13 +465,15 @@ subroutine interaction_transport_step(state, dt, r_shell, u_shell, t_shell, m_sh
   call find_transport_photosphere(state, r_ph, lum_obs)
  end subroutine interaction_transport_step
 
-subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_shell, t_shell)
+subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_shell, t_shell, lum_target)
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: r_shell, u_shell, m_shell, t_shell
-  integer :: i
-  real(8), allocatable :: e_total(:), e_active(:)
+  real(8), intent(in), optional :: lum_target
+  integer :: i, ismooth
+  real(8), allocatable :: e_active(:), e_work(:), e_remap(:)
   real(8) :: r_face_l, r_face_r, vol_full, mass_shape, rho_norm
-
+  real(8) :: e_total_scalar, e_dep_total, target_mass, cum_mass, cell_mass, r_dep_outer, r3
+  real(8) :: src_inner, src_outer, blend_weight, peak_fraction, taper_strength, xfrac, compactness
   if (.not. state%initialized) return
 
   state%in_cooling_phase = .true.
@@ -467,10 +489,15 @@ subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_
    state%r_emerge_outer = max(state%r_emerge_inner * (1d0 + 1d-6), state%r_outer)
   end if
   state%cooling_scale = 1d0
+  state%compact_tail_drain = 0d0
 
-  allocate(e_total(state%n_zones), e_active(state%n_zones))
+  allocate(e_active(state%n_zones), e_work(state%n_zones), e_remap(state%n_zones))
   e_active = 0d0
+  e_work = 0d0
+  e_remap = 0d0
 
+  src_inner = state%r_inner
+  src_outer = state%r_outer
   state%r_inner = state%r_emerge_inner
   state%r_outer = state%r_emerge_outer
   mass_shape = 0d0
@@ -489,19 +516,98 @@ subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_
    state%rho_ref(i) = max(state%rho_ref(i) * rho_norm, 1d-30)
    state%rho(i) = state%rho_ref(i)
   end do
-  e_total = a_rad * state%y
+
+  e_total_scalar = 0d0
   do i = 1, state%n_zones
-   call zone_geometry(state, i, r_face_l, r_face_r, vol_full)
-   e_total(i) = e_total(i) * vol_full
+   call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_full)
+   e_total_scalar = e_total_scalar + a_rad * max(state%y(i), 0d0) * vol_full
   end do
+
+  target_mass = min(max(state%m_emerge_csm, 0d0), state%m_emerge_shell)
+  r_dep_outer = min(max(r_shell, state%r_emerge_inner), state%r_emerge_outer)
+  if (target_mass > 0d0) then
+   cum_mass = 0d0
+   r_dep_outer = state%r_emerge_inner
+   do i = 1, state%n_zones
+    call zone_geometry_from_array(state%radius_ref, state%r_inner_support, state%r_outer_support, state%n_zones, i, &
+         r_face_l, r_face_r, vol_full)
+    cell_mass = max(state%rho_ref(i), 1d-30) * vol_full
+    if (cum_mass + cell_mass >= target_mass) then
+     r3 = r_face_l**3 + 3d0 * (target_mass - cum_mass) / &
+          (4d0 * pi * max(state%rho_ref(i), 1d-30))
+     r_dep_outer = min(max(r3, r_face_l**3), r_face_r**3) ** (1d0 / 3d0)
+     exit
+    end if
+    cum_mass = cum_mass + cell_mass
+    r_dep_outer = r_face_r
+   end do
+  end if
+  r_dep_outer = min(max(r_dep_outer, state%r_emerge_inner * (1d0 + 1d-6)), state%r_emerge_outer)
+  compactness = 1d0 - (r_dep_outer - state%r_emerge_inner) / &
+       max(state%r_emerge_outer - state%r_emerge_inner, state%r_emerge_inner * 1d-6)
+  compactness = min(1d0, max(0d0, compactness))
+  e_active = 0d0
+  call deposit_energy_interval_to_reference(state%radius, src_inner, src_outer, state%y, state%n_zones, &
+       state%r_emerge_inner, r_dep_outer, state%radius_ref, state%r_inner_support, state%r_outer_support, &
+       state%n_zones, e_remap)
+  e_dep_total = sum(e_remap)
+  if (e_dep_total > 0d0 .and. e_total_scalar > 0d0) then
+   e_remap = e_remap * (e_total_scalar / e_dep_total)
+  else if (e_total_scalar > 0d0) then
+   call deposit_scalar_energy_to_reference(state%r_emerge_inner, r_dep_outer, state%radius_ref, &
+        state%r_inner_support, state%r_outer_support, state%rho_ref, state%n_zones, e_remap, e_total_scalar)
+  end if
+
+  if (sum(max(state%e_swept, 0d0)) > 0d0) then
+   e_active = max(state%e_swept, 0d0)
+   do ismooth = 1, 8
+    e_work = e_active
+    e_active(1) = 0.75d0 * e_work(1) + 0.25d0 * e_work(min(2, state%n_zones))
+    do i = 2, state%n_zones - 1
+     e_active(i) = 0.25d0 * e_work(i-1) + 0.5d0 * e_work(i) + 0.25d0 * e_work(i+1)
+    end do
+    if (state%n_zones > 1) then
+     e_active(state%n_zones) = 0.25d0 * e_work(state%n_zones-1) + 0.75d0 * e_work(state%n_zones)
+    end if
+   end do
+   e_dep_total = sum(e_active)
+   if (e_dep_total > 0d0 .and. e_total_scalar > 0d0) then
+    e_active = e_active * (e_total_scalar / e_dep_total)
+   end if
+   if (sum(e_active) > 0d0 .and. sum(e_remap) > 0d0) then
+    peak_fraction = maxval(e_active) / max(sum(e_active), 1d-30)
+    blend_weight = min(0.65d0, max(0.10d0, 0.45d0 - 4.0d0 * max(peak_fraction - 0.08d0, 0d0)))
+    e_active = blend_weight * e_active + (1d0 - blend_weight) * e_remap
+    taper_strength = min(0.55d0, max(0d0, 6.0d0 * (peak_fraction - 0.11d0)))
+    if (taper_strength > 0d0 .and. state%n_zones > 1) then
+     do i = 1, state%n_zones
+      xfrac = dble(i - 1) / dble(state%n_zones - 1)
+      e_active(i) = e_active(i) * max(0.15d0, 1d0 - taper_strength * xfrac**2)
+     end do
+    end if
+    state%compact_tail_drain = max(min(1.0d0, max(0d0, 6.0d0 * (peak_fraction - 0.10d0))), &
+         min(1.0d0, max(0d0, 2.5d0 * (compactness - 0.55d0))))
+   else if (sum(e_remap) > 0d0) then
+    e_active = e_remap
+    state%compact_tail_drain = 0d0
+   end if
+   e_dep_total = sum(e_active)
+   if (e_dep_total > 0d0 .and. e_total_scalar > 0d0) then
+    e_active = e_active * (e_total_scalar / e_dep_total)
+   end if
+  else
+   e_active = e_remap
+   state%compact_tail_drain = 0d0
+  end if
+
   do i = 1, state%n_zones
    call zone_geometry_from_array(state%radius_ref, state%r_inner_support, state%r_outer_support, state%n_zones, i, &
         r_face_l, r_face_r, vol_full)
-   state%y(i) = max(e_total(i) / max(a_rad * vol_full, 1d-30), 1d-40)
+   state%y(i) = max(e_active(i) / max(a_rad * vol_full, 1d-30), 1d-40)
   end do
   state%e_swept = 0d0
   state%e_residual = 0d0
-  deallocate(e_total, e_active)
+  deallocate(e_active, e_work, e_remap)
 
   call update_tau_and_luminosity(state)
 end subroutine initialize_cooling_state_from_interaction
@@ -548,20 +654,24 @@ subroutine update_cooling_grid(state, t_shell)
   vol_i = 4d0 * pi * max(r_face_r**3 - r_face_l**3, 1d-30) / 3d0
  end subroutine zone_geometry_from_array
 
-subroutine cooling_transport_step(state, dt, t_shell, lum_obs, r_ph)
+subroutine cooling_transport_step(state, dt, t_shell, lum_obs, r_ph, lum_heat)
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: dt, t_shell
   real(8), intent(out) :: lum_obs, r_ph
+  real(8), intent(in), optional :: lum_heat
+  real(8) :: lum_heat_local
   if (.not. state%initialized) then
    lum_obs = 0d0
    r_ph = 0d0
    return
   end if
 
+  lum_heat_local = 0d0
+  if (present(lum_heat)) lum_heat_local = max(lum_heat, 0d0)
   call update_cooling_grid(state, t_shell)
-  call solve_transport_step(state, dt, 0d0)
+  call solve_transport_step(state, dt, lum_heat_local)
   call find_transport_photosphere(state, r_ph, lum_obs)
- end subroutine cooling_transport_step
+end subroutine cooling_transport_step
 
 logical function shock_has_emerged(r_shell, t_shell)
   real(8), intent(in) :: r_shell, t_shell
@@ -736,7 +846,7 @@ subroutine solve_transport_step(state, dt, lum_heat)
   real(8), allocatable :: a(:), b(:), c(:), rhs(:), sol(:), old_y(:), kl_arr(:), kr_arr(:), kesc_arr(:), vol_arr(:)
   real(8) :: dr_l, dr_r, r_face_l, r_face_r, area_l, area_r, vol_i
   real(8) :: rho_face_l, rho_face_r, dcoef_l, dcoef_r, k_l, k_r, k_escape, r_ph
-  real(8) :: theta, omt, src_w_lo, src_w_hi
+  real(8) :: theta, omt, src_w_lo, src_w_hi, k_tail, xfrac, t_drain
 
   if (.not. state%initialized) return
   n = state%n_zones
@@ -801,6 +911,13 @@ subroutine solve_transport_step(state, dt, lum_heat)
     k_r = area_r * dcoef_r / max(dr_r, 1d-30)
    end if
 
+   if (state%in_cooling_phase .and. state%compact_tail_drain > 0d0 .and. n > 1) then
+    xfrac = dble(i - 1) / dble(n - 1)
+    t_drain = max(0.5d0 * state%r_emerge_shell / max(state%u_emerge_shell, 1d-30), 1d0)
+    k_tail = state%compact_tail_drain * xfrac**2 * a_rad * vol_i / t_drain
+    k_escape = k_escape + k_tail
+   end if
+
    vol_arr(i) = vol_i
    kl_arr(i) = k_l
    kr_arr(i) = k_r
@@ -829,9 +946,19 @@ subroutine solve_transport_step(state, dt, lum_heat)
     rhs(i) = rhs(i) + omt * kr_arr(i) * old_y(i+1)
    end if
 
-   if (.not. state%in_cooling_phase) then
-    if (i == ish_lo) rhs(i) = rhs(i) + max(lum_heat, 0d0) * src_w_lo
-    if (i == ish_hi) rhs(i) = rhs(i) + max(lum_heat, 0d0) * src_w_hi
+   if (max(lum_heat, 0d0) > 0d0) then
+    if (.not. state%in_cooling_phase) then
+     if (i == ish_lo) then
+      rhs(i) = rhs(i) + max(lum_heat, 0d0) * src_w_lo
+      state%e_swept(i) = state%e_swept(i) + dt * max(lum_heat, 0d0) * src_w_lo
+     end if
+     if (i == ish_hi) then
+      rhs(i) = rhs(i) + max(lum_heat, 0d0) * src_w_hi
+      state%e_swept(i) = state%e_swept(i) + dt * max(lum_heat, 0d0) * src_w_hi
+     end if
+    else
+     if (i == 1) rhs(i) = rhs(i) + max(lum_heat, 0d0)
+    end if
    end if
   end do
 

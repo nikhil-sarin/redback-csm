@@ -14,6 +14,11 @@ python module csm ! in
             real(kind=8), public,allocatable,dimension(:) :: varray
             real(kind=8), public,allocatable,dimension(:) :: marray
             real(kind=8), public,allocatable,dimension(:) :: ldiff
+            real(kind=8), public,allocatable,dimension(:) :: rfsarray
+            real(kind=8), public,allocatable,dimension(:) :: rpharray
+            real(kind=8), public,allocatable,dimension(:) :: etraparray
+            real(kind=8), public,allocatable,dimension(:) :: tleakarray
+            real(kind=8), public,allocatable,dimension(:) :: tauarray_hybrid
             integer, private,parameter,optional :: ll=10000
             real(kind=8), private,dimension(10000) :: t_array
             real(kind=8), private,dimension(10000) :: l_array

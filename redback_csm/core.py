@@ -223,6 +223,25 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     return mode, kappa
 
 
+def _get_last_hybrid_transport_diagnostics():
+    """
+    Return diagnostic arrays captured during the most recent Fortran CSM run.
+
+    These arrays are populated by the hybrid transport branch and are intended
+    for debugging/validation rather than the public model API.
+    """
+    diag = _output_builder(
+        "transport_diagnostics",
+        ["r_forward_shock", "r_photosphere", "e_trapped", "t_leak", "tau_shell"],
+    )
+    diag.r_forward_shock = _get_csm().lc_mod.rfsarray.copy()
+    diag.r_photosphere = _get_csm().lc_mod.rpharray.copy()
+    diag.e_trapped = _get_csm().lc_mod.etraparray.copy()
+    diag.t_leak = _get_csm().lc_mod.tleakarray.copy()
+    diag.tau_shell = _get_csm().lc_mod.tauarray_hybrid.copy()
+    return _freeze_output(diag)
+
+
 def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
                              n_rad_zones=40, **kwargs):
     """
