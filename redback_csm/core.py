@@ -136,6 +136,58 @@ def _freeze_output(record):
     return OutputType(*(getattr(record, field) for field in record._fields))
 
 
+def _bpl_transition_velocity_cgs(mexp_cgs, eexp_cgs, delta, nn):
+    num = 2.0 * (5.0 - delta) * (nn - 5.0) * eexp_cgs
+    den = (3.0 - delta) * (nn - 3.0) * mexp_cgs
+    if nn <= 5.0 or delta >= 3.0 or num <= 0.0 or den <= 0.0:
+        raise ValueError(
+            f"Invalid BPL parameters for cutoff conversion: delta={delta}, nn={nn}"
+        )
+    return np.sqrt(num / den)
+
+
+def _get_bpl_cutoff_ratio_from_kwargs(kwargs):
+    ratio = kwargs.get("vej_max_ratio", kwargs.get("A_ratio", None))
+    if ratio is not None:
+        ratio = float(ratio)
+        if ratio <= 1.0:
+            raise ValueError("BPL ejecta cutoff ratio must be > 1.")
+        return ratio
+
+    vej_max = kwargs.get("vej_max", None)
+    if vej_max is None:
+        return 0.0
+
+    # External velocity inputs are conventionally in km/s on the Python side.
+    vej_max_cgs = float(vej_max) * 1e5
+
+    if all(name in kwargs for name in ("delta", "nn", "mexp", "eexp")):
+        vt = _bpl_transition_velocity_cgs(
+            kwargs["mexp"] * solar_mass,
+            kwargs["eexp"] * foe,
+            kwargs["delta"],
+            kwargs["nn"],
+        )
+    elif all(name in kwargs for name in ("delta_sn", "nn_sn", "mej_sn", "esn")):
+        vt = _bpl_transition_velocity_cgs(
+            kwargs["mej_sn"] * solar_mass,
+            kwargs["esn"] * foe,
+            kwargs["delta_sn"],
+            kwargs["nn_sn"],
+        )
+    else:
+        raise ValueError(
+            "`vej_max` requires BPL SN parameters in kwargs; use `vej_max_ratio` "
+            "or provide one of (delta, nn, mexp, eexp) / "
+            "(delta_sn, nn_sn, mej_sn, esn)."
+        )
+
+    ratio = vej_max_cgs / vt
+    if ratio <= 1.0:
+        raise ValueError("`vej_max` must exceed the BPL transition velocity.")
+    return ratio
+
+
 def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     """
     Configure the shared Fortran runtime state for one wrapper call.
@@ -165,6 +217,9 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
         raise ValueError(f"mode must be 'simple' or 'hybrid', got {mode}")
 
     _get_csm().lc_mod.set_efficiency_mode(efficiency_mode)
+    _get_csm().lc_mod.set_bpl_cutoff_ratio(
+        float(_get_bpl_cutoff_ratio_from_kwargs(kwargs))
+    )
     return mode, kappa
 
 
@@ -5022,16 +5077,23 @@ def _rho_bpl_at_r(r_array, lc, **kwargs):
     interval_s = kwargs.get('interval', 0.0) * DAY       # seconds
     t_csm = lc.time + interval_s                         # total CSM age in seconds
 
-    # Transition (break) velocity — same formula as the Fortran get_bpl_coeffs:
-    #   v_t = sqrt( 2*(5-delta)*(nn-5)*E / ((3-delta)*(nn-3)*M) )
-    num = 2.0 * (5.0 - delta) * (nn - 5.0) * eexp_cgs
-    den = (3.0 - delta) * (nn - 3.0) * mexp_cgs
-    if nn <= 5.0 or delta >= 3.0 or num <= 0.0 or den <= 0.0:
+    try:
+        v_t = _bpl_transition_velocity_cgs(mexp_cgs, eexp_cgs, delta, nn)
+    except ValueError:
         return _rho_exponential_at_r(r_array, lc, **kwargs)
-    v_t = np.sqrt(num / den)
+
+    cutoff_ratio = _get_bpl_cutoff_ratio_from_kwargs(kwargs)
+    if cutoff_ratio > 1.0:
+        i_mass = 1.0 / (3.0 - delta) + (
+            1.0 - cutoff_ratio ** (3.0 - nn)
+        ) / (nn - 3.0)
+        v_max = cutoff_ratio * v_t
+    else:
+        i_mass = 1.0 / (3.0 - delta) + 1.0 / (nn - 3.0)
+        v_max = None
 
     # Normalisation: rho_0 from mass integral 4pi int rho v^2 dv = mexp
-    rho_0 = mexp_cgs / (4.0 * np.pi * v_t ** 3 * (1.0 / (3.0 - delta) + 1.0 / (nn - 3.0)))
+    rho_0 = mexp_cgs / (4.0 * np.pi * v_t ** 3 * i_mass)
 
     v_r = r_array / t_csm                               # homologous velocity at shock
     rho = np.where(
@@ -5039,6 +5101,8 @@ def _rho_bpl_at_r(r_array, lc, **kwargs):
         rho_0 / t_csm ** 3 * (v_r / v_t) ** (-delta),
         rho_0 / t_csm ** 3 * (v_r / v_t) ** (-nn),
     )
+    if v_max is not None:
+        rho = np.where(v_r <= v_max, rho, 0.0)
     return rho
 
 

@@ -25,7 +25,8 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
           lightcurve_explosion_bpl, lightcurve_bpl_exponential, &
           lightcurve_exponential_explosion, lightcurve_explosion_exponential, &
           lightcurve_static_bpl, lightcurve_static_exponential, &
-          set_model_mode, set_efficiency_mode, set_run_mode, set_hybrid_parameters
+          set_model_mode, set_efficiency_mode, set_run_mode, set_hybrid_parameters, &
+          set_bpl_cutoff_ratio
 
  private:: finalize_outputs, do_main_loop
  private:: get_diffuse_lc
@@ -83,6 +84,12 @@ contains
   if (present(n_zones)) n_rad_zones_global = n_zones
   if (present(kappa_val)) opacity_const_global = kappa_val
  end subroutine set_hybrid_parameters
+
+ subroutine set_bpl_cutoff_ratio(ratio)
+  use get_vals, only: set_global_bpl_vmax_ratio
+  real(8), intent(in) :: ratio
+  call set_global_bpl_vmax_ratio(ratio)
+ end subroutine set_bpl_cutoff_ratio
 
  subroutine finalize_outputs(csm_type, eff, kappa)
   integer,intent(in):: csm_type
@@ -1203,15 +1210,18 @@ end subroutine lightcurve_wind_bpl
     end if
     tau(i) = tau(i)/(4d0*pi*op(2)%vwind**2)
    case(3)
-    tp = tarray(i) + op(2)%delay
-    if(rarray(i)/tp>=op(2)%bpl_vt)then
-     tau(i) = op(2)%bpl_rho0*op(2)%bpl_vt/(4d0*pi*(op(2)%bpl_n-1d0)*tp**2) &
-             *(tp*op(2)%bpl_vt/rarray(i))**(op(2)%bpl_n-1d0)
-    else
-     tau(i) = op(2)%bpl_rho0*op(2)%bpl_vt/(4d0*pi*tp**2) &
-            * ( (1d0-(rarray(i)/(tp*op(2)%bpl_vt))**(1d0-op(2)%bpl_d)) &
-                /(1d0-op(2)%bpl_d) &
-              + 1d0/(op(2)%bpl_n-1d0) )
+    tau(i) = bpl_tau_to_edge(rarray(i), tarray(i), op(2))
+    if(tau(i)<0d0)then
+     tp = tarray(i) + op(2)%delay
+     if(rarray(i)/tp>=op(2)%bpl_vt)then
+      tau(i) = op(2)%bpl_rho0*op(2)%bpl_vt/(4d0*pi*(op(2)%bpl_n-1d0)*tp**2) &
+              *(tp*op(2)%bpl_vt/rarray(i))**(op(2)%bpl_n-1d0)
+     else
+      tau(i) = op(2)%bpl_rho0*op(2)%bpl_vt/(4d0*pi*tp**2) &
+             * ( (1d0-(rarray(i)/(tp*op(2)%bpl_vt))**(1d0-op(2)%bpl_d)) &
+                 /(1d0-op(2)%bpl_d) &
+               + 1d0/(op(2)%bpl_n-1d0) )
+     end if
     end if
    case(4)
     tp = tarray(i) + op(2)%delay

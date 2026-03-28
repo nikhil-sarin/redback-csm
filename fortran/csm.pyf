@@ -43,6 +43,9 @@ python module csm ! in
                 integer, optional,intent(in) :: n_zones
                 real(kind=8), optional,intent(in) :: kappa_val
             end subroutine set_hybrid_parameters
+            subroutine set_bpl_cutoff_ratio(ratio) ! in :csm:csm.f90:lc_mod
+                real(kind=8) intent(in) :: ratio
+            end subroutine set_bpl_cutoff_ratio
             subroutine lightcurve_wind_exponential(mdotinput,tinput,vwindinput,mexp,eexp,eff,kappa) ! in :csm:csm.f90:lc_mod
                 use get_vals
                 real(kind=8), target,dimension(:),intent(in) :: mdotinput

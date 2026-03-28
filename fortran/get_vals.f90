@@ -2,6 +2,8 @@ module get_vals
 
  implicit none
 
+ real(8) :: global_bpl_vmax_ratio = 0d0
+
  type outflow_parameters
   ! Efficiency parameter
   real(8):: eff
@@ -13,7 +15,7 @@ module get_vals
   ! Additional parameters for exponential density distribution
   real(8):: exp_v0
   ! Additional parameters for broken power-law density distribution
-  real(8):: bpl_n, bpl_d, bpl_vt, bpl_rho0
+  real(8):: bpl_n, bpl_d, bpl_vt, bpl_rho0, bpl_vmax
  ! Arrays for setting arbitrary density distribution in an explosion
   real(8),pointer:: rho_expl(:),v_grid(:)
   ! Arrays for setting arbitrary static CSM density distribution in radius
@@ -38,6 +40,11 @@ module get_vals
 
 contains
 
+ subroutine set_global_bpl_vmax_ratio(ratio)
+  real(8),intent(in):: ratio
+  global_bpl_vmax_ratio = ratio
+ end subroutine set_global_bpl_vmax_ratio
+
  subroutine reset_outflow(op)
   type(outflow_parameters),intent(inout):: op
 
@@ -52,6 +59,7 @@ contains
   op%bpl_d = 0d0
   op%bpl_vt = 0d0
   op%bpl_rho0 = 0d0
+  op%bpl_vmax = 0d0
   if(associated(op%rho_expl))nullify(op%rho_expl)
   if(associated(op%v_grid))nullify(op%v_grid)
   if(associated(op%rho_static))nullify(op%rho_static)
@@ -98,21 +106,31 @@ contains
  subroutine get_bpl_coeffs(op)
 ! Computes frequently used quantities for broken power-law ejecta
   type(outflow_parameters),intent(inout):: op
-  real(8):: n,d,Mej,Eej
+  real(8):: n,d,Mej,Eej, IM, IE, A
 
   n = op%bpl_n
   d = op%bpl_d
   Mej = op%Mej
   Eej = op%Eej
+  A = global_bpl_vmax_ratio
 
-  ! Transition velocity
-  op%bpl_vt = sqrt( (2d0*(5d0-d)*(n-5d0)*Eej) &
-                  /     ((3d0-d)*(n-3d0)*Mej) )
+  if(A>1d0)then
+   IM = 1d0/(3d0-d) + (1d0-A**(3d0-n))/(n-3d0)
+   IE = 1d0/(5d0-d) + (1d0-A**(5d0-n))/(n-5d0)
+   op%bpl_vt = sqrt(2d0*Eej*IM/(Mej*IE))
+   op%bpl_vmax = A*op%bpl_vt
+   op%bpl_rho0 = Mej/(op%bpl_vt**3 * IM)
+  else
+   ! Transition velocity
+   op%bpl_vt = sqrt( (2d0*(5d0-d)*(n-5d0)*Eej) &
+                   /     ((3d0-d)*(n-3d0)*Mej) )
+   op%bpl_vmax = 0d0
 
-  ! Density scale
-  op%bpl_rho0 = (    (3d0-d)*(n-3d0)*Mej)**2.5d0 &
-              / (2d0*(5d0-d)*(n-5d0)*Eej)**1.5d0 &
-              / (n-d)
+   ! Density scale
+   op%bpl_rho0 = (    (3d0-d)*(n-3d0)*Mej)**2.5d0 &
+               / (2d0*(5d0-d)*(n-5d0)*Eej)**1.5d0 &
+               / (n-d)
+  end if
  end subroutine get_bpl_coeffs
 
  function rho_bpl(r,t,op)
@@ -123,13 +141,45 @@ contains
 
   tp = t+op%delay
   v  = r/tp
-  if(r/tp>op%bpl_vt)then ! Outer ejecta
+  if(op%bpl_vmax>0d0.and.v>op%bpl_vmax)then
+   rho_bpl = 0d0
+  elseif(v>op%bpl_vt)then ! Outer ejecta
    rho_bpl = op%bpl_rho0 * (op%bpl_vt/v)**op%bpl_n * v**2/tp
   else                  ! Inner ejecta
    rho_bpl = op%bpl_rho0 * (op%bpl_vt/v)**op%bpl_d * v**2/tp
   end if
 
  end function rho_bpl
+
+ function bpl_tau_to_edge(r,t,op) result(tau_out)
+! Optical depth from radius r to the edge of a BPL profile.
+  use constants,only:pi
+  type(outflow_parameters),intent(in):: op
+  real(8),intent(in):: r,t
+  real(8):: tau_out, tp, vmax_eff, x
+
+  tp = t+op%delay
+  vmax_eff = op%bpl_vmax
+  if(vmax_eff<=0d0)then
+   tau_out = -1d0
+   return
+  end if
+
+  if(r>=vmax_eff*tp)then
+   tau_out = 0d0
+   return
+  end if
+
+  x = r/(tp*op%bpl_vt)
+  if(r/tp>=op%bpl_vt)then
+   tau_out = op%bpl_rho0*op%bpl_vt/(4d0*pi*(op%bpl_n-1d0)*tp**2) &
+           * (x**(1d0-op%bpl_n) - (op%bpl_vmax/op%bpl_vt)**(1d0-op%bpl_n))
+  else
+   tau_out = op%bpl_rho0*op%bpl_vt/(4d0*pi*tp**2) &
+           * ( (1d0-x**(1d0-op%bpl_d))/(1d0-op%bpl_d) &
+             + ((op%bpl_vmax/op%bpl_vt)**(1d0-op%bpl_n)-1d0)/(1d0-op%bpl_n) )
+  end if
+ end function bpl_tau_to_edge
 
  function rho_explosion(r,t,op)
 ! Computes 4*pi*r^2*rho at a given location and time for explosion-like ejecta
@@ -375,6 +425,8 @@ function v_explosion(r,t,op)
    if(n>0)r_out = op_in%v_grid(n)*(t + op_in%delay)
   elseif(op_in%exp_v0>0d0)then
    r_out = 20d0*op_in%exp_v0*(t + op_in%delay)
+  elseif(op_in%bpl_vmax>0d0)then
+   r_out = op_in%bpl_vmax*(t + op_in%delay)
   elseif(op_in%bpl_vt>0d0)then
    r_out = 20d0*op_in%bpl_vt*(t + op_in%delay)
   end if

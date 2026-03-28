@@ -1,7 +1,8 @@
 module csm_runtime
 
  use constants, only: pi, clight, intpol
- use get_vals, only: op, get_tauprep_explosion, rho4pir2_out, query_tau_to_edge, query_csm_outer_edge
+ use get_vals, only: op, get_tauprep_explosion, rho4pir2_out, query_tau_to_edge, &
+                     query_csm_outer_edge, bpl_tau_to_edge
 
  implicit none
 
@@ -141,14 +142,17 @@ contains
    end if
 
   case (3)
-   tp = t_shell + op(2)%delay
-   if (r_shell / tp >= op(2)%bpl_vt) then
-    tau = op(2)%bpl_rho0 * op(2)%bpl_vt / (4d0 * pi * (op(2)%bpl_n - 1d0) * tp**2) &
-         * (tp * op(2)%bpl_vt / r_shell)**(op(2)%bpl_n - 1d0)
-   else
-    tau = op(2)%bpl_rho0 * op(2)%bpl_vt / (4d0 * pi * tp**2) &
-         * ((1d0 - (r_shell / (tp * op(2)%bpl_vt))**(1d0 - op(2)%bpl_d)) / (1d0 - op(2)%bpl_d) &
-         + 1d0 / (op(2)%bpl_n - 1d0))
+   tau = bpl_tau_to_edge(r_shell, t_shell, op(2))
+   if (tau < 0d0) then
+    tp = t_shell + op(2)%delay
+    if (r_shell / tp >= op(2)%bpl_vt) then
+     tau = op(2)%bpl_rho0 * op(2)%bpl_vt / (4d0 * pi * (op(2)%bpl_n - 1d0) * tp**2) &
+          * (tp * op(2)%bpl_vt / r_shell)**(op(2)%bpl_n - 1d0)
+    else
+     tau = op(2)%bpl_rho0 * op(2)%bpl_vt / (4d0 * pi * tp**2) &
+          * ((1d0 - (r_shell / (tp * op(2)%bpl_vt))**(1d0 - op(2)%bpl_d)) / (1d0 - op(2)%bpl_d) &
+          + 1d0 / (op(2)%bpl_n - 1d0))
+    end if
    end if
 
   case (4)
@@ -260,7 +264,11 @@ contains
    r_outer = max(op(2)%vwind * (t_shell + op(2)%t_grid(size(op(2)%t_grid))), 1d0)
   case (3)
    tp = t_shell + op(2)%delay
-   r_outer = max(10d0 * op(2)%bpl_vt * tp, 1d0)
+   if (op(2)%bpl_vmax > 0d0) then
+    r_outer = max(op(2)%bpl_vmax * tp, 1d0)
+   else
+    r_outer = max(10d0 * op(2)%bpl_vt * tp, 1d0)
+   end if
   case (4)
    tp = t_shell + op(2)%delay
    r_outer = max(20d0 * op(2)%exp_v0 * tp, 1d0)
