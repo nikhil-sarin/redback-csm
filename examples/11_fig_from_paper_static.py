@@ -27,13 +27,13 @@ def main():
             "title": r"Compact CSM: $R_{\rm csm,out}=5\times10^3\,R_\odot$",
             "r_outer": 5.0e3 * R_SUN,
             "xlim": (1.0, 300.0),
-            "n_rad_zones": 120,
+            "n_rad_zones": 20,
         },
         {
             "title": r"Extended CSM: $R_{\rm csm,out}=5\times10^4\,R_\odot$",
             "r_outer": 5.0e4 * R_SUN,
             "xlim": (1.0, 300.0),
-            "n_rad_zones": 80,
+            "n_rad_zones": 20,
         },
     ]
 

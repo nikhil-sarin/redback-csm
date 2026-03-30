@@ -39,7 +39,17 @@ module csm_transport
   real(8), allocatable :: y(:)
   real(8), allocatable :: e_swept(:)
   real(8), allocatable :: tau(:)
-  real(8), allocatable :: lum(:)
+  real(8), allocatable :: work_a(:)
+  real(8), allocatable :: work_b(:)
+  real(8), allocatable :: work_c(:)
+  real(8), allocatable :: work_rhs(:)
+  real(8), allocatable :: work_sol(:)
+  real(8), allocatable :: work_old_y(:)
+  real(8), allocatable :: work_kl(:)
+  real(8), allocatable :: work_kr(:)
+  real(8), allocatable :: work_kesc(:)
+  real(8), allocatable :: work_vol(:)
+  real(8), allocatable :: work_gam(:)
  end type transport_state_type
 
  public :: transport_state_type, reset_transport_state, &
@@ -60,7 +70,17 @@ contains
   if (allocated(state%y)) deallocate(state%y)
   if (allocated(state%e_swept)) deallocate(state%e_swept)
   if (allocated(state%tau)) deallocate(state%tau)
-  if (allocated(state%lum)) deallocate(state%lum)
+  if (allocated(state%work_a)) deallocate(state%work_a)
+  if (allocated(state%work_b)) deallocate(state%work_b)
+  if (allocated(state%work_c)) deallocate(state%work_c)
+  if (allocated(state%work_rhs)) deallocate(state%work_rhs)
+  if (allocated(state%work_sol)) deallocate(state%work_sol)
+  if (allocated(state%work_old_y)) deallocate(state%work_old_y)
+  if (allocated(state%work_kl)) deallocate(state%work_kl)
+  if (allocated(state%work_kr)) deallocate(state%work_kr)
+  if (allocated(state%work_kesc)) deallocate(state%work_kesc)
+  if (allocated(state%work_vol)) deallocate(state%work_vol)
+  if (allocated(state%work_gam)) deallocate(state%work_gam)
 
   state%initialized = .false.
   state%in_cooling_phase = .false.
@@ -217,7 +237,11 @@ contains
 
   allocate(state%radius(state%n_zones), state%radius_ref(state%n_zones), &
            state%rho(state%n_zones), state%rho_ref(state%n_zones), state%y(state%n_zones), &
-           state%e_swept(state%n_zones), state%tau(state%n_zones), state%lum(state%n_zones))
+           state%e_swept(state%n_zones), state%tau(state%n_zones))
+  allocate(state%work_a(state%n_zones), state%work_b(state%n_zones), state%work_c(state%n_zones), &
+           state%work_rhs(state%n_zones), state%work_sol(state%n_zones), state%work_old_y(state%n_zones), &
+           state%work_kl(state%n_zones), state%work_kr(state%n_zones), state%work_kesc(state%n_zones), &
+           state%work_vol(state%n_zones), state%work_gam(state%n_zones))
 
   call build_radial_grid(state%r_inner_support, state%r_outer_support, state%radius_ref)
   call fill_stationary_reference_profile(state, t_shell)
@@ -843,7 +867,6 @@ subroutine solve_transport_step(state, dt, lum_heat)
   real(8), intent(in) :: dt, lum_heat
 
  integer :: i, n, ihi, iph, ish_lo, ish_hi
-  real(8), allocatable :: a(:), b(:), c(:), rhs(:), sol(:), old_y(:), kl_arr(:), kr_arr(:), kesc_arr(:), vol_arr(:)
   real(8) :: dr_l, dr_r, r_face_l, r_face_r, area_l, area_r, vol_i
   real(8) :: rho_face_l, rho_face_r, dcoef_l, dcoef_r, k_l, k_r, k_escape, r_ph
   real(8) :: theta, omt, src_w_lo, src_w_hi, k_tail, xfrac, t_drain
@@ -852,18 +875,17 @@ subroutine solve_transport_step(state, dt, lum_heat)
   n = state%n_zones
   if (n < 2) return
 
-  allocate(a(n), b(n), c(n), rhs(n), sol(n), old_y(n), kl_arr(n), kr_arr(n), kesc_arr(n), vol_arr(n))
-  old_y = state%y
+  state%work_old_y = state%y
   theta = 0.5d0
   omt = 1d0 - theta
-  a = 0d0
-  b = 0d0
-  c = 0d0
-  rhs = 0d0
-  kl_arr = 0d0
-  kr_arr = 0d0
-  kesc_arr = 0d0
-  vol_arr = 0d0
+  state%work_a = 0d0
+  state%work_b = 0d0
+  state%work_c = 0d0
+  state%work_rhs = 0d0
+  state%work_kl = 0d0
+  state%work_kr = 0d0
+  state%work_kesc = 0d0
+  state%work_vol = 0d0
   ihi = 1
   if (.not. state%in_cooling_phase) then
    ihi = first_active_zone(state)
@@ -880,10 +902,10 @@ subroutine solve_transport_step(state, dt, lum_heat)
    k_escape = 0d0
 
    if ((.not. state%in_cooling_phase .and. i < ihi) .or. i > iph) then
-    vol_arr(i) = 0d0
-    kl_arr(i) = 0d0
-    kr_arr(i) = 0d0
-    kesc_arr(i) = 0d0
+    state%work_vol(i) = 0d0
+    state%work_kl(i) = 0d0
+    state%work_kr(i) = 0d0
+    state%work_kesc(i) = 0d0
     cycle
    end if
 
@@ -918,55 +940,53 @@ subroutine solve_transport_step(state, dt, lum_heat)
     k_escape = k_escape + k_tail
    end if
 
-   vol_arr(i) = vol_i
-   kl_arr(i) = k_l
-   kr_arr(i) = k_r
-   kesc_arr(i) = k_escape
+   state%work_vol(i) = vol_i
+   state%work_kl(i) = k_l
+   state%work_kr(i) = k_r
+   state%work_kesc(i) = k_escape
   end do
 
   do i = 1, n
    if ((.not. state%in_cooling_phase .and. i < ihi) .or. i > iph) then
-    a(i) = 0d0
-    b(i) = 1d0
-    c(i) = 0d0
-    rhs(i) = old_y(i)
+    state%work_a(i) = 0d0
+    state%work_b(i) = 1d0
+    state%work_c(i) = 0d0
+    state%work_rhs(i) = state%work_old_y(i)
     cycle
    end if
 
-   b(i) = a_rad * vol_arr(i) / dt + theta * (kl_arr(i) + kr_arr(i) + kesc_arr(i))
-   rhs(i) = a_rad * vol_arr(i) * old_y(i) / dt - &
-            omt * (kl_arr(i) + kr_arr(i) + kesc_arr(i)) * old_y(i)
+   state%work_b(i) = a_rad * state%work_vol(i) / dt + theta * (state%work_kl(i) + state%work_kr(i) + state%work_kesc(i))
+   state%work_rhs(i) = a_rad * state%work_vol(i) * state%work_old_y(i) / dt - &
+            omt * (state%work_kl(i) + state%work_kr(i) + state%work_kesc(i)) * state%work_old_y(i)
 
    if (i > 1 .and. (.not. state%in_cooling_phase .and. i > ihi .or. state%in_cooling_phase)) then
-    a(i) = -theta * kl_arr(i)
-    rhs(i) = rhs(i) + omt * kl_arr(i) * old_y(i-1)
+    state%work_a(i) = -theta * state%work_kl(i)
+    state%work_rhs(i) = state%work_rhs(i) + omt * state%work_kl(i) * state%work_old_y(i-1)
    end if
    if (i < iph) then
-    c(i) = -theta * kr_arr(i)
-    rhs(i) = rhs(i) + omt * kr_arr(i) * old_y(i+1)
+    state%work_c(i) = -theta * state%work_kr(i)
+    state%work_rhs(i) = state%work_rhs(i) + omt * state%work_kr(i) * state%work_old_y(i+1)
    end if
 
    if (max(lum_heat, 0d0) > 0d0) then
     if (.not. state%in_cooling_phase) then
      if (i == ish_lo) then
-      rhs(i) = rhs(i) + max(lum_heat, 0d0) * src_w_lo
+      state%work_rhs(i) = state%work_rhs(i) + max(lum_heat, 0d0) * src_w_lo
       state%e_swept(i) = state%e_swept(i) + dt * max(lum_heat, 0d0) * src_w_lo
      end if
      if (i == ish_hi) then
-      rhs(i) = rhs(i) + max(lum_heat, 0d0) * src_w_hi
+      state%work_rhs(i) = state%work_rhs(i) + max(lum_heat, 0d0) * src_w_hi
       state%e_swept(i) = state%e_swept(i) + dt * max(lum_heat, 0d0) * src_w_hi
      end if
     else
-     if (i == 1) rhs(i) = rhs(i) + max(lum_heat, 0d0)
+     if (i == 1) state%work_rhs(i) = state%work_rhs(i) + max(lum_heat, 0d0)
     end if
    end if
   end do
 
-  call tridag(a, b, c, rhs, sol, n)
-  state%y = max(sol, 1d-40)
+  call tridag(state%work_a, state%work_b, state%work_c, state%work_rhs, state%work_sol, state%work_gam, n)
+  state%y = max(state%work_sol, 1d-40)
   call update_tau_and_luminosity(state)
-
-  deallocate(a, b, c, rhs, sol, old_y, kl_arr, kr_arr, kesc_arr, vol_arr)
 end subroutine solve_transport_step
 
 subroutine locate_source_cells(state, ilo, ihi, w_lo, w_hi)
@@ -1039,7 +1059,7 @@ end function first_active_zone
 subroutine update_tau_and_luminosity(state)
   type(transport_state_type), intent(inout) :: state
   integer :: i, istart
-  real(8) :: dr, rho_avg, r_face_l, r_face_r, vol_i
+  real(8) :: dr, rho_avg
 
   istart = 1
   if (.not. state%in_cooling_phase) istart = first_active_zone(state)
@@ -1051,27 +1071,17 @@ subroutine update_tau_and_luminosity(state)
    state%tau(i) = state%tau(i+1) + state%kappa * rho_avg * max(dr, 0d0)
   end do
   if (istart > 1) state%tau(1:istart-1) = state%tau(istart)
-
-  state%lum = 0d0
-  do i = istart, state%n_zones-1
-   state%lum(i) = -4d0*pi*(0.5d0*(state%radius(i)+state%radius(i+1)))**2 * &
-                  (clight*a_rad/(3d0*state%kappa*max(0.5d0*(state%rho(i)+state%rho(i+1)),1d-30))) * &
-                  (state%y(i+1)-state%y(i))/max(state%radius(i+1)-state%radius(i),1d-30)
-  end do
-  call zone_geometry(state, state%n_zones, r_face_l, r_face_r, vol_i)
-  state%lum(state%n_zones) = outer_escape_conductance(state, state%n_zones, state%r_outer) * &
-       max(state%y(state%n_zones), 1d-40)
 end subroutine update_tau_and_luminosity
 
- subroutine tridag(a, b, c, r, u, n)
+ subroutine tridag(a, b, c, r, u, gam, n)
   integer, intent(in) :: n
   real(8), intent(in) :: a(n), b(n), c(n), r(n)
+  real(8), intent(inout) :: gam(n)
   real(8), intent(out) :: u(n)
-  real(8), allocatable :: gam(:)
   real(8) :: bet
   integer :: j
 
-  allocate(gam(n))
+  gam = 0d0
   bet = b(1)
   if (abs(bet) < 1d-60) bet = sign(1d-60, b(1) + 1d-60)
   u(1) = r(1) / bet
@@ -1084,7 +1094,6 @@ end subroutine update_tau_and_luminosity
   do j = n-1, 1, -1
    u(j) = u(j) - gam(j+1) * u(j+1)
   end do
-  deallocate(gam)
  end subroutine tridag
 
  pure function interp_linear_monotonic(x, xp, fp, n) result(fx)

@@ -11,7 +11,6 @@ module csm_runtime
  real(8), public :: kappa_global = 0d0, eff_global = 1d0, erad = 0d0
  integer, public :: diffusion_type = 0, shock_efficiency_mode = 0
  logical, public :: diffusion_enabled = .false.
- logical, public :: paper_mode = .false.
 
  real(8), allocatable, dimension(:), public :: tauprep_global
  real(8), allocatable, dimension(:) :: wind_tau_cache
@@ -30,7 +29,7 @@ contains
  subroutine set_runtime_mode(mode)
   integer, intent(in) :: mode
 
- paper_mode = (mode /= 0)
+  ! Legacy no-op retained for Python/Fortran interface compatibility.
  end subroutine set_runtime_mode
 
  subroutine set_shock_efficiency_mode(mode)
@@ -57,7 +56,7 @@ contains
   wind_tau_cache_ready = .false.
   wind_tau_cache_t = -1d300
 
-  if (.not. paper_mode .and. present(kappa)) then
+  if (present(kappa)) then
    diffusion_enabled = .true.
    diffusion_type = csm_type
    kappa_global = kappa

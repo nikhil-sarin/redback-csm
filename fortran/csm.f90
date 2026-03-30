@@ -1,11 +1,11 @@
 module lc_mod
 
  use constants,only:pi,year,clight,intpol,temperature
- use csm_runtime, only: paper_mode, diffusion_enabled, eff_global, erad, &
+ use csm_runtime, only: diffusion_enabled, eff_global, erad, &
                         shock_efficiency_mode, &
                         configure_runtime, reset_diffusion_state, &
                         shell_optical_depth, photosphere_radius, &
-                        solve_diffusion_step, set_runtime_mode, &
+                        solve_diffusion_step, &
                         set_shock_efficiency_mode_runtime => set_shock_efficiency_mode
 use csm_transport, only: transport_state_type, reset_transport_state, &
                                    interaction_transport_step, shock_has_emerged, &
@@ -52,7 +52,6 @@ contains
  subroutine set_model_mode(mode)
   integer,intent(in):: mode
 
-  call set_runtime_mode(mode)
   if(mode==1)then
    run_mode = 1
   else
@@ -73,11 +72,6 @@ contains
    print *, 'WARNING: Invalid run_mode', mode, 'using simple (1)'
    run_mode = 1
   endif
-  if (run_mode == 1) then
-   call set_runtime_mode(1)
-  else
-   call set_runtime_mode(0)
-  end if
  end subroutine set_run_mode
 
  subroutine set_hybrid_parameters(n_zones, kappa_val)
@@ -936,8 +930,8 @@ end subroutine lightcurve_wind_bpl
         shell_span_sub = max(r_out_sub - r_in_sub, 1d-30)
         gap_to_edge = r_out_sub - r
         if(gap_to_edge > 0d0 .and. gap_to_edge < 0.1d0*shell_span_sub)then
-         dt_int_cap = 0.0025d0*86400d0
-         if(gap_to_edge < 0.05d0*shell_span_sub) dt_int_cap = 0.001d0*86400d0
+         dt_int_cap = 0.01d0*86400d0
+         if(gap_to_edge < 0.05d0*shell_span_sub) dt_int_cap = 0.004d0*86400d0
         end if
        end if
        if(dt_int_cap < huge(1d0))then
@@ -953,6 +947,7 @@ end subroutine lightcurve_wind_bpl
        r_sub = r_old + (r - r_old) * dble(isub) / dble(max(nsub,1))
        u_sub = u_old + (u - u_old) * (dble(isub) - 0.5d0) / dble(max(nsub,1))
        m_sub = m_old + (m - m_old) * dble(isub) / dble(max(nsub,1))
+       r_fs_sub = r_sub
        lum_heat_sub = lum_heat_old + (lum_heat - lum_heat_old) * &
             (dble(isub) - 0.5d0) / dble(max(nsub,1))
        lum_heat_sub = max(lum_heat_sub, 0d0)
@@ -964,11 +959,12 @@ end subroutine lightcurve_wind_bpl
 	         r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
 	         r_out_sub = query_csm_outer_edge(t_sub, op(2))
 	        end if
-	        if(forward_shock_radius(tr_state, r_sub, t_sub, m_sub) >= r_out_sub)then
-	         if(forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev) < r_out_prev)then
-	         f_emerge = (r_out_prev - forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)) / &
-	              max((forward_shock_radius(tr_state, r_sub, t_sub, m_sub) - &
-	                   forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)) - &
+            r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
+            r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
+	        if(r_fs_sub >= r_out_sub)then
+	         if(r_fs_prev < r_out_prev)then
+	         f_emerge = (r_out_prev - r_fs_prev) / &
+	              max((r_fs_sub - r_fs_prev) - &
 	                   (r_out_sub - r_out_prev), 1d-30)
 	         f_emerge = min(max(f_emerge, 0d0), 1d0)
          u_emerge = u_old + (u - u_old) * (dble(isub-1) + f_emerge) / dble(max(nsub,1))
@@ -996,9 +992,9 @@ end subroutine lightcurve_wind_bpl
            dt_cool_cap = huge(1d0)
            if (tr_state%t_emerge > 0d0) then
            if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.05d0*86400d0) then
-             dt_cool_cap = 0.001d0*86400d0
+             dt_cool_cap = 0.004d0*86400d0
             else if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.1d0*86400d0) then
-             dt_cool_cap = 0.0025d0*86400d0
+             dt_cool_cap = 0.01d0*86400d0
             end if
            end if
            if (dt_cool_cap < huge(1d0)) then
@@ -1021,9 +1017,9 @@ end subroutine lightcurve_wind_bpl
         dt_cool_cap = huge(1d0)
         if (tr_state%t_emerge > 0d0) then
          if (t_sub - tr_state%t_emerge < 0.05d0*86400d0) then
-          dt_cool_cap = 0.001d0*86400d0
+          dt_cool_cap = 0.004d0*86400d0
          else if (t_sub - tr_state%t_emerge < 0.1d0*86400d0) then
-          dt_cool_cap = 0.0025d0*86400d0
+          dt_cool_cap = 0.01d0*86400d0
          end if
         end if
         if (dt_cool_cap < huge(1d0) .and. dt_sub > dt_cool_cap) then
@@ -1097,7 +1093,7 @@ end subroutine lightcurve_wind_bpl
          r_array(n) = r_sub
          m_array(n) = m_sub
          v_array(n) = u
-         rfs_array(n) = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
+         rfs_array(n) = r_fs_sub
          rph_array(n) = r_ph
          etrap_array(n) = total_radiation_energy(tr_state)
          tleak_array(n) = shell_leakage_timescale(tr_state, r_sub, t_sub, m_sub)
@@ -1113,7 +1109,7 @@ end subroutine lightcurve_wind_bpl
          r_array(n) = r_sub
          m_array(n) = m_sub
          v_array(n) = u
-         rfs_array(n) = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
+         rfs_array(n) = r_fs_sub
          rph_array(n) = r_ph
          etrap_array(n) = total_radiation_energy(tr_state)
          tleak_array(n) = shell_leakage_timescale(tr_state, r_sub, t_sub, m_sub)
