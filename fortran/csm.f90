@@ -99,13 +99,6 @@ contains
   real(8),intent(in),optional:: eff, kappa
 
   if(run_mode == 1)then
-   if(present(eff))then
-    larray = eff*larray
-    lfs = eff*lfs
-    lrs = eff*lrs
-    temparray = eff**0.25d0*temparray
-   end if
-
    if(present(kappa))then
     call get_diffuse_lc(csm_type,kappa)
     temparray = temperature(ldiff,rarray)
@@ -203,6 +196,7 @@ contains
 ! purpose: To compute LC for broken power-law explosion interacting with wind
 
   use get_vals
+  use integration, only: forward_shock_radiative_efficiency, reverse_shock_radiative_efficiency
 
   real(8),intent(in):: Eexp, Mexp, inner_slope, outer_slope, vwindinput
   real(8),intent(in),target:: Mdotinput(:), tinput(:)
@@ -819,7 +813,7 @@ end subroutine lightcurve_wind_bpl
 
 	  integer:: n, nsub, isub, nsub_cool, jsub
 	  real(8):: dt,ku,kr,km, t_end_run
-	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, lum_heat_sub
+	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs, lum_heat_sub
 	  real(8) :: r_ph, L_ph, dt_rad, dt_sub, dt_remain, dt_cool, dt_cool_cap, dt_int_cap, dt_move
 	  real(8) :: t_old, r_old, u_old, m_old, lum_heat_old, r_sub, m_sub, t_sub
 	  real(8) :: t_sub_prev, r_sub_prev, m_sub_prev, r_out_prev, r_out_sub, f_emerge
@@ -869,27 +863,17 @@ end subroutine lightcurve_wind_bpl
 	   km = dmdt(u,r,m,t,op)
 	   lum_fs = forward_shock_luminosity(r,t,u,op)
 	   lum_rs = reverse_shock_luminosity(r,t,u,op)
-	   
-	   ! For hybrid mode, store raw shock luminosity (before efficiency)
-	   if(run_mode == 2)then
-	    lum_heat = lum_fs + lum_rs  ! Full kinetic luminosity
-	   else
-	    ! For simple mode, use old paper/simple heating and apply efficiency later
-	    if(run_mode == 1)then
-	     lum_heat = lum_fs + lum_rs
-	    else
-	     select case (shock_efficiency_mode)
-	     case (1)
-	      eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
-	      lum_fs = eta_fs*lum_fs
-	      lum_rs = eff_global*lum_rs
-	     case default
-	      lum_fs = eff_global*lum_fs
-	      lum_rs = eff_global*lum_rs
-	     end select
-	     lum_heat = lum_fs + lum_rs
-	    end if
-	   end if
+	   select case (shock_efficiency_mode)
+	   case (1)
+	    eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
+	    eta_rs = reverse_shock_radiative_efficiency(r,t,u,op,eff_global)
+	    lum_fs = eta_fs*lum_fs
+	    lum_rs = eta_rs*lum_rs
+	   case default
+	    lum_fs = eff_global*lum_fs
+	    lum_rs = eff_global*lum_rs
+	   end select
+	   lum_heat = lum_fs + lum_rs
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
    if(run_mode == 1)then

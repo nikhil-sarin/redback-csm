@@ -5035,10 +5035,13 @@ def _call_csm(csm_model, **kwargs):
             f"Available models: {sorted(_DISPATCH.keys())}"
         )
     paper_mode = bool(kwargs.pop("paper_mode", False))
-    efficiency_mode = kwargs.pop("efficiency_mode", None)
-    _get_csm().lc_mod.set_model_mode(1 if paper_mode else 0)
-    if efficiency_mode is not None:
-        _get_csm().lc_mod.set_efficiency_mode(int(efficiency_mode))
+    if "mode" in kwargs:
+        _configure_runtime_from_kwargs(kwargs)
+    else:
+        efficiency_mode = kwargs.pop("efficiency_mode", None)
+        _get_csm().lc_mod.set_model_mode(1 if paper_mode else 0)
+        if efficiency_mode is not None:
+            _get_csm().lc_mod.set_efficiency_mode(int(efficiency_mode))
     func, param_names = _DISPATCH[csm_model]
     args = [kwargs.pop(p) for p in param_names]
     return func(*args, **kwargs)

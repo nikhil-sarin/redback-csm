@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,8 +9,16 @@ from redback_csm.models import generic_powerlaw_csm_bpl_bolometric
 R_SUN = 6.957e10
 
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--output", default="fig_from_paper_static.png")
+    p.add_argument("--efficiency-mode", type=int, default=1)
+    return p.parse_args()
+
+
 def main():
-    output = Path("fig_from_paper_static.png")
+    args = parse_args()
+    output = Path(args.output)
     time = np.geomspace(1.0, 300.0, 500)
     slopes = [0.0, 0.5, 1.0, 1.5, 2.0]
     colors = ["#3b0f70", "#7f1d8d", "#c2417a", "#f07a5a", "#f3bf74"]
@@ -44,7 +53,7 @@ def main():
                 eff=1.0,
                 m_csm=1.0,
                 mode="hybrid",
-                efficiency_mode=0,
+                efficiency_mode=args.efficiency_mode,
                 kappa=0.2,
                 n_rad_zones=panel["n_rad_zones"],
             )
