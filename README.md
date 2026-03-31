@@ -120,8 +120,6 @@ Output is flux density in mJy.
 **Generic phenomenological CSM**
 - `generic_csm_exponential` — power-law base density + 3 shells + exponential SN
 - `generic_csm_bpl` — power-law base density + 3 shells + BPL SN
-- `generic_powerlaw_csm_exponential` — finite power-law CSM shell + exponential SN
-- `generic_powerlaw_csm_bpl` — finite power-law CSM shell + BPL SN
 - `generic_4shell_csm_bpl` — power-law base density + 4 shells + BPL SN
 - `generic_8shell_csm_bpl` — power-law base density + 8 shells + BPL SN
 

@@ -44,7 +44,7 @@ integer,parameter:: ll=200000
  integer :: run_mode = 1
  
  ! Hybrid mode parameters
- integer :: n_rad_zones_global = 40
+ integer :: n_rad_zones_global = 20
  real(8) :: opacity_const_global = 0.34d0
 
 contains
@@ -877,7 +877,7 @@ end subroutine lightcurve_wind_bpl
     if(abs(ku)>1d-30)dt = min(dt,abs(u/ku))
     if(abs(kr)>1d-30)dt = min(dt,abs(r/kr))
     if(abs(km)>1d-30)dt = min(dt,abs(m/km))
-   dt = 0.01d0*dt
+    dt = 0.05d0*dt
     if(.not.(dt>0d0.and.dt<huge(1d0)))exit
    end if
 
@@ -908,15 +908,14 @@ end subroutine lightcurve_wind_bpl
        tr_state%n_zones = n_rad_zones_global
        nsub = 1
       else
+       nsub = 1
        dt_rad = transport_timestep_limit(tr_state)
        if(dt_rad > 0d0 .and. dt_rad < huge(1d0))then
-        nsub = min(128, max(1, ceiling(dt / max(dt_rad, 1d-30))))
-       else
-        nsub = 1
+        nsub = max(1, min(16, ceiling(dt / max(dt_rad, 1d-30))))
        end if
        dt_move = shock_motion_timestep_limit(tr_state, u_old)
        if(dt_move > 0d0 .and. dt_move < huge(1d0))then
-        nsub = min(256, max(nsub, ceiling(dt / max(dt_move, 1d-30))))
+        nsub = max(nsub, min(32, ceiling(dt / max(dt_move, 1d-30))))
        end if
        dt_int_cap = huge(1d0)
        if(.not.tr_state%in_cooling_phase)then
@@ -930,12 +929,12 @@ end subroutine lightcurve_wind_bpl
         shell_span_sub = max(r_out_sub - r_in_sub, 1d-30)
         gap_to_edge = r_out_sub - r
         if(gap_to_edge > 0d0 .and. gap_to_edge < 0.1d0*shell_span_sub)then
-         dt_int_cap = 0.01d0*86400d0
-         if(gap_to_edge < 0.05d0*shell_span_sub) dt_int_cap = 0.004d0*86400d0
+         dt_int_cap = 0.02d0*86400d0
+         if(gap_to_edge < 0.05d0*shell_span_sub) dt_int_cap = 0.01d0*86400d0
         end if
        end if
        if(dt_int_cap < huge(1d0))then
-        nsub = min(256, max(nsub, ceiling(dt / dt_int_cap)))
+        nsub = max(nsub, min(32, ceiling(dt / dt_int_cap)))
        end if
       end if
       dt_sub = dt / dble(max(nsub,1))
@@ -985,20 +984,20 @@ end subroutine lightcurve_wind_bpl
           if(dt_remain > 0d0)then
            dt_rad = transport_timestep_limit(tr_state)
            if(dt_rad > 0d0 .and. dt_rad < huge(1d0))then
-            nsub_cool = min(32, max(1, ceiling(dt_remain / max(0.5d0*dt_rad, 1d-30))))
+            nsub_cool = max(1, min(8, ceiling(dt_remain / max(0.5d0*dt_rad, 1d-30))))
            else
             nsub_cool = 1
            end if
            dt_cool_cap = huge(1d0)
            if (tr_state%t_emerge > 0d0) then
-           if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.05d0*86400d0) then
-             dt_cool_cap = 0.004d0*86400d0
-            else if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.1d0*86400d0) then
+           if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.1d0*86400d0) then
              dt_cool_cap = 0.01d0*86400d0
+            else if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.2d0*86400d0) then
+             dt_cool_cap = 0.02d0*86400d0
             end if
            end if
            if (dt_cool_cap < huge(1d0)) then
-            nsub_cool = min(128, max(nsub_cool, ceiling(dt_remain / dt_cool_cap)))
+            nsub_cool = max(nsub_cool, min(16, ceiling(dt_remain / dt_cool_cap)))
            end if
            dt_cool = dt_remain / dble(max(nsub_cool,1))
            do jsub = 1, nsub_cool
@@ -1016,14 +1015,14 @@ end subroutine lightcurve_wind_bpl
        else
         dt_cool_cap = huge(1d0)
         if (tr_state%t_emerge > 0d0) then
-         if (t_sub - tr_state%t_emerge < 0.05d0*86400d0) then
-          dt_cool_cap = 0.004d0*86400d0
-         else if (t_sub - tr_state%t_emerge < 0.1d0*86400d0) then
+         if (t_sub - tr_state%t_emerge < 0.1d0*86400d0) then
           dt_cool_cap = 0.01d0*86400d0
+         else if (t_sub - tr_state%t_emerge < 0.2d0*86400d0) then
+          dt_cool_cap = 0.02d0*86400d0
          end if
         end if
         if (dt_cool_cap < huge(1d0) .and. dt_sub > dt_cool_cap) then
-         nsub_cool = min(128, max(1, ceiling(dt_sub / dt_cool_cap)))
+         nsub_cool = max(1, min(16, ceiling(dt_sub / dt_cool_cap)))
          dt_cool = dt_sub / dble(max(nsub_cool,1))
          do jsub = 1, nsub_cool
           lum_heat_cool = 0d0

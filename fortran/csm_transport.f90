@@ -143,42 +143,69 @@ contains
   end do
  end subroutine fill_active_profile_from_reference
 
- subroutine deposit_energy_interval_to_reference(src_r, src_inner, src_outer, src_y, n_src, &
+subroutine deposit_energy_interval_to_reference(src_r, src_inner, src_outer, src_y, n_src, &
                                                  cut_l, cut_r, ref_r, ref_inner, ref_outer, n_ref, e_ref)
   integer, intent(in) :: n_src, n_ref
   real(8), intent(in) :: src_r(n_src), src_inner, src_outer, src_y(n_src)
   real(8), intent(in) :: cut_l, cut_r
   real(8), intent(in) :: ref_r(n_ref), ref_inner, ref_outer
   real(8), intent(inout) :: e_ref(n_ref)
-  integer :: i, j
-  real(8) :: src_l, src_rface, src_vol, ref_l, ref_rface, ref_vol
-  real(8) :: rhoe_src, rlo, rhi, overlap_vol
+  real(8), allocatable :: src_face_l(:), src_face_r(:), src_face_vol(:)
+  real(8), allocatable :: ref_face_l(:), ref_face_r(:), ref_face_vol(:)
+  integer :: i, j, i_start
+  real(8) :: src_l, src_rface, ref_l, ref_rface
+  real(8) :: rhoe_src, rlo, rhi, overlap_vol, rlo3, rhi3, ref_l3, ref_r3
+  real(8), parameter :: four_pi_over_3 = 4.18879020478639098461685784438d0
 
   if (cut_r <= cut_l) return
 
+  allocate(src_face_l(n_src), src_face_r(n_src), src_face_vol(n_src))
+  allocate(ref_face_l(n_ref), ref_face_r(n_ref), ref_face_vol(n_ref))
+  call prepare_zone_geometry_arrays(src_r, src_inner, src_outer, n_src, src_face_l, src_face_r, src_face_vol)
+  call prepare_zone_geometry_arrays(ref_r, ref_inner, ref_outer, n_ref, ref_face_l, ref_face_r, ref_face_vol)
+
+  i_start = 1
   do j = 1, n_src
-   call zone_geometry_from_array(src_r, src_inner, src_outer, n_src, j, src_l, src_rface, src_vol)
+   src_l = src_face_l(j)
+   src_rface = src_face_r(j)
    rlo = max(src_l, cut_l)
    rhi = min(src_rface, cut_r)
    if (rhi <= rlo) cycle
    rhoe_src = a_rad * max(src_y(j), 0d0)
+   if (rhoe_src <= 0d0) cycle
 
-   do i = 1, n_ref
-    call zone_geometry_from_array(ref_r, ref_inner, ref_outer, n_ref, i, ref_l, ref_rface, ref_vol)
-    overlap_vol = 4d0 * pi * max(min(rhi, ref_rface)**3 - max(rlo, ref_l)**3, 0d0) / 3d0
-    if (overlap_vol > 0d0) e_ref(i) = e_ref(i) + rhoe_src * overlap_vol
+   rlo3 = rlo**3
+   rhi3 = rhi**3
+   do i = i_start, n_ref
+    ref_l = ref_face_l(i)
+    if (ref_l >= rhi) exit
+    ref_rface = ref_face_r(i)
+    if (ref_rface <= rlo) then
+     i_start = i + 1
+     cycle
+    end if
+    ref_l3 = max(rlo3, ref_l**3)
+    ref_r3 = min(rhi3, ref_rface**3)
+    if (ref_r3 > ref_l3) then
+     overlap_vol = four_pi_over_3 * (ref_r3 - ref_l3)
+     e_ref(i) = e_ref(i) + rhoe_src * overlap_vol
+    end if
    end do
- end do
- end subroutine deposit_energy_interval_to_reference
+  end do
 
- subroutine deposit_scalar_energy_to_reference(cut_l, cut_r, ref_r, ref_inner, ref_outer, rho_ref, n_ref, e_dep, dE)
+  deallocate(src_face_l, src_face_r, src_face_vol)
+  deallocate(ref_face_l, ref_face_r, ref_face_vol)
+end subroutine deposit_energy_interval_to_reference
+
+subroutine deposit_scalar_energy_to_reference(cut_l, cut_r, ref_r, ref_inner, ref_outer, rho_ref, n_ref, e_dep, dE)
   integer, intent(in) :: n_ref
   real(8), intent(in) :: cut_l, cut_r
   real(8), intent(in) :: ref_r(n_ref), ref_inner, ref_outer, rho_ref(n_ref)
   real(8), intent(inout) :: e_dep(n_ref)
   real(8), intent(in) :: dE
+  real(8), allocatable :: ref_face_l(:), ref_face_r(:), ref_face_vol(:)
   integer :: i, iclose
-  real(8) :: ref_l, ref_rface, ref_vol, overlap_vol, weight, weight_sum, rmid, dmin
+  real(8) :: ref_l, ref_rface, overlap_vol, weight, weight_sum, rmid, dmin
   real(8), allocatable :: weights(:)
 
   if (dE <= 0d0) return
@@ -186,8 +213,12 @@ contains
   weights = 0d0
   weight_sum = 0d0
 
+  allocate(ref_face_l(n_ref), ref_face_r(n_ref), ref_face_vol(n_ref))
+  call prepare_zone_geometry_arrays(ref_r, ref_inner, ref_outer, n_ref, ref_face_l, ref_face_r, ref_face_vol)
+
   do i = 1, n_ref
-   call zone_geometry_from_array(ref_r, ref_inner, ref_outer, n_ref, i, ref_l, ref_rface, ref_vol)
+   ref_l = ref_face_l(i)
+   ref_rface = ref_face_r(i)
    overlap_vol = 4d0 * pi * max(min(cut_r, ref_rface)**3 - max(cut_l, ref_l)**3, 0d0) / 3d0
    if (overlap_vol > 0d0) then
     weight = max(rho_ref(i), 1d-30) * overlap_vol
@@ -214,7 +245,8 @@ contains
   end if
 
   deallocate(weights)
- end subroutine deposit_scalar_energy_to_reference
+  deallocate(ref_face_l, ref_face_r, ref_face_vol)
+end subroutine deposit_scalar_energy_to_reference
 
  subroutine initialize_interaction_grid(state, r_shell, t_shell, m_shell, kappa, n_zones)
   type(transport_state_type), intent(inout) :: state
@@ -280,51 +312,78 @@ subroutine update_interaction_geometry(state, r_shell, t_shell, m_shell)
   state%rho = state%rho_ref
  end subroutine update_interaction_geometry
 
- subroutine remap_y_conservative(old_r, old_inner, old_outer, old_y, n_old, &
+subroutine remap_y_conservative(old_r, old_inner, old_outer, old_y, n_old, &
                                  new_r, new_inner, new_outer, new_y, n_new, e_removed)
   integer, intent(in) :: n_old, n_new
   real(8), intent(in) :: old_r(n_old), old_inner, old_outer, old_y(n_old)
   real(8), intent(in) :: new_r(n_new), new_inner, new_outer
   real(8), intent(out) :: new_y(n_new), e_removed
-  integer :: i, j
+  integer :: i, j, i_start
   real(8), allocatable :: e_new(:)
   real(8) :: old_l, old_rface, old_vol, new_l, new_rface, new_vol
-  real(8) :: rhoe_old, rlo, rhi, overlap_vol
+  real(8) :: rhoe_old, rlo, rhi, overlap_vol, rlo3, rhi3, new_l3, new_r3
+  real(8), allocatable :: old_face_l(:), old_face_r(:), old_face_vol(:)
+  real(8), allocatable :: new_face_l(:), new_face_r(:), new_face_vol(:)
+  real(8), parameter :: four_pi_over_3 = 4.18879020478639098461685784438d0
 
   allocate(e_new(n_new))
   e_new = 0d0
   e_removed = 0d0
 
+  allocate(old_face_l(n_old), old_face_r(n_old), old_face_vol(n_old))
+  allocate(new_face_l(n_new), new_face_r(n_new), new_face_vol(n_new))
+  call prepare_zone_geometry_arrays(old_r, old_inner, old_outer, n_old, old_face_l, old_face_r, old_face_vol)
+  call prepare_zone_geometry_arrays(new_r, new_inner, new_outer, n_new, new_face_l, new_face_r, new_face_vol)
+
+  i_start = 1
   do j = 1, n_old
-   call zone_geometry_from_array(old_r, old_inner, old_outer, n_old, j, old_l, old_rface, old_vol)
+   old_l = old_face_l(j)
+   old_rface = old_face_r(j)
+   old_vol = old_face_vol(j)
    rhoe_old = a_rad * max(old_y(j), 0d0)
+   if (rhoe_old <= 0d0) cycle
 
    if (old_l < new_inner) then
     rlo = old_l
     rhi = min(old_rface, new_inner)
     if (rhi > rlo) then
-     e_removed = e_removed + rhoe_old * 4d0 * pi * (rhi**3 - rlo**3) / 3d0
+     e_removed = e_removed + rhoe_old * four_pi_over_3 * (rhi**3 - rlo**3)
     end if
    end if
 
-   do i = 1, n_new
-    call zone_geometry_from_array(new_r, new_inner, new_outer, n_new, i, new_l, new_rface, new_vol)
-    rlo = max(old_l, new_l)
-    rhi = min(old_rface, new_rface)
-    if (rhi > rlo) then
-     overlap_vol = 4d0 * pi * (rhi**3 - rlo**3) / 3d0
+   rlo = max(old_l, new_inner)
+   rhi = min(old_rface, new_inner + (new_face_r(n_new) - new_inner))
+   if (rhi <= rlo) cycle
+   rlo3 = rlo**3
+   rhi3 = rhi**3
+
+   do i = i_start, n_new
+    new_l = new_face_l(i)
+    if (new_l >= rhi) exit
+    new_rface = new_face_r(i)
+    if (new_rface <= rlo) then
+     i_start = i + 1
+     cycle
+    end if
+    new_vol = new_face_vol(i)
+    new_l3 = max(rlo3, new_l**3)
+    new_r3 = min(rhi3, new_rface**3)
+    if (new_r3 > new_l3) then
+     overlap_vol = four_pi_over_3 * (new_r3 - new_l3)
      e_new(i) = e_new(i) + rhoe_old * overlap_vol
     end if
    end do
   end do
 
   do i = 1, n_new
-   call zone_geometry_from_array(new_r, new_inner, new_outer, n_new, i, new_l, new_rface, new_vol)
+   new_vol = new_face_vol(i)
    new_y(i) = max(e_new(i) / max(a_rad * new_vol, 1d-30), 1d-40)
   end do
 
+  deallocate(old_face_l, old_face_r, old_face_vol)
+  deallocate(new_face_l, new_face_r, new_face_vol)
   deallocate(e_new)
- end subroutine remap_y_conservative
+end subroutine remap_y_conservative
 
 subroutine update_interaction_grid(state, r_shell, t_shell, m_shell)
   type(transport_state_type), intent(inout) :: state
@@ -639,7 +698,7 @@ end subroutine initialize_cooling_state_from_interaction
 subroutine update_cooling_grid(state, t_shell)
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: t_shell
-  real(8) :: prev_scale, next_scale
+  real(8) :: prev_scale, next_scale, scale_ratio4
   integer :: i
 
   if (.not. state%initialized) return
@@ -649,6 +708,7 @@ subroutine update_cooling_grid(state, t_shell)
   next_scale = max((state%r_emerge_shell + state%u_emerge_shell * max(t_shell - state%t_emerge, 0d0)) &
                    / max(state%r_emerge_shell, 1d0), 1d0)
   state%cooling_scale = next_scale
+  scale_ratio4 = (prev_scale / next_scale)**4
 
   state%r_inner = state%r_emerge_inner * next_scale
   state%r_outer = state%r_emerge_outer * next_scale
@@ -656,14 +716,14 @@ subroutine update_cooling_grid(state, t_shell)
    state%radius(i) = state%radius_ref(i) * next_scale
    state%rho(i) = max(state%rho_ref(i) / next_scale**3, 1d-30)
   end do
-  state%y = max(state%y * (prev_scale / next_scale)**4, 1d-40)
+  state%y = max(state%y * scale_ratio4, 1d-40)
   call update_tau_and_luminosity(state)
  end subroutine update_cooling_grid
 
- subroutine zone_geometry_from_array(radius, r_inner, r_outer, n, i, r_face_l, r_face_r, vol_i)
-  integer, intent(in) :: n, i
-  real(8), intent(in) :: radius(n), r_inner, r_outer
-  real(8), intent(out) :: r_face_l, r_face_r, vol_i
+subroutine zone_geometry_from_array(radius, r_inner, r_outer, n, i, r_face_l, r_face_r, vol_i)
+ integer, intent(in) :: n, i
+ real(8), intent(in) :: radius(n), r_inner, r_outer
+ real(8), intent(out) :: r_face_l, r_face_r, vol_i
 
   if (i == 1) then
    r_face_l = r_inner
@@ -676,7 +736,35 @@ subroutine update_cooling_grid(state, t_shell)
    r_face_r = sqrt(radius(i) * radius(i+1))
   end if
   vol_i = 4d0 * pi * max(r_face_r**3 - r_face_l**3, 1d-30) / 3d0
- end subroutine zone_geometry_from_array
+end subroutine zone_geometry_from_array
+
+subroutine prepare_zone_geometry_arrays(radius, r_inner, r_outer, n, r_face_l, r_face_r, vol)
+  integer, intent(in) :: n
+  real(8), intent(in) :: radius(n), r_inner, r_outer
+  real(8), intent(out) :: r_face_l(n), r_face_r(n), vol(n)
+  integer :: i
+  real(8) :: r3_l, r3_r
+  real(8), parameter :: four_pi_over_3 = 4.18879020478639098461685784438d0
+
+  if (n <= 0) return
+  r_face_l(1) = r_inner
+  if (n > 1) then
+   do i = 2, n
+    r_face_l(i) = sqrt(radius(i-1) * radius(i))
+   end do
+  end if
+  if (n > 1) then
+   do i = 1, n-1
+    r_face_r(i) = sqrt(radius(i) * radius(i+1))
+   end do
+  end if
+  r_face_r(n) = r_outer
+  do i = 1, n
+   r3_l = r_face_l(i)**3
+   r3_r = r_face_r(i)**3
+   vol(i) = four_pi_over_3 * max(r3_r - r3_l, 1d-30)
+  end do
+end subroutine prepare_zone_geometry_arrays
 
 subroutine cooling_transport_step(state, dt, t_shell, lum_obs, r_ph, lum_heat)
   type(transport_state_type), intent(inout) :: state
