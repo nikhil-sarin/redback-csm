@@ -11,7 +11,8 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
                                    interaction_transport_step, shock_has_emerged, &
                                    initialize_cooling_state_from_interaction, &
                                    cooling_transport_step, transport_timestep_limit, &
-                                   shock_motion_timestep_limit, find_transport_photosphere, &
+                                   shock_motion_timestep_limit, shock_motion_timestep_limit_at, &
+                                   find_transport_photosphere, &
                                    forward_shock_radius, shell_leakage_timescale, &
                                    total_radiation_energy
 
@@ -812,31 +813,23 @@ end subroutine lightcurve_wind_bpl
 	  real(8) :: t_old, r_old, u_old, m_old, lum_heat_old, r_sub, m_sub, t_sub
 	  real(8) :: t_sub_prev, r_sub_prev, m_sub_prev, r_out_prev, r_out_sub, f_emerge
 	  real(8) :: r_in_sub, shell_span_sub, gap_to_edge, u_sub, u_emerge, lum_heat_emerge
-   real(8) :: shell_ratio_run, lum_heat_cool
-   real(8) :: compact_breakout_lum, compact_blend_duration, compact_blend_weight
-   logical :: compact_breakout_mode
-   logical :: compact_breakout_ready
-   real(8) :: r_fs_prev, r_fs_sub
+	  real(8) :: r_fs_prev, r_fs_sub, r_face_l, dr_nom
+	  real(8) :: lum_heat_cool, gap_denom, gap_frac, u_reservoir
+	  logical :: printed_gap_init, printed_gap_step
    type(transport_state_type) :: tr_state
 
-  call reset_transport_state(tr_state)
+	  printed_gap_init = .false.
+	  printed_gap_step = .false.
+	  call reset_transport_state(tr_state)
   if(run_mode == 2)then
    t_end_run = min(t_end, 300d0*86400d0)
   else
    t_end_run = t_end
   end if
   
-  L_ph = 0.0d0
-  r_ph = 0.0d0
-  compact_breakout_mode = .false.
-  compact_breakout_ready = .false.
-  compact_breakout_lum = 0d0
-  compact_blend_duration = 0.75d0 * 86400d0
-  shell_ratio_run = huge(1d0)
-  if (run_mode == 2) then
-   shell_ratio_run = query_csm_outer_edge(t, op(2)) / max(query_csm_inner_edge(t, op(2)), 1d-30)
-   compact_breakout_mode = (shell_ratio_run <= 20d0)
-  end if
+	  L_ph = 0.0d0
+	  r_ph = 0.0d0
+	  u_reservoir = 0d0
 
   t_array = -1d0
   ld_array = 0d0
@@ -911,11 +904,15 @@ end subroutine lightcurve_wind_bpl
        nsub = 1
        dt_rad = transport_timestep_limit(tr_state)
        if(dt_rad > 0d0 .and. dt_rad < huge(1d0))then
-        nsub = max(1, min(16, ceiling(dt / max(dt_rad, 1d-30))))
+        nsub = max(1, min(64, ceiling(dt / max(dt_rad, 1d-30))))
        end if
        dt_move = shock_motion_timestep_limit(tr_state, u_old)
        if(dt_move > 0d0 .and. dt_move < huge(1d0))then
-        nsub = max(nsub, min(32, ceiling(dt / max(dt_move, 1d-30))))
+        nsub = max(nsub, min(256, ceiling(dt / max(dt_move, 1d-30))))
+       end if
+       dt_move = shock_motion_timestep_limit_at(tr_state, r_old, u_old)
+       if(dt_move > 0d0 .and. dt_move < huge(1d0))then
+        nsub = max(nsub, min(256, ceiling(dt / max(dt_move, 1d-30))))
        end if
        dt_int_cap = huge(1d0)
        if(.not.tr_state%in_cooling_phase)then
@@ -934,11 +931,14 @@ end subroutine lightcurve_wind_bpl
         end if
        end if
        if(dt_int_cap < huge(1d0))then
-        nsub = max(nsub, min(32, ceiling(dt / dt_int_cap)))
+        nsub = max(nsub, min(256, ceiling(dt / dt_int_cap)))
        end if
       end if
       dt_sub = dt / dble(max(nsub,1))
       do isub = 1, nsub
+       if (tr_state%in_cooling_phase .and. .not. tr_state%cooling_initialized) then
+        tr_state%in_cooling_phase = .false.
+       end if
        t_sub_prev = t_old + dble(isub-1) * dt_sub
        r_sub_prev = r_old + (r - r_old) * dble(isub-1) / dble(max(nsub,1))
        m_sub_prev = m_old + (m - m_old) * dble(isub-1) / dble(max(nsub,1))
@@ -950,134 +950,152 @@ end subroutine lightcurve_wind_bpl
        lum_heat_sub = lum_heat_old + (lum_heat - lum_heat_old) * &
             (dble(isub) - 0.5d0) / dble(max(nsub,1))
        lum_heat_sub = max(lum_heat_sub, 0d0)
-       if(.not.tr_state%in_cooling_phase)then
-	        if(tr_state%initialized .and. tr_state%r_outer_support > tr_state%r_inner)then
-	         r_out_prev = tr_state%r_outer_support
-	         r_out_sub = tr_state%r_outer_support
-	        else
-	         r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
-	         r_out_sub = query_csm_outer_edge(t_sub, op(2))
-	        end if
-            r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
-            r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
-	        if(r_fs_sub >= r_out_sub)then
-	         if(r_fs_prev < r_out_prev)then
-	         f_emerge = (r_out_prev - r_fs_prev) / &
-	              max((r_fs_sub - r_fs_prev) - &
-	                   (r_out_sub - r_out_prev), 1d-30)
-	         f_emerge = min(max(f_emerge, 0d0), 1d0)
-         u_emerge = u_old + (u - u_old) * (dble(isub-1) + f_emerge) / dble(max(nsub,1))
-         lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * &
-              (dble(isub-1) + f_emerge) / dble(max(nsub,1))
-         lum_heat_emerge = max(lum_heat_emerge, 0d0)
-          if(f_emerge > 0d0)then
-           call interaction_transport_step(tr_state, f_emerge*dt_sub, &
-                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
-                t_sub_prev + f_emerge*(t_sub-t_sub_prev), &
-                m_sub_prev + f_emerge*(m_sub-m_sub_prev), lum_heat_emerge, L_ph, r_ph)
-          end if
+       if (.not. tr_state%in_cooling_phase) then
+        if (tr_state%initialized .and. tr_state%r_outer_support > tr_state%r_inner) then
+         r_out_prev = tr_state%r_outer_support
+         r_out_sub = tr_state%r_outer_support
+         if (tr_state%n_zones > 1) then
+          r_face_l = sqrt(tr_state%radius_ref(tr_state%n_zones-1) * tr_state%radius_ref(tr_state%n_zones))
+         else
+          r_face_l = tr_state%r_inner_support
+         end if
+         dr_nom = max(r_out_sub - r_face_l, 1d-30)
+        else
+         r_out_prev = query_csm_outer_edge(t_sub_prev, op(2))
+         r_out_sub = query_csm_outer_edge(t_sub, op(2))
+         r_in_sub = query_csm_inner_edge(t_sub, op(2))
+         dr_nom = max((r_out_sub - r_in_sub) / dble(max(n_rad_zones_global,1)), 1d-30)
+        end if
+        r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
+        r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
+        r_out_prev = max(r_out_prev - 1.5d0 * dr_nom, tr_state%r_inner_support)
+        r_out_sub = max(r_out_sub - 1.5d0 * dr_nom, tr_state%r_inner_support)
+        if (r_fs_sub >= r_out_sub) then
+         if (r_fs_prev < r_out_prev) then
+          f_emerge = (r_out_prev - r_fs_prev) / &
+               max((r_fs_sub - r_fs_prev) - (r_out_sub - r_out_prev), 1d-30)
+          f_emerge = min(max(f_emerge, 0d0), 1d0)
+          u_emerge = u_old + (u - u_old) * (dble(isub-1) + f_emerge) / dble(max(nsub,1))
+          lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * &
+               (dble(isub-1) + f_emerge) / dble(max(nsub,1))
+          lum_heat_emerge = max(lum_heat_emerge, 0d0)
+	          if (f_emerge > 0d0) then
+	           call interaction_transport_step(tr_state, f_emerge*dt_sub, &
+	                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
+	                t_sub_prev + f_emerge*(t_sub-t_sub_prev), &
+	                m_sub_prev + f_emerge*(m_sub-m_sub_prev), lum_heat_emerge, L_ph, r_ph)
+	           u_reservoir = max(0d0, u_reservoir + (lum_heat_emerge - L_ph) * (f_emerge * dt_sub))
+	          end if
+	          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
+	               'PRE_INIT t_sub=', t_sub_prev + f_emerge*(t_sub-t_sub_prev), 'L_ph=', L_ph, &
+	               'lum_heat_em=', lum_heat_emerge, 'u_em=', u_emerge, 'u_res=', u_reservoir
+	          call flush(6)
           call initialize_cooling_state_from_interaction(tr_state, &
                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
                m_sub_prev + f_emerge*(m_sub-m_sub_prev), &
-               t_sub_prev + f_emerge*(t_sub-t_sub_prev), L_ph)
-          dt_remain = (1d0-f_emerge)*dt_sub
-          if(dt_remain > 0d0)then
-           dt_rad = transport_timestep_limit(tr_state)
-           if(dt_rad > 0d0 .and. dt_rad < huge(1d0))then
-            nsub_cool = max(1, min(8, ceiling(dt_remain / max(0.5d0*dt_rad, 1d-30))))
-           else
-            nsub_cool = 1
-           end if
-           dt_cool_cap = huge(1d0)
-           if (tr_state%t_emerge > 0d0) then
-           if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.1d0*86400d0) then
-             dt_cool_cap = 0.01d0*86400d0
-            else if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.2d0*86400d0) then
-             dt_cool_cap = 0.02d0*86400d0
-            end if
-           end if
-           if (dt_cool_cap < huge(1d0)) then
-            nsub_cool = max(nsub_cool, min(16, ceiling(dt_remain / dt_cool_cap)))
-           end if
-           dt_cool = dt_remain / dble(max(nsub_cool,1))
-           do jsub = 1, nsub_cool
-            call cooling_transport_step(tr_state, dt_cool, &
-                 t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool, L_ph, r_ph)
-            if (compact_breakout_ready .and. compact_breakout_lum > 0d0) then
-             compact_blend_weight = min(max(((t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool) - &
-                                   tr_state%t_emerge) / max(compact_blend_duration, 1d-30), 0d0), 1d0)
-             L_ph = (1d0 - compact_blend_weight) * compact_breakout_lum + compact_blend_weight * L_ph
-            end if
-           end do
+               t_sub_prev + f_emerge*(t_sub-t_sub_prev), L_ph, lum_heat_emerge, u_reservoir)
+         else
+          f_emerge = 0d0
+          u_emerge = u_old + (u - u_old) * dble(isub-1) / dble(max(nsub,1))
+          lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * dble(isub-1) / dble(max(nsub,1))
+          lum_heat_emerge = max(lum_heat_emerge, 0d0)
+	          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
+	               'PRE_INIT t_sub=', t_sub_prev, 'L_ph=', L_ph, 'lum_heat_em=', lum_heat_emerge, &
+	               'u_em=', u_emerge, 'u_res=', u_reservoir
+	          call flush(6)
+          call initialize_cooling_state_from_interaction(tr_state, &
+               r_sub_prev, u_emerge, m_sub_prev, t_sub_prev, L_ph, lum_heat_emerge, u_reservoir)
+         end if
+         if (.not. printed_gap_init) then
+          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
+               'GAP_INIT t_em=', tr_state%t_emerge, 't_gap_end=', tr_state%t_gap_end, &
+               'L_ph=', L_ph, 'L_heat_gap=', tr_state%lum_heat_gap, 'r_sh=', r_sub_prev + f_emerge*(r_sub-r_sub_prev)
+          printed_gap_init = .true.
+         end if
+         dt_remain = (1d0 - f_emerge) * dt_sub
+         if (dt_remain > 0d0) then
+          dt_rad = transport_timestep_limit(tr_state)
+          if (dt_rad > 0d0 .and. dt_rad < huge(1d0)) then
+           nsub_cool = max(1, min(8, ceiling(dt_remain / max(0.5d0*dt_rad, 1d-30))))
           else
-           call find_transport_photosphere(tr_state, r_ph, L_ph)
+           nsub_cool = 1
           end if
+          dt_cool_cap = huge(1d0)
+          if (tr_state%t_emerge > 0d0) then
+           if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.1d0*86400d0) then
+            dt_cool_cap = min(dt_cool_cap, 0.005d0*86400d0)
+           else if ((t_sub_prev + f_emerge*(t_sub-t_sub_prev)) - tr_state%t_emerge < 0.2d0*86400d0) then
+            dt_cool_cap = min(dt_cool_cap, 0.02d0*86400d0)
+           end if
+          end if
+          if (dt_cool_cap < huge(1d0)) then
+           nsub_cool = max(nsub_cool, min(16, ceiling(dt_remain / dt_cool_cap)))
+          end if
+          dt_cool = dt_remain / dble(max(nsub_cool,1))
+          do jsub = 1, nsub_cool
+           gap_denom = max(tr_state%t_gap_end - tr_state%t_emerge, 0d0)
+           lum_heat_cool = 0d0
+           if (gap_denom > 0d0) then
+            gap_frac = (t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool - tr_state%t_emerge) / gap_denom
+            if (gap_frac < 1d0) lum_heat_cool = tr_state%lum_heat_gap * max(1d0 - gap_frac, 0d0)
+           end if
+           call cooling_transport_step(tr_state, dt_cool, &
+                t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool, L_ph, r_ph, lum_heat_cool)
+           if (.not. printed_gap_step) then
+            write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
+                 'GAP_STEP t=', t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool, &
+                 'L_ph=', L_ph, 'L_heat_cool=', lum_heat_cool
+            printed_gap_step = .true.
+           end if
+          end do
+         else
+          call find_transport_photosphere(tr_state, r_ph, L_ph)
+         end if
+        else
+         r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
+	         call interaction_transport_step(tr_state, dt_sub, r_sub, u_sub, t_sub, m_sub, lum_heat_sub, L_ph, r_ph)
+	         u_reservoir = max(0d0, u_reservoir + (lum_heat_sub - L_ph) * dt_sub)
+        end if
        else
         dt_cool_cap = huge(1d0)
         if (tr_state%t_emerge > 0d0) then
          if (t_sub - tr_state%t_emerge < 0.1d0*86400d0) then
-          dt_cool_cap = 0.01d0*86400d0
+          dt_cool_cap = min(dt_cool_cap, 0.005d0*86400d0)
          else if (t_sub - tr_state%t_emerge < 0.2d0*86400d0) then
-          dt_cool_cap = 0.02d0*86400d0
+          dt_cool_cap = min(dt_cool_cap, 0.02d0*86400d0)
          end if
         end if
         if (dt_cool_cap < huge(1d0) .and. dt_sub > dt_cool_cap) then
          nsub_cool = max(1, min(16, ceiling(dt_sub / dt_cool_cap)))
          dt_cool = dt_sub / dble(max(nsub_cool,1))
          do jsub = 1, nsub_cool
+          gap_denom = max(tr_state%t_gap_end - tr_state%t_emerge, 0d0)
           lum_heat_cool = 0d0
-          if (compact_breakout_ready) then
-           r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub_prev + dble(jsub)*dt_cool, m_sub)
-           if (tr_state%r_outer_support > tr_state%r_inner) then
-            r_out_sub = tr_state%r_outer_support
-           else
-            r_out_sub = query_csm_outer_edge(t_sub_prev + dble(jsub)*dt_cool, op(2))
-           end if
-           if (r_fs_sub < r_out_sub) lum_heat_cool = lum_heat_sub
+          if (gap_denom > 0d0) then
+           gap_frac = (t_sub_prev + dble(jsub)*dt_cool - tr_state%t_emerge) / gap_denom
+           if (gap_frac < 1d0) lum_heat_cool = tr_state%lum_heat_gap * max(1d0 - gap_frac, 0d0)
           end if
           call cooling_transport_step(tr_state, dt_cool, t_sub_prev + dble(jsub)*dt_cool, L_ph, r_ph, lum_heat_cool)
-          if (compact_breakout_ready .and. compact_breakout_lum > 0d0) then
-           compact_blend_weight = min(max(((t_sub_prev + dble(jsub)*dt_cool) - tr_state%t_emerge) / &
-                                 max(compact_blend_duration, 1d-30), 0d0), 1d0)
-           L_ph = (1d0 - compact_blend_weight) * compact_breakout_lum + compact_blend_weight * L_ph
+          if (.not. printed_gap_step) then
+           write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
+                'GAP_STEP t=', t_sub_prev + dble(jsub)*dt_cool, 'L_ph=', L_ph, 'L_heat_cool=', lum_heat_cool
+           printed_gap_step = .true.
           end if
          end do
         else
+         gap_denom = max(tr_state%t_gap_end - tr_state%t_emerge, 0d0)
          lum_heat_cool = 0d0
-         if (compact_breakout_ready) then
-          r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
-          if (tr_state%r_outer_support > tr_state%r_inner) then
-           r_out_sub = tr_state%r_outer_support
-          else
-           r_out_sub = query_csm_outer_edge(t_sub, op(2))
-          end if
-          if (r_fs_sub < r_out_sub) lum_heat_cool = lum_heat_sub
+         if (gap_denom > 0d0) then
+          gap_frac = (t_sub - tr_state%t_emerge) / gap_denom
+          if (gap_frac < 1d0) lum_heat_cool = tr_state%lum_heat_gap * max(1d0 - gap_frac, 0d0)
          end if
          call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph, lum_heat_cool)
-         if (compact_breakout_ready .and. compact_breakout_lum > 0d0) then
-          compact_blend_weight = min(max((t_sub - tr_state%t_emerge) / max(compact_blend_duration, 1d-30), 0d0), 1d0)
-          L_ph = (1d0 - compact_blend_weight) * compact_breakout_lum + compact_blend_weight * L_ph
+         if (.not. printed_gap_step) then
+          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
+               'GAP_STEP t=', t_sub, 'L_ph=', L_ph, 'L_heat_cool=', lum_heat_cool
+          printed_gap_step = .true.
          end if
         end if
-       end if
-       else
-         r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
-         call interaction_transport_step(tr_state, dt_sub, r_sub, u_sub, t_sub, m_sub, lum_heat_sub, L_ph, r_ph)
-         if (compact_breakout_mode .and. .not.compact_breakout_ready) then
-          r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
-          if (r_ph > 0d0 .and. &
-              r_fs_prev < (1d0 - 1d0/dble(max(tr_state%n_zones, 8))) * r_ph .and. &
-              r_fs_sub >= (1d0 - 1d0/dble(max(tr_state%n_zones, 8))) * r_ph) then
-           compact_breakout_ready = .true.
-           compact_breakout_lum = max(L_ph, 0d0)
-           call initialize_cooling_state_from_interaction(tr_state, r_sub, u_sub, m_sub, t_sub, L_ph)
-           call find_transport_photosphere(tr_state, r_ph, L_ph)
-           if (compact_breakout_lum > 0d0) L_ph = compact_breakout_lum
-          end if
-         end if
-        end if
-       else
-        call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph)
        end if
 
        if(t_sub > t_start)then

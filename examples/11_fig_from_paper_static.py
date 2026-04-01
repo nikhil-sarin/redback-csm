@@ -12,7 +12,7 @@ R_SUN = 6.957e10
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--output", default="fig_from_paper_static.png")
-    p.add_argument("--efficiency-mode", type=int, default=1)
+    p.add_argument("--efficiency-mode", type=int, default=0)
     return p.parse_args()
 
 
@@ -27,7 +27,7 @@ def main():
             "title": r"Compact CSM: $R_{\rm csm,out}=5\times10^3\,R_\odot$",
             "r_outer": 5.0e3 * R_SUN,
             "xlim": (1.0, 300.0),
-            "n_rad_zones": 20,
+            "n_rad_zones": 800,
         },
         {
             "title": r"Extended CSM: $R_{\rm csm,out}=5\times10^4\,R_\odot$",
