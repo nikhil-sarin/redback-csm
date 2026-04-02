@@ -205,7 +205,7 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     if mode == "simple":
         _get_csm().lc_mod.set_run_mode(1)
     elif mode == "hybrid":
-        _get_csm().lc_mod.set_run_mode(2)
+        _get_csm().lc_mod.set_run_mode(3)
         if kappa is None:
             kappa = 0.34
         n_rad_zones = int(kwargs.get("n_rad_zones", default_n_rad_zones))
