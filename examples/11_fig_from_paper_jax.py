@@ -45,6 +45,18 @@ def main():
     for ax, panel in zip(axes, panels):
         for s, color in zip(slopes, colors):
             # Prepare parameters for the JAX model
+            # v_tr and v_sc should be solved from the shock-CSM interaction
+            # For now, use reasonable estimates:
+            # For BPL ejecta with delta=1, n=10, M_ej=5, E_sn=1:
+            # v_ej_max ~ sqrt(2*E/M) * sqrt(n/(n-3)) ~ sqrt(2*1e51 / (5*1.989e33)) * sqrt(10/7)
+            import numpy as np
+            m_sun = 1.989e33
+            e_foe = 1e51
+            v_ej_max = np.sqrt(2 * 1.0 * e_foe / (5.0 * m_sun)) * np.sqrt(10.0 / 7.0)
+            # Set v_tr to a fraction of v_ej_max, and v_sc similarly
+            v_tr_est = 0.5 * v_ej_max
+            v_sc_est = 0.5 * v_ej_max
+            
             params = {
                 'dyn': {
                     'm_ej': 5.0,
@@ -55,8 +67,8 @@ def main():
                     's': s,
                     'delta': 1.0,
                     'n': 10.0,
-                    'v_tr': 1e9, # Placeholder for v_tr, in real case solve for it
-                    'v_sc': 1e9, # Placeholder
+                    'v_tr': float(v_tr_est),
+                    'v_sc': float(v_sc_est),
                     'profile_type': 0, # BPL
                 },
                 'kappa': 0.2,

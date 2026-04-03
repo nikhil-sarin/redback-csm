@@ -4,13 +4,48 @@ from typing import Tuple
 
 def solve_tridiagonal(a, b, c, d):
     """
-    Solve Ax = d where A is a tridiagonal matrix.
+    Solve Ax = d where A is a tridiagonal matrix using Thomas algorithm.
     a: lower diagonal (size N-1)
     b: main diagonal (size N)
     c: upper diagonal (size N-1)
     d: right hand side (size N)
     """
-    return jax.lax.linalg.tridiagonal_solve(a, b, c, d)
+    N = len(d)
+    
+    # Forward sweep: eliminate lower diagonal
+    c_star = jnp.zeros(N)
+    d_star = jnp.zeros(N)
+    
+    c_star = c_star.at[0].set(c[0] / b[0])
+    d_star = d_star.at[0].set(d[0] / b[0])
+    
+    def forward_step(carry, i):
+        c_star, d_star = carry
+        # For step i >= 1: eliminate a[i-1]
+        denominator = b[i] - a[i-1] * c_star[i-1]
+        c_new = jnp.where(i < N - 1, c[i] / denominator, 0.0)
+        d_new = (d[i] - a[i-1] * d_star[i-1]) / denominator
+        c_star_new = c_star.at[i].set(c_new)
+        d_star_new = d_star.at[i].set(d_new)
+        return (c_star_new, d_star_new), None
+    
+    (c_star, d_star), _ = jax.lax.scan(forward_step, (c_star, d_star), jnp.arange(1, N))
+    
+    # Back substitution
+    x = jnp.zeros(N)
+    x = x.at[-1].set(d_star[-1])
+    
+    def back_step(carry, i):
+        x = carry
+        # i goes from N-2 down to 0, so we use N-2-i as the index
+        idx = N - 2 - i
+        x_new = d_star[idx] - c_star[idx] * x[idx + 1]
+        x_new_array = x.at[idx].set(x_new)
+        return x_new_array, None
+    
+    x, _ = jax.lax.scan(back_step, x, jnp.arange(N - 1))
+    
+    return x
 
 def build_diffusion_matrix(x_grid, eta_csm, kappa, r_csm_in, dt_y):
     """
@@ -42,10 +77,13 @@ def build_diffusion_matrix(x_grid, eta_csm, kappa, r_csm_in, dt_y):
     inv_x2_dx2 = 1.0 / (x_grid**2 * dx**2)
     
     # Coefficients for e_{i-1}, e_i, e_{i+1}
+    # a has size N-1, b has size N, c has size N-1
     a = inv_x2_dx2[1:] * D_half_minus[1:]
-    b = -inv_x2_dx2 * (D_half_plus + D_half_minus) # D_half_plus needs padding
-    # Fix b padding
-    b = -inv_x2_dx2 * (jnp.concatenate([D_half_plus, jnp.array([0.0])]) + D_half_minus)
+    
+    # D_half_plus has size N-1, D_half_minus has size N
+    b_coeff = jnp.concatenate([D_half_plus, jnp.array([0.0])]) + D_half_minus
+    b = -inv_x2_dx2 * b_coeff
+    
     c = inv_x2_dx2[:-1] * D_half_plus
     
     return a, b, c
@@ -74,11 +112,6 @@ def crank_nicolson_step(e_n, x_grid, eta_csm, kappa, r_csm_in, dt_y, f_ib, f_ob)
     # RHS = e_n + 0.5 * dt_y * L[e_n]
     # Calculate L[e_n] using tridiagonal multiply
     # L[e]_i = a_i*e_{i-1} + b_i*e_i + c_i*e_{i+1}
-    
-    L_en = b * e_n
-    L_en = L_en + a * e_n[1:] # Shifted
-    # Need to be careful with indices for L_en
-    # L_en[i] = a[i-1]*e[i-1] + b[i]*e[i] + c[i]*e[i+1]
     
     # Correct L_en computation
     L_en = b * e_n

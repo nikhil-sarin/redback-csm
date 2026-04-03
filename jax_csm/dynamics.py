@@ -87,14 +87,18 @@ def eta_ej_norm(v_norm, params: DynamicsParams):
 
 def dynamics_ode(state, zeta, params: DynamicsParams, q: float, v_tr_norm: float, v_sc_norm: float):
     x, phi, w = state
-    v_ej_dim = x / zeta
+    # x/zeta is the velocity in the ejecta frame (normalized)
+    # v_ej_norm = v_ej / v_ej_max = x / zeta (in normalized coordinates)
+    v_ej_norm = x / zeta
     
     if params.profile_type == 0:
-        eta_val = jnp.where(v_ej_dim < v_tr_norm, 
-                           (v_ej_dim / v_tr_norm)**(-params.delta), 
-                           (v_ej_dim / v_tr_norm)**(-params.n))
+        # BPL profile: eta(v) where v is in units of v_ej_max
+        eta_val = jnp.where(v_ej_norm < v_tr_norm, 
+                           (v_ej_norm / v_tr_norm)**(-params.delta), 
+                           (v_ej_norm / v_tr_norm)**(-params.n))
     else:
-        eta_val = jnp.exp(-v_ej_dim / v_sc_norm)
+        # Exponential profile
+        eta_val = jnp.exp(-v_ej_norm / v_sc_norm)
 
     eta_csm_val = x**(-params.s)
     

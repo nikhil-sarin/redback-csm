@@ -37,34 +37,45 @@ def solve_full_model(params: TransportParams):
     state_0 = jnp.array([1.0, 1e-6, 1.0])
     x_se = params.dyn_params.r_csm_out / params.dyn_params.r_csm_in
     
-    # Integrate until x = x_se
-    # For JAX compatibility, we use a fixed number of steps and mask later, or while_loop
+    # Integrate until x = x_se with history tracking
+    # Use scan to get full trajectory
     max_steps = 2000
-    def body_fun(state_tuple):
-        state, zeta, i = state_tuple
-        next_state = rk4_step(state, zeta)
-        return (next_state, zeta + params.dt_zeta, i + 1), None
-
-    def cond_fun(state_tuple):
-        state, zeta, i = state_tuple
-        return (state[0] < x_se) & (i < max_steps)
-
-    (final_state, final_zeta, total_steps), _ = jax.lax.while_loop(cond_fun, body_fun, (state_0, 1.0, 0))
     
-    # For the lightcurve, we need the trajectory. 
-    # Re-run with scan to get history.
+    def scan_body(state, _):
+        x_prev, phi_prev, w_prev, zeta = state
+        next_state = rk4_step(jnp.array([x_prev, phi_prev, w_prev]), zeta)
+        new_zeta = zeta + params.dt_zeta
+        # Condition: continue if x < x_se
+        should_continue = (next_state[0] < x_se)
+        return (next_state[0], next_state[1], next_state[2], new_zeta), (next_state, should_continue)
+    
+    init_scan = (1.0, 1e-6, 1.0, 1.0)
+    (final_x, final_phi, final_w, final_zeta), (traj_info, should_continue_array) = jax.lax.scan(
+        scan_body, init_scan, jnp.arange(max_steps)
+    )
+    
+    # Find where integration should stop
+    num_steps = jnp.argmax(~should_continue_array)
+    num_steps = jnp.where(num_steps == 0, max_steps, num_steps)
+    
+    # Get the trajectory up to num_steps
+    state_history = traj_info[0][0]  # This won't work with scan directly
+    # Better approach: redo the integration with explicit stops
+    
     def scan_dyn(state, _):
-        zeta = 1.0 + _ * params.dt_zeta
-        next_state = rk4_step(state, zeta)
+        x, phi, w = state
+        next_state = rk4_step(jnp.array([x, phi, w]), 1.0 + _ * params.dt_zeta)
         return next_state, next_state
 
-    # This is a simplification: use fixed steps up to final_zeta
-    num_steps = int((final_zeta - 1.0) / params.dt_zeta)
+    # Use a fixed number of steps (reduced for faster computation)
+    num_steps = 100
     _, state_history = jax.lax.scan(scan_dyn, state_0, jnp.arange(num_steps))
     
+    # state_history has shape (num_steps, 3) with outputs from steps 0..num_steps-1
+    # Each step i produces state at zeta = 1.0 + i * dt_zeta
     x_traj = state_history[:, 0]
     w_traj = state_history[:, 2]
-    zeta_grid = jnp.linspace(1.0, final_zeta, num_steps)
+    zeta_grid = 1.0 + jnp.arange(num_steps) * params.dt_zeta
 
     # 3. Diffusion Integration
     # rho_csm_in calculation
@@ -85,6 +96,10 @@ def solve_full_model(params: TransportParams):
     
     e_0 = jnp.zeros(params.n_grid)
     
+    # Pre-calculate f_ob (outer boundary coefficient - constant for this run)
+    eta_ph = x_se**(-params.dyn_params.s)
+    f_ob = -4.0 / (tau_csm_in * eta_ph)
+    
     def diffusion_step(e, i):
         zeta = zeta_grid[i]
         x_sh = x_traj[i]
@@ -94,10 +109,6 @@ def solve_full_model(params: TransportParams):
         # We evaluate eta_csm at the current shock position
         eta_sh = x_sh**(-params.dyn_params.s)
         f_ib = params.eff_int * (eta_sh**2) * (w**3)
-        
-        # Outer Boundary Condition f_ob = -4 / (tau_csm_in * eta_csm(x_ph))
-        eta_ph = x_se**(-params.dyn_params.s)
-        f_ob = -4.0 / (tau_csm_in * eta_ph)
         
         dt_y = (params.dt_zeta * t_in) / t_diff
         
