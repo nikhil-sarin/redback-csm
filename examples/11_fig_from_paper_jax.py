@@ -1,5 +1,10 @@
+import sys
 from pathlib import Path
 import argparse
+
+# Add project root to sys.path to find jax_csm
+root_dir = Path(__file__).resolve().parents[1]
+sys.path.append(str(root_dir))
 
 import matplotlib.pyplot as plt
 import numpy as np
