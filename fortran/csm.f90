@@ -806,7 +806,7 @@ end subroutine lightcurve_wind_bpl
   use integration
   use get_vals
 
-	  integer:: n, nsub, isub, nsub_cool, jsub
+	  integer:: n, nsub, isub, nsub_cool, jsub, m3_log_counter
 	  real(8):: dt,ku,kr,km, t_end_run
 	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs, lum_heat_sub
 	  real(8) :: r_ph, L_ph, dt_rad, dt_sub, dt_remain, dt_cool, dt_cool_cap, dt_int_cap, dt_move
@@ -814,13 +814,10 @@ end subroutine lightcurve_wind_bpl
 	  real(8) :: t_sub_prev, r_sub_prev, m_sub_prev, r_out_prev, r_out_sub, f_emerge
 	  real(8) :: r_in_sub, shell_span_sub, gap_to_edge, u_sub, u_emerge, lum_heat_emerge
 	  real(8) :: r_fs_prev, r_fs_sub, r_face_l, dr_nom
-	  real(8) :: lum_heat_cool, gap_denom, gap_frac, u_reservoir
-	  real(8) :: t_target, dt_out_min
-	  logical :: printed_gap_init, printed_gap_step
+	  real(8) :: lum_heat_cool, gap_denom, gap_frac
+   real(8) :: rho_seed, dr_seed, r_out_seed
    type(transport_state_type) :: tr_state
 
-	  printed_gap_init = .false.
-	  printed_gap_step = .false.
 	  call reset_transport_state(tr_state)
   if(run_mode == 2)then
    t_end_run = min(t_end, 300d0*86400d0)
@@ -830,16 +827,18 @@ end subroutine lightcurve_wind_bpl
   
   L_ph = 0.0d0
   r_ph = 0.0d0
-  u_reservoir = 0d0
-
- if (run_mode == 3) then
+  m3_log_counter = 0
+  if (run_mode == 3) then
    call get_exp_v0(op(1))
    r = query_csm_inner_edge(t, op(2))
    if (r <= 0d0) r = 1d0
    u = 1.d2 * op(1)%exp_v0
    if (u <= 0d0) u = 1d7
-   m = 1d0
- end if
+   r_out_seed = query_csm_outer_edge(t, op(2))
+   dr_seed = max((r_out_seed - r) / dble(max(n_rad_zones_global, 1)), 1d0)
+   rho_seed = max(query_csm_density(r, t, op(2)), 0d0)
+   m = max(4d0*pi*r*r*rho_seed*dr_seed, 1d-30)
+  end if
 
   t_array = -1d0
   ld_array = 0d0
@@ -852,10 +851,6 @@ end subroutine lightcurve_wind_bpl
   tauhyb_array = 0d0
   i_array = 0
   n = 0
-  if (run_mode == 3) then
-   ! run_mode 3 handled inside main loop with comoving diffusion
-  end if
-
   do while (t<=t_end_run)
 
 ! Evolve shell properties
@@ -878,14 +873,27 @@ end subroutine lightcurve_wind_bpl
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
    if(run_mode == 3)then
-    dt_out_min = 1.0d0 * 86400d0
-    if (n < 1) then
-     t_target = max(t_start, t) + dt_out_min
+    ! Use adaptive global cadence for output/driver stepping.
+    ! The transport solver subcycles internally, but if this outer step is too
+    ! coarse (e.g. fixed 1 day) fast dark-phase/rise features are lost by
+    ! interpolation onto user times.
+    dt = huge(1d0)
+    if(abs(ku)>1d-30)dt = min(dt,abs(u/ku))
+    if(abs(kr)>1d-30)dt = min(dt,abs(r/kr))
+    if(abs(km)>1d-30)dt = min(dt,abs(m/km))
+    dt = 0.02d0*dt
+
+    ! Early-time high-cadence sampling to resolve dark-phase onset and peak.
+    if (t < 30d0*86400d0) then
+     dt = min(dt, 0.02d0*86400d0)   ! 0.02 day
+    else if (t < 120d0*86400d0) then
+     dt = min(dt, 0.1d0*86400d0)    ! 0.1 day
     else
-     t_target = max(t_array(n) * (1.0d0 + 1.0d-3), t + dt_out_min)
+     dt = min(dt, 0.5d0*86400d0)    ! 0.5 day late-time
     end if
-    if (t_target > t_end_run) t_target = t_end_run
-    dt = t_target - t
+
+    dt = max(dt, 10d0)              ! avoid zero/underflow
+    if (t + dt > t_end_run) dt = t_end_run - t
     if (.not.(dt>0d0.and.dt<huge(1d0))) exit
    else if(run_mode == 1)then
     dt = 0.01d0*min(abs(u/ku),abs(r/kr),abs(m/km))
@@ -895,7 +903,6 @@ end subroutine lightcurve_wind_bpl
     if(abs(kr)>1d-30)dt = min(dt,abs(r/kr))
     if(abs(km)>1d-30)dt = min(dt,abs(m/km))
     dt = 0.05d0*dt
-    ! run_mode 3 uses the same dynamical dt as run_mode 2
     if(.not.(dt>0d0.and.dt<huge(1d0)))exit
    end if
 
@@ -919,9 +926,7 @@ end subroutine lightcurve_wind_bpl
 	    erad = 0d0
 	   end if
 
-   if (run_mode /= 3) then
-    t = t + dt
-   end if
+   if (run_mode /= 3) t = t + dt
 
    if (run_mode == 2) then
     if(diffusion_enabled)then
@@ -1013,35 +1018,20 @@ end subroutine lightcurve_wind_bpl
 	                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
 	                t_sub_prev + f_emerge*(t_sub-t_sub_prev), &
 	                m_sub_prev + f_emerge*(m_sub-m_sub_prev), lum_heat_emerge, L_ph, r_ph)
-	           u_reservoir = max(0d0, u_reservoir + (lum_heat_emerge - L_ph) * (f_emerge * dt_sub))
-	          end if
-	          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-	               'PRE_INIT t_sub=', t_sub_prev + f_emerge*(t_sub-t_sub_prev), 'L_ph=', L_ph, &
-	               'lum_heat_em=', lum_heat_emerge, 'u_em=', u_emerge, 'u_res=', u_reservoir
-	          call flush(6)
-          call initialize_cooling_state_from_interaction(tr_state, &
-               r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
-               m_sub_prev + f_emerge*(m_sub-m_sub_prev), &
-               t_sub_prev + f_emerge*(t_sub-t_sub_prev), L_ph, lum_heat_emerge, u_reservoir)
+		          end if
+	          call initialize_cooling_state_from_interaction(tr_state, &
+	               r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
+	               m_sub_prev + f_emerge*(m_sub-m_sub_prev), &
+	               t_sub_prev + f_emerge*(t_sub-t_sub_prev), L_ph, lum_heat_emerge)
          else
           f_emerge = 0d0
           u_emerge = u_old + (u - u_old) * dble(isub-1) / dble(max(nsub,1))
           lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * dble(isub-1) / dble(max(nsub,1))
           lum_heat_emerge = max(lum_heat_emerge, 0d0)
-	          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-	               'PRE_INIT t_sub=', t_sub_prev, 'L_ph=', L_ph, 'lum_heat_em=', lum_heat_emerge, &
-	               'u_em=', u_emerge, 'u_res=', u_reservoir
-	          call flush(6)
-          call initialize_cooling_state_from_interaction(tr_state, &
-               r_sub_prev, u_emerge, m_sub_prev, t_sub_prev, L_ph, lum_heat_emerge, u_reservoir)
-         end if
-         if (.not. printed_gap_init) then
-          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-               'GAP_INIT t_em=', tr_state%t_emerge, 't_gap_end=', tr_state%t_gap_end, &
-               'L_ph=', L_ph, 'L_heat_gap=', tr_state%lum_heat_gap, 'r_sh=', r_sub_prev + f_emerge*(r_sub-r_sub_prev)
-          printed_gap_init = .true.
-         end if
-         dt_remain = (1d0 - f_emerge) * dt_sub
+	          call initialize_cooling_state_from_interaction(tr_state, &
+	               r_sub_prev, u_emerge, m_sub_prev, t_sub_prev, L_ph, lum_heat_emerge)
+	         end if
+	         dt_remain = (1d0 - f_emerge) * dt_sub
          if (dt_remain > 0d0) then
           dt_rad = transport_timestep_limit(tr_state)
           if (dt_rad > 0d0 .and. dt_rad < huge(1d0)) then
@@ -1070,21 +1060,14 @@ end subroutine lightcurve_wind_bpl
            end if
            call cooling_transport_step(tr_state, dt_cool, &
                 t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool, L_ph, r_ph, lum_heat_cool)
-           if (.not. printed_gap_step) then
-            write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-                 'GAP_STEP t=', t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool, &
-                 'L_ph=', L_ph, 'L_heat_cool=', lum_heat_cool
-            printed_gap_step = .true.
-           end if
-          end do
+	         end do
          else
           call find_transport_photosphere(tr_state, r_ph, L_ph)
          end if
         else
          r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
 	         call interaction_transport_step(tr_state, dt_sub, r_sub, u_sub, t_sub, m_sub, lum_heat_sub, L_ph, r_ph)
-	         u_reservoir = max(0d0, u_reservoir + (lum_heat_sub - L_ph) * dt_sub)
-        end if
+	        end if
        else
         dt_cool_cap = huge(1d0)
         if (tr_state%t_emerge > 0d0) then
@@ -1105,12 +1088,7 @@ end subroutine lightcurve_wind_bpl
            if (gap_frac < 1d0) lum_heat_cool = max(lum_heat_cool, tr_state%lum_heat_gap * max(1d0 - gap_frac, 0d0))
           end if
           call cooling_transport_step(tr_state, dt_cool, t_sub_prev + dble(jsub)*dt_cool, L_ph, r_ph, lum_heat_cool)
-          if (.not. printed_gap_step) then
-           write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-                'GAP_STEP t=', t_sub_prev + dble(jsub)*dt_cool, 'L_ph=', L_ph, 'L_heat_cool=', lum_heat_cool
-           printed_gap_step = .true.
-          end if
-         end do
+	        end do
         else
          gap_denom = max(tr_state%t_gap_end - tr_state%t_emerge, 0d0)
          lum_heat_cool = 0d0   ! no heating after shock exits CSM
@@ -1119,13 +1097,8 @@ end subroutine lightcurve_wind_bpl
           if (gap_frac < 1d0) lum_heat_cool = max(lum_heat_cool, tr_state%lum_heat_gap * max(1d0 - gap_frac, 0d0))
          end if
          call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph, lum_heat_cool)
-         if (.not. printed_gap_step) then
-          write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-               'GAP_STEP t=', t_sub, 'L_ph=', L_ph, 'L_heat_cool=', lum_heat_cool
-          printed_gap_step = .true.
-         end if
-        end if
-       end if
+	        end if
+	       end if
 
        if(t_sub > t_start)then
         if (n < 1) then
@@ -1170,28 +1143,31 @@ end subroutine lightcurve_wind_bpl
      end if
    endif
 
-   if (run_mode == 3) then
-     if(diffusion_enabled)then
-       if(.not.tr_state%initialized)then
-        tr_state%kappa = opacity_const_global
-        tr_state%n_zones = n_rad_zones_global
-       end if
-       r_out_sub = query_csm_outer_edge(t, op(2))
-       lum_heat_sub = lum_heat
-       if (r >= r_out_sub) lum_heat_sub = 0d0
-       call comoving_transport_step(tr_state, dt, t, r, u, lum_heat_sub, L_ph)
-       r = tr_state%r_shell_current
-       u = tr_state%u_shell_current
-       m = max(tr_state%m_shocked_csm, 1d-30)
-       t = tr_state%t_shell
-       r_ph = r
-       ! COMOV_OUT logging disabled for speed; enable if needed for diagnostics.
-       if (L_ph /= L_ph .or. abs(L_ph) > 1d250) then
-        write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-             'COMOV_WARN t=', t, 'L_ph=', L_ph, 'lum_heat=', lum_heat_sub
-        call flush(6)
-       end if
-     end if
+   if (run_mode == 3 .and. diffusion_enabled) then
+   if(.not.tr_state%initialized)then
+     tr_state%kappa = opacity_const_global
+     tr_state%n_zones = n_rad_zones_global
+     write(*,'(A,1X,ES12.5,1X,A,1X,I0)') 'M3_CFG kappa=', tr_state%kappa, 'nz=', tr_state%n_zones
+    end if
+    r_out_sub = query_csm_outer_edge(t, op(2))
+    lum_heat_sub = lum_heat
+    if (r >= r_out_sub) lum_heat_sub = 0d0
+    m3_log_counter = m3_log_counter + 1
+    if (m3_log_counter <= 25 .or. mod(m3_log_counter, 200) == 0) then
+     write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
+          'M3_LOOP_PRE t=', t, 'dt=', dt, 'r=', r, 'u=', u, 'Lheat=', lum_heat_sub
+    end if
+    call comoving_transport_step(tr_state, dt, t, r, u, m, lum_heat_sub, L_ph)
+    r = tr_state%r_shell_current
+    u = tr_state%u_shell_current
+    m = max(tr_state%m_shocked_csm, 1d-30)
+    t = tr_state%t_shell
+    r_ph = r
+    if (m3_log_counter <= 25 .or. mod(m3_log_counter, 200) == 0) then
+     write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,L1)') &
+          'M3_LOOP_POST t=', t, 'L=', L_ph, 'r=', r, 'm=', m, 'cool=', tr_state%in_cooling_phase
+    end if
+    if (.not.(L_ph == L_ph) .or. abs(L_ph) > 1d250) L_ph = 0d0
    end if
 
 ! Store output arrays
@@ -1206,11 +1182,6 @@ end subroutine lightcurve_wind_bpl
     end if
    if(run_mode == 1)then
     if(n>=1)i_array(n) = op(2)%scan_i
-   else if (run_mode == 3) then
-     ! comoving solver already advanced state earlier in the step
-     if(diffusion_enabled)then
-       r_ph = r
-     end if
    end if
    if (n >= ll) exit
     n = n+1
