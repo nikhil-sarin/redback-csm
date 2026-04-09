@@ -156,6 +156,10 @@ def _get_bpl_cutoff_ratio_from_kwargs(kwargs):
 
     vej_max = kwargs.get("vej_max", None)
     if vej_max is None:
+        if all(name in kwargs for name in ("delta", "nn", "mexp", "eexp")):
+            return 3.0
+        if all(name in kwargs for name in ("delta_sn", "nn_sn", "mej_sn", "esn")):
+            return 3.0
         return 0.0
 
     # External velocity inputs are conventionally in km/s on the Python side.
@@ -3226,6 +3230,11 @@ def _get_lc_static_powerlaw_csm_bpl(
     **kwargs,
 ):
     """Static finite-support power-law CSM shell interacting with a BPL SN."""
+    kwargs = dict(kwargs)
+    kwargs.setdefault("delta_sn", delta_sn)
+    kwargs.setdefault("nn_sn", nn_sn)
+    kwargs.setdefault("mej_sn", mej_sn)
+    kwargs.setdefault("esn", esn)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     n_points = kwargs.get("n_points", 1000)
 

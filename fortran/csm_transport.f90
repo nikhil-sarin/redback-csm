@@ -290,7 +290,7 @@ subroutine initialize_interaction_grid(state, r_shell, t_shell, m_shell, kappa, 
   if (.not.(state%r_outer_support > state%r_inner_support)) then
    state%r_outer_support = state%r_inner_support * (1d0 + 1d-3)
   end if
-  state%r_inner = state%r_inner_support
+  state%r_inner = min(max(state%r_shell_current, state%r_inner_support), state%r_outer_support * (1d0 - 1d-10))
   state%r_outer = state%r_outer_support
 
   allocate(state%radius(state%n_zones), state%radius_ref(state%n_zones), &
@@ -303,7 +303,7 @@ subroutine initialize_interaction_grid(state, r_shell, t_shell, m_shell, kappa, 
 
   call build_radial_grid(state%r_inner_support, state%r_outer_support, state%radius_ref)
   call fill_stationary_reference_profile(state, t_shell)
-  call build_radial_grid(state%r_inner_support, state%r_outer_support, state%radius)
+  call build_radial_grid(state%r_inner, state%r_outer, state%radius)
   call fill_active_profile_from_reference(state)
 
   state%y = 1d-40
@@ -383,11 +383,12 @@ subroutine interaction_zone_geometry_at(state, i, r_shell, r_face_l, r_face_r, v
   integer :: ihi
 
   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-  ihi = first_active_zone_at(state, r_shell)
-  if (i < ihi) then
-    r_face_l = r_face_r
-    vol_i = 0d0
-  else if (i == ihi) then
+  if (state%r_inner >= min(max(r_shell, state%r_inner_support), state%r_outer_support * (1d0 - 1d-10))) then
+   ihi = 1
+  else
+   ihi = first_active_zone_at(state, r_shell)
+  end if
+  if (i == ihi) then
     r_face_l = min(max(r_shell, r_face_l), r_face_r)
     vol_i = 4d0 * pi * max(r_face_r**3 - r_face_l**3, 1d-30) / 3d0
   end if
@@ -396,26 +397,36 @@ end subroutine interaction_zone_geometry_at
 subroutine update_interaction_geometry(state, r_shell, t_shell, m_shell)
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: r_shell, t_shell, m_shell
-  integer :: i, ihi
-  real(8), parameter :: compression = 7d0   ! strong-shock compression ratio
+  real(8), allocatable :: old_radius(:), old_y(:)
+  real(8) :: old_inner, old_outer, new_inner, e_removed
 
   state%t_shell = t_shell
   state%r_shell_prev = state%r_shell_current
   state%r_shell_current = max(r_shell, 1d0)
-  state%r_inner = state%r_inner_support   ! inner boundary fixed at CSM inner edge
-  state%r_outer = state%r_outer_support
-  state%radius = state%radius_ref
+  old_inner = state%r_inner
+  old_outer = state%r_outer
+  allocate(old_radius(state%n_zones), old_y(state%n_zones))
+  old_radius = state%radius
+  old_y = state%y
 
-  ! Cells behind the shock use compressed (post-shock) density so that
-  ! radiation is trapped in the shell reservoir.  Cells ahead are unshocked.
-  ihi = first_active_zone_at(state, state%r_shell_current)
-  do i = 1, state%n_zones
-   if (i < ihi) then
-    state%rho(i) = compression * state%rho_ref(i)
-   else
-    state%rho(i) = state%rho_ref(i)
-   end if
-  end do
+  new_inner = max(state%r_shell_current, state%r_inner_support)
+  if (state%r_outer_support > state%r_inner_support) then
+   new_inner = min(new_inner, state%r_outer_support * (1d0 - 1d-10))
+  end if
+  state%r_inner = new_inner
+  state%r_outer = state%r_outer_support
+  call build_radial_grid(state%r_inner, state%r_outer, state%radius)
+  call fill_active_profile_from_reference(state)
+
+  if (state%r_inner > old_inner) then
+   call deposit_energy_interval_to_reference(old_radius, old_inner, old_outer, old_y, state%n_zones, &
+        old_inner, state%r_inner, state%radius_ref, state%r_inner_support, state%r_outer_support, state%n_zones, state%e_swept)
+  end if
+  call remap_y_conservative(old_radius, old_inner, old_outer, old_y, state%n_zones, &
+       state%radius, state%r_inner, state%r_outer, state%y, state%n_zones, e_removed)
+  state%e_residual = max(sum(state%e_swept), 0d0)
+
+  deallocate(old_radius, old_y)
 end subroutine update_interaction_geometry
 
 subroutine remap_y_conservative(old_r, old_inner, old_outer, old_y, n_old, &
@@ -599,11 +610,7 @@ real(8) function total_radiation_energy(state) result(e_tot)
   if (.not. state%initialized) return
 
   do i = 1, state%n_zones
-   if (state%in_cooling_phase) then
-    call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-   else
-    call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
-   end if
+   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
    e_tot = e_tot + a_rad * max(state%y(i), 0d0) * vol_i
   end do
 end function total_radiation_energy
@@ -629,20 +636,19 @@ subroutine interaction_transport_step(state, dt, r_shell, u_shell, t_shell, m_sh
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: dt, r_shell, u_shell, t_shell, m_shell, lum_heat
   real(8), intent(out) :: lum_obs, r_ph
-  real(8) :: lum_input, r_fs
+  real(8) :: lum_input
   real(8) :: u_grid, r_face_l, r_face_r, vol_i, dUdt, dt_eff
   integer :: i, istart
   real(8), save :: u_prev = 0d0
   logical, save :: have_prev = .false.
   integer, save :: energy_step = 0
 
-  r_fs = forward_shock_radius(state, r_shell, t_shell, m_shell)
   state%u_shell_current = u_shell
   state%lum_heat_last = lum_heat
   if (.not. state%initialized) then
-   call initialize_interaction_grid(state, r_fs, t_shell, m_shell, max(state%kappa, 1d-30), max(state%n_zones,48))
+   call initialize_interaction_grid(state, max(r_shell, 1d0), t_shell, m_shell, max(state%kappa, 1d-30), max(state%n_zones,48))
   else
-   call update_interaction_grid(state, r_fs, t_shell, m_shell)
+   call update_interaction_grid(state, max(r_shell, 1d0), t_shell, m_shell)
   end if
 
   ! Shell mass is evolved by the coupled dynamics (m_shell input).  Keep the
@@ -678,12 +684,10 @@ subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_
   real(8), intent(in), optional :: lum_target, lum_heat
   real(8), intent(in), optional :: u_reservoir
 
-  integer :: i, ihi
-  real(8), allocatable :: u_cell(:)
-  real(8) :: r_face_l, r_face_r, vol_i
-  real(8) :: u_target, u_have, tau_shell
-  real(8) :: m_shell_eff, rho_post, dR_shell, wsum
-  real(8) :: u_report
+  integer :: i
+  real(8), allocatable :: old_y(:), e_breakout(:), old_radius_ref(:), old_rho_ref(:), old_dm(:)
+  real(8) :: u_grid, tau_shell, r_face_l, r_face_r, vol_i
+  real(8) :: delta_r_shell, tau_dummy, tleak_dummy, m_old_total
   logical, parameter :: debug_mode3 = .true.
 
   if (.not. state%initialized) return
@@ -697,17 +701,34 @@ subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_
   state%u_emerge_shell = max(u_shell, 1d-30)
   state%m_emerge_csm = max(state%m_shocked_csm, 0d0)
   state%m_emerge_ej = max(state%m_shocked_ej, 0d0)
+  state%m_emerge_shell = max(m_shell, state%m_shocked_csm + state%m_shocked_ej, 1d-30)
 
-  m_shell_eff = max(m_shell, state%m_shocked_csm + state%m_shocked_ej)
-  state%m_emerge_shell = max(m_shell_eff, 1d-30)
+  allocate(old_y(state%n_zones))
+  allocate(e_breakout(state%n_zones))
+  allocate(old_radius_ref(state%n_zones))
+  allocate(old_rho_ref(state%n_zones))
+  allocate(old_dm(state%n_zones))
+  old_y = state%y
+  old_radius_ref = state%radius_ref
+  old_rho_ref = state%rho_ref
+  e_breakout = max(state%e_swept, 0d0)
 
-  ! Cooling phase should start from the shocked shell at breakout, not the full
-  ! pre-shock CSM span.
-  rho_post = max(7d0 * query_csm_density(max(r_shell, 1d0), t_shell, op(2)), 1d-30)
-  dR_shell = state%m_emerge_shell / max(4d0*pi*max(r_shell,1d0)**2 * rho_post, 1d-30)
-  dR_shell = min(max(dR_shell, 1d-4*max(r_shell,1d0)), 0.2d0*max(r_shell,1d0))
-  state%r_emerge_inner = max(r_shell - 0.5d0*dR_shell, 1d0)
-  state%r_emerge_outer = max(r_shell + 0.5d0*dR_shell, state%r_emerge_inner*(1d0 + 1d-6))
+  ! Total stored breakout energy = swept dark-zone reservoir + radiation still
+  ! present on the interaction grid at emergence.
+  call deposit_energy_interval_to_reference(state%radius, state%r_inner, state%r_outer, old_y, state%n_zones, &
+       state%r_inner, state%r_outer, old_radius_ref, state%r_inner_support, state%r_outer_support, state%n_zones, e_breakout)
+  u_grid = sum(e_breakout)
+
+  ! Appendix A switches to diffusion in the freely expanding shocked shell.
+  ! Compress the swept-up CSM mass profile into a thin post-shock shell at
+  ! breakout, then carry the stored breakout-energy profile onto that shell.
+  call shell_structure_estimate(state, max(r_shell, 1d0), t_shell, state%m_emerge_shell, delta_r_shell, tau_dummy, tleak_dummy)
+  delta_r_shell = min(max(delta_r_shell, 1d-3 * max(r_shell, 1d0)), 0.25d0 * max(r_shell, 1d0))
+  state%r_emerge_outer = max(r_shell, 1d0)
+  state%r_emerge_inner = max(state%r_emerge_outer - delta_r_shell, 1d0)
+  if (.not.(state%r_emerge_outer > state%r_emerge_inner)) then
+   state%r_emerge_inner = state%r_emerge_outer * (1d0 - 1d-6)
+  end if
 
   state%cooling_scale = 1d0
   state%cooling_scale_prev = 1d0
@@ -715,35 +736,24 @@ subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_
   state%r_inner = state%r_emerge_inner
   state%r_outer = state%r_emerge_outer
 
-  u_have = total_radiation_energy(state)
-
   call build_radial_grid(state%r_emerge_inner, state%r_emerge_outer, state%radius_ref)
-  do i = 1, state%n_zones
-   state%radius(i) = state%radius_ref(i)
-   state%rho_ref(i) = rho_post
-   state%rho(i) = state%rho_ref(i)
-  end do
 
-  ! Preserve total stored radiation energy at handoff (interaction dark+active
-  ! zones), and distribute over the thin shell by mass.
-  allocate(u_cell(state%n_zones))
-  u_target = max(u_have, 0d0)
-  wsum = 0d0
+  m_old_total = 0d0
   do i = 1, state%n_zones
-   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-   wsum = wsum + state%rho_ref(i) * vol_i
+   call zone_geometry_from_array(old_radius_ref, state%r_inner_support, state%r_outer_support, state%n_zones, i, &
+        r_face_l, r_face_r, vol_i)
+   old_dm(i) = max(old_rho_ref(i), 1d-30) * vol_i
+   m_old_total = m_old_total + old_dm(i)
   end do
-  if (wsum > 0d0 .and. u_target > 0d0) then
-   do i = 1, state%n_zones
-    call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-    u_cell(i) = u_target * (state%rho_ref(i) * vol_i / wsum)
-   end do
-  else
-   u_cell = 0d0
-  end if
+  if (m_old_total <= 0d0) m_old_total = 1d0
+
   do i = 1, state%n_zones
-   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-   state%y(i) = max(u_cell(i) / max(a_rad * vol_i, 1d-30), 1d-40)
+   call zone_geometry_from_array(state%radius_ref, state%r_emerge_inner, state%r_emerge_outer, state%n_zones, i, &
+        r_face_l, r_face_r, vol_i)
+   state%radius(i) = state%radius_ref(i)
+   state%rho_ref(i) = max(state%m_emerge_shell * old_dm(i) / m_old_total / max(vol_i, 1d-30), 1d-30)
+   state%rho(i) = state%rho_ref(i)
+   state%y(i) = max(e_breakout(i) / max(a_rad * vol_i, 1d-30), 1d-40)
   end do
 
   call update_tau_and_luminosity(state)
@@ -752,15 +762,17 @@ subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_
   state%e_residual = 0d0
 
   if (debug_mode3) then
-   u_report = u_have
-   if (present(u_reservoir)) u_report = u_target
    write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
         'M3_HANDOFF_GEOM rin=', state%r_emerge_inner, 'rsh=', state%r_emerge_shell, 'rout=', state%r_emerge_outer, 'tau0=', tau_shell
    write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-        'M3_HANDOFF_EN Uhave=', u_have, 'Utarget=', u_report, 'Usum=', sum(u_cell)
+        'M3_HANDOFF_EN Ugrid=', u_grid, 'Utarget=', u_grid, 'Usum=', u_grid
   end if
 
-  deallocate(u_cell)
+  deallocate(e_breakout)
+  deallocate(old_y)
+  deallocate(old_radius_ref)
+  deallocate(old_rho_ref)
+  deallocate(old_dm)
 end subroutine initialize_cooling_state_from_interaction
 
 subroutine update_cooling_grid(state, t_shell)
@@ -774,8 +786,8 @@ subroutine update_cooling_grid(state, t_shell)
   state%t_shell = t_shell
   prev_scale = max(state%cooling_scale, 1d-30)
   state%cooling_scale_prev = prev_scale
-  next_scale = max((state%r_emerge_shell + state%u_emerge_shell * max(t_shell - state%t_emerge, 0d0)) &
-                   / max(state%r_emerge_shell, 1d0), 1d0)
+  next_scale = max((state%r_emerge_inner + state%u_emerge_shell * max(t_shell - state%t_emerge, 0d0)) &
+                   / max(state%r_emerge_inner, 1d0), 1d0)
   state%cooling_scale = next_scale
 
   state%r_inner = state%r_emerge_inner * next_scale
@@ -872,7 +884,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
   real(8) :: r_out, r_ph, lum_tmp
   real(8) :: heat_sub
   real(8) :: e_rad
-  real(8) :: du_res, e_prev, ebal
+  real(8) :: du_res, e_prev, e_res_prev, ebal
   real(8) :: r_init, kappa_init
   integer :: dbg_stride, call_count
   logical :: do_log_step, do_log_sub
@@ -948,6 +960,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
           'M3_INT_PRE isub=', isub, 't=', t_loc, 'r=', r_loc, 'u=', u_loc, 'm=', m_loc
     end if
 
+    e_res_prev = state%e_residual
     ku = dudt(u_loc, r_loc, m_loc, t_loc, op)
     kr = drdt(u_loc, r_loc, m_loc, t_loc, op)
     km = dmdt(u_loc, r_loc, m_loc, t_loc, op)
@@ -959,9 +972,8 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
     heat_sub = max(lum_heat, 0d0)
     call interaction_transport_step(state, dt_step, r_loc, u_loc, t_loc + dt_step, m_loc, heat_sub, lum_tmp, r_ph)
     e_rad = total_radiation_energy(state)
-    du_res = (heat_sub - max(lum_tmp, 0d0)) * dt_step - (e_rad - e_prev)
-    if (du_res > 0d0) state%e_residual = state%e_residual + du_res
-    ebal = (heat_sub - max(lum_tmp, 0d0)) * dt_step - (e_rad - e_prev) - max(du_res, 0d0)
+    du_res = state%e_residual - e_res_prev
+    ebal = (heat_sub - max(lum_tmp, 0d0)) * dt_step - ((e_rad + state%e_residual) - (e_prev + e_res_prev))
 
     if (debug_mode3 .and. do_log_step .and. do_log_sub) then
      write(*,'(A,1X,I0,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
@@ -977,8 +989,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
            'M3_EMERGE t=', t_loc+dt_step, 'r=', r_loc, 'rout=', r_out, 'L=', lum_tmp
       write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5)') 'M3_EMERGE_URES=', state%e_residual, 'Erad=', e_rad
      end if
-     call initialize_cooling_state_from_interaction(state, r_loc, u_loc, m_loc, t_loc + dt_step, &
-          lum_tmp, heat_sub, max(state%e_residual, e_rad))
+     call initialize_cooling_state_from_interaction(state, r_loc, u_loc, m_loc, t_loc + dt_step, lum_tmp, heat_sub)
     end if
    else
     call cooling_transport_step(state, dt_step, t_loc + dt_step, lum_tmp, r_ph, 0d0)
@@ -1036,12 +1047,11 @@ subroutine photosphere_boundary_from_tau(state, istart, iph, r_ph)
   r_ph = state%r_outer
 
   if (state%tau(jstart) <= 2d0/3d0) then
-   iph = jstart
-   if (.not. state%in_cooling_phase) then
-    r_ph = min(max(state%r_shell_current, state%r_inner), state%r_outer)
-   else
-    r_ph = min(max(state%r_inner, state%r_inner), state%r_outer)
-   end if
+   ! Once the optical depth ahead of the shock/shell drops below 2/3, the
+   ! diffusion domain is effectively optically thin. The emitting surface is
+   ! then the outer edge rather than the inner moving boundary.
+   iph = state%n_zones
+   r_ph = state%r_outer
    return
   end if
 
@@ -1063,7 +1073,7 @@ real(8) function outer_escape_conductance(state, iph, r_ph) result(k_escape)
   type(transport_state_type), intent(in) :: state
   integer, intent(in) :: iph
   real(8), intent(in) :: r_ph
-  real(8) :: r_face_l, r_face_r, vol_i, area_ph
+  real(8) :: r_face_l, r_face_r, vol_i, area_ph, stream_factor
 
   if (iph < 1 .or. iph > state%n_zones) then
    k_escape = 0d0
@@ -1073,25 +1083,28 @@ real(8) function outer_escape_conductance(state, iph, r_ph) result(k_escape)
   call zone_geometry(state, iph, r_face_l, r_face_r, vol_i)
   r_face_r = min(max(r_ph, r_face_l), r_face_r)
   area_ph = 4d0 * pi * r_face_r**2
-  k_escape = area_ph * clight * a_rad / 4d0
+  if (state%in_cooling_phase) then
+   ! Appendix A changes the cooling-phase outer boundary to
+   ! e = f_ob(y) * de/dx with f_ob = -2/(tau_in eta) (Rin/R0)^2,
+   ! which corresponds to F = (c/2) u at the emitting surface.
+   stream_factor = 0.5d0
+  else
+   stream_factor = 0.25d0
+  end if
+  k_escape = area_ph * clight * a_rad * stream_factor
 end function outer_escape_conductance
 
 subroutine find_transport_photosphere(state, r_ph, lum_obs)
   type(transport_state_type), intent(in) :: state
   real(8), intent(out) :: r_ph, lum_obs
-  integer :: iph, istart
+  integer :: iph, ihi
   real(8) :: y_ph, tau_lo, tau_hi, frac, y_obs, r_obs
   real(8) :: t_relax, ramp
   real(8) :: r_face_l, r_face_r, vol_i, dr, rho_face, dcoef, e_n, e_nm1, flux_out
-  istart = 1
-  if (.not. state%in_cooling_phase) istart = first_active_zone(state)
-  call photosphere_boundary_from_tau(state, istart, iph, r_ph)
-  if (state%in_cooling_phase) then
-   if (state%t_shell - state%t_emerge < 0.1d0 * 86400d0) then
-    iph = state%n_zones
-    r_ph = state%r_outer
-   end if
-  end if
+
+  ihi = 1
+  if (.not. state%in_cooling_phase) ihi = first_active_zone(state)
+  call photosphere_boundary_from_tau(state, ihi, iph, r_ph)
   call zone_geometry(state, iph, r_face_l, r_face_r, vol_i)
   y_obs = max(state%y(iph), 0d0)
   r_obs = min(max(r_ph, r_face_l), r_face_r)
@@ -1107,15 +1120,19 @@ subroutine find_transport_photosphere(state, r_ph, lum_obs)
    end if
   end if
   e_n = a_rad * y_obs
-  ! Eddington boundary: F = (c/4) u
-  flux_out = 0.25d0 * clight * e_n
+  if (state%in_cooling_phase) then
+   ! Cooling phase uses the Appendix A outer boundary, which gives F=(c/2)u.
+   flux_out = 0.5d0 * clight * e_n
+  else
+   flux_out = 0.25d0 * clight * e_n
+  end if
   lum_obs = max(4d0 * pi * r_obs**2 * flux_out, 0d0)
   ! No luminosity override during the gap: let the boundary condition set the flux.
 end subroutine find_transport_photosphere
 
 real(8) function transport_timestep_limit(state)
   type(transport_state_type), intent(in) :: state
-  integer :: i, ihi, iph
+  integer :: i, iph, ihi, ilo
   real(8) :: dr, rho_face, dcoef, r_ph
   real(8) :: r_face_l, r_face_r, vol_i, area_l, area_r
   real(8) :: rho_face_l, rho_face_r, dcoef_l, dcoef_r, k_l, k_r, k_escape
@@ -1129,16 +1146,19 @@ real(8) function transport_timestep_limit(state)
   end if
   ihi = 1
   if (.not. state%in_cooling_phase) ihi = first_active_zone(state)
-  call photosphere_boundary_from_tau(state, ihi, iph, r_ph)
+  ilo = ihi
+  call photosphere_boundary_from_tau(state, ilo, iph, r_ph)
 
-  do i = max(ihi,1), max(ihi, iph-1)
-   dr = max(state%radius(i+1) - state%radius(i), 1d-30)
-   rho_face = 0.5d0 * (state%rho(i) + state%rho(i+1))
-   dcoef = clight * a_rad / (3d0 * state%kappa * max(rho_face, 1d-30))
-   transport_timestep_limit = min(transport_timestep_limit, dr*dr / max(dcoef, 1d-30))
-  end do
+  if (iph > ilo) then
+   do i = ilo, iph-1
+    dr = max(state%radius(i+1) - state%radius(i), 1d-30)
+    rho_face = 0.5d0 * (state%rho(i) + state%rho(i+1))
+    dcoef = clight * a_rad / (3d0 * state%kappa * max(rho_face, 1d-30))
+    transport_timestep_limit = min(transport_timestep_limit, dr*dr / max(dcoef, 1d-30))
+   end do
+  end if
 
-  do i = max(ihi,1), iph
+  do i = ilo, iph
    if (.not. state%in_cooling_phase) then
     call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
    else
@@ -1149,12 +1169,12 @@ real(8) function transport_timestep_limit(state)
     vol_i = 4d0 * pi * max(r_face_r**3 - r_face_l**3, 1d-30) / 3d0
    end if
 
-   if (i == 1 .or. (.not. state%in_cooling_phase .and. i == ihi)) then
+   if (i == ilo) then
     k_l = 0d0
    else
     area_l = 4d0 * pi * r_face_l**2
     rho_face_l = 0.5d0 * (state%rho(i-1) + state%rho(i))
-   dcoef_l = clight * a_rad / (3d0 * state%kappa * max(rho_face_l, 1d-30))
+    dcoef_l = clight * a_rad / (3d0 * state%kappa * max(rho_face_l, 1d-30))
     k_l = area_l * dcoef_l / max(state%radius(i) - state%radius(i-1), 1d-30)
    end if
 
@@ -1221,17 +1241,12 @@ subroutine solve_transport_step(state, dt, lum_heat)
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: dt, lum_heat
 
-  integer :: i, n, ihi, iph, ihi_old, k, istart
+  integer :: i, n, ihi, iph
   real(8) :: dr_l, dr_r, r_face_l, r_face_r, area_l, area_r, vol_i
-  real(8) :: vol_old, r_face_l_old, r_face_l_base, r_face_r_base
-  real(8) :: e_carry, r_face_l_prev, r_face_r_prev, vol_residual
+  real(8) :: vol_old
   real(8) :: rho_face_l, rho_face_r, dcoef_l, dcoef_r, k_l, k_r, k_escape, r_ph
   real(8) :: theta, omt
-  real(8) :: dr_cut, dr_nom, v_merged_new, u_merged_old
-  real(8) :: total_vol
   real(8) :: expansion_lambda
-  logical :: merge_cut
-  logical :: use_gap_flux
 
   if (.not. state%initialized) return
   n = state%n_zones
@@ -1251,21 +1266,30 @@ subroutine solve_transport_step(state, dt, lum_heat)
   state%work_vol_old = 0d0
   ihi = 1
   if (.not. state%in_cooling_phase) then
-   ihi = first_active_zone(state)   ! zone containing the shock (heating source)
+   ihi = first_active_zone(state)
+   state%e_residual = max(sum(state%e_swept), 0d0)
   end if
-  ihi_old = ihi
-  merge_cut = .false.
-  istart = 1
-  if (.not. state%in_cooling_phase) istart = first_active_zone(state)
-  call photosphere_boundary_from_tau(state, istart, iph, r_ph)
+  call photosphere_boundary_from_tau(state, ihi, iph, r_ph)
 
   expansion_lambda = 0d0
 
   do i = 1, n
-   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
+   if (.not. state%in_cooling_phase .and. i < ihi) then
+    state%work_vol(i) = 0d0
+    state%work_vol_old(i) = 0d0
+    state%work_kl(i) = 0d0
+    state%work_kr(i) = 0d0
+    state%work_kesc(i) = 0d0
+    cycle
+   end if
+   if (.not. state%in_cooling_phase) then
+    call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
+   else
+    call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
+   end if
    k_escape = 0d0
 
-   if (i > iph .or. (.not. state%in_cooling_phase .and. i < ihi)) then
+   if (i > iph) then
     state%work_vol(i) = 0d0
     state%work_vol_old(i) = 0d0
     state%work_kl(i) = 0d0
@@ -1274,7 +1298,7 @@ subroutine solve_transport_step(state, dt, lum_heat)
     cycle
    end if
 
-   if (i == 1 .or. (.not. state%in_cooling_phase .and. i == ihi)) then
+   if (i == ihi) then
     k_l = 0d0
    else
     dr_l = state%radius(i) - state%radius(i-1)
@@ -1299,9 +1323,10 @@ subroutine solve_transport_step(state, dt, lum_heat)
    end if
 
    if (state%in_cooling_phase) then
-    ! Cooling phase: vol at old timestep was vol_ref * prev_scale^3.
-    ! vol_i is already vol_ref * cooling_scale^3 (new timestep).
-    vol_old = vol_i * (state%cooling_scale_prev / max(state%cooling_scale, 1d-30))**3
+    ! update_cooling_grid already applies the homologous R^-4 cooling to the
+    ! transported radiation field. The implicit solve should therefore only
+    ! advance diffusion on the new comoving grid geometry.
+    vol_old = vol_i
     state%work_vol(i) = vol_i
     state%work_vol_old(i) = vol_old
    else
@@ -1314,22 +1339,24 @@ subroutine solve_transport_step(state, dt, lum_heat)
    state%work_kesc(i) = k_escape
   end do
 
-  use_gap_flux = .false.
-
-  total_vol = 0d0
-  ! no gap heating in cooling phase (Appendix A)
-
   do i = 1, n
-   if (i > iph .or. (.not. state%in_cooling_phase .and. i < ihi)) then
+   if (.not. state%in_cooling_phase .and. i < ihi) then
     state%work_a(i) = 0d0
     state%work_b(i) = 1d0
     state%work_c(i) = 0d0
-    if (.not. state%in_cooling_phase .and. i < ihi) then
-     state%work_rhs(i) = max(state%work_old_y(i) * &
-          (max(state%r_shell_prev, 1d0) / max(state%r_shell_current, 1d0))**4, 1d-40)
-    else
-     state%work_rhs(i) = 1d-40
-    end if
+    state%work_rhs(i) = 1d-40
+    cycle
+   end if
+   if (.not. state%in_cooling_phase) then
+    call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
+   else
+    call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
+   end if
+   if (i > iph) then
+    state%work_a(i) = 0d0
+    state%work_b(i) = 1d0
+    state%work_c(i) = 0d0
+    state%work_rhs(i) = 1d-40
     cycle
    end if
 
@@ -1338,7 +1365,7 @@ subroutine solve_transport_step(state, dt, lum_heat)
    state%work_rhs(i) = a_rad * state%work_vol_old(i) * state%work_old_y(i) / dt - &
             omt * (state%work_kl(i) + state%work_kr(i) + state%work_kesc(i)) * state%work_old_y(i)
 
-   if (i > 1) then
+   if (i > ihi) then
     state%work_a(i) = -theta * state%work_kl(i)
     state%work_rhs(i) = state%work_rhs(i) + omt * state%work_kl(i) * state%work_old_y(i-1)
    end if
@@ -1367,46 +1394,6 @@ subroutine solve_transport_step(state, dt, lum_heat)
         omt * (k_l + k_escape) * state%work_old_y(iph)
    if (iph > 1) then
     state%work_rhs(iph) = state%work_rhs(iph) + omt * k_l * state%work_old_y(iph-1)
-   end if
-  end if
-
-  if (merge_cut .and. ihi + 1 <= iph) then
-   state%work_a(ihi) = 0d0
-   state%work_b(ihi) = 1d0
-   state%work_c(ihi) = -1d0
-   state%work_rhs(ihi) = 0d0
-
-   v_merged_new = state%work_vol(ihi) + state%work_vol(ihi+1)
-   u_merged_old = a_rad * (state%work_vol_old(ihi) * state%work_old_y(ihi) + &
-                           state%work_vol_old(ihi+1) * state%work_old_y(ihi+1))
-
-   k_r = state%work_kr(ihi+1)
-   k_escape = state%work_kesc(ihi+1)
-   state%work_a(ihi+1) = 0d0
-   state%work_b(ihi+1) = a_rad * v_merged_new / dt + theta * (k_r + k_escape)
-   state%work_c(ihi+1) = 0d0
-   state%work_rhs(ihi+1) = u_merged_old / dt - omt * (k_r + k_escape) * state%work_old_y(ihi+1)
-
-   if (ihi + 1 < iph) then
-    state%work_c(ihi+1) = -theta * k_r
-    state%work_rhs(ihi+1) = state%work_rhs(ihi+1) + omt * k_r * state%work_old_y(ihi+2)
-   end if
-   if (max(lum_heat, 0d0) > 0d0) then
-    state%work_rhs(ihi+1) = state%work_rhs(ihi+1) + max(lum_heat, 0d0)
-   end if
-  end if
-
-  if (.not. state%in_cooling_phase .and. ihi_old < ihi) then
-   e_carry = 0d0
-   do k = ihi_old, ihi - 1
-    call zone_geometry_from_array(state%radius_ref, state%r_inner_support, state%r_outer_support, state%n_zones, k, &
-         r_face_l_prev, r_face_r_prev, vol_i)
-    r_face_l_prev = min(max(state%r_shell_prev, r_face_l_prev), r_face_r_prev)
-    vol_residual = 4d0 * pi * max(r_face_r_prev**3 - r_face_l_prev**3, 1d-30) / 3d0
-    e_carry = e_carry + a_rad * max(state%work_old_y(k), 0d0) * vol_residual
-   end do
-   if (e_carry > 0d0 .and. ihi <= n) then
-    state%work_rhs(ihi) = state%work_rhs(ihi) + e_carry / max(dt, 1d-30)
    end if
   end if
 
@@ -1475,7 +1462,11 @@ end function locate_shock_zone
 
 integer function first_active_zone(state) result(ihi)
   type(transport_state_type), intent(in) :: state
-  ihi = first_active_zone_at(state, state%r_shell_current)
+  if (.not. state%in_cooling_phase .and. state%r_inner >= state%r_inner_support) then
+   ihi = 1
+  else
+   ihi = first_active_zone_at(state, state%r_shell_current)
+  end if
 end function first_active_zone
 
  subroutine zone_geometry(state, i, r_face_l, r_face_r, vol_i)
@@ -1498,20 +1489,13 @@ end function first_active_zone
 
 subroutine update_tau_and_luminosity(state)
   type(transport_state_type), intent(inout) :: state
-  integer :: i, istart
+  integer :: i
   real(8) :: r_face_l, r_face_r, vol_i, dr
   real(8) :: rho_cell
 
-  istart = 1
-  if (.not. state%in_cooling_phase) istart = first_active_zone(state)
-  istart = min(max(istart, 1), state%n_zones)
-
   state%tau(state%n_zones) = 0d0
-  do i = state%n_zones, istart, -1
+  do i = state%n_zones, 1, -1
    call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-   if (.not. state%in_cooling_phase .and. i == istart) then
-    r_face_l = min(max(state%r_shell_current, r_face_l), r_face_r)
-   end if
    dr = max(r_face_r - r_face_l, 0d0)
    rho_cell = max(state%rho(i), 1d-30)
    if (i == state%n_zones) then
@@ -1520,11 +1504,6 @@ subroutine update_tau_and_luminosity(state)
     state%tau(i) = state%tau(i+1) + state%kappa * rho_cell * dr
    end if
   end do
-  if (istart > 1) then
-   do i = 1, istart-1
-    state%tau(i) = state%tau(istart)
-   end do
-  end if
 end subroutine update_tau_and_luminosity
 
  subroutine tridag(a, b, c, r, u, gam, n)

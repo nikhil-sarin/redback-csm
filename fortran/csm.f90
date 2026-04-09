@@ -815,7 +815,7 @@ end subroutine lightcurve_wind_bpl
 	  real(8) :: r_in_sub, shell_span_sub, gap_to_edge, u_sub, u_emerge, lum_heat_emerge
 	  real(8) :: r_fs_prev, r_fs_sub, r_face_l, dr_nom
 	  real(8) :: lum_heat_cool, gap_denom, gap_frac
-   real(8) :: rho_seed, dr_seed, r_out_seed
+   real(8) :: rho_seed, dr_seed, r_out_seed, v_ej_init
    type(transport_state_type) :: tr_state
 
 	  call reset_transport_state(tr_state)
@@ -829,11 +829,21 @@ end subroutine lightcurve_wind_bpl
   r_ph = 0.0d0
   m3_log_counter = 0
   if (run_mode == 3) then
-   call get_exp_v0(op(1))
    r = query_csm_inner_edge(t, op(2))
    if (r <= 0d0) r = 1d0
-   u = 1.d2 * op(1)%exp_v0
-   if (u <= 0d0) u = 1d7
+   ! Appendix A starts the interaction at t_in = R_csm,in / v_ej,max with
+   ! w(1) ~ 1. Use the characteristic outer ejecta speed as the initial shell
+   ! speed rather than the previous ad hoc super-fast launch.
+   if (op(1)%bpl_vt > 0d0) then
+    v_ej_init = op(1)%bpl_vmax
+    if (v_ej_init <= 0d0) v_ej_init = op(1)%bpl_vt
+   else
+    call get_exp_v0(op(1))
+    v_ej_init = op(1)%exp_v0
+   end if
+   if (v_ej_init <= 0d0) v_ej_init = 1d7
+   t = max(r / v_ej_init, t_start)
+   u = v_ej_init
    r_out_seed = query_csm_outer_edge(t, op(2))
    dr_seed = max((r_out_seed - r) / dble(max(n_rad_zones_global, 1)), 1d0)
    rho_seed = max(query_csm_density(r, t, op(2)), 0d0)
@@ -1002,8 +1012,6 @@ end subroutine lightcurve_wind_bpl
         end if
         r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
         r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
-        r_out_prev = max(r_out_prev - 1.5d0 * dr_nom, tr_state%r_inner_support)
-        r_out_sub = max(r_out_sub - 1.5d0 * dr_nom, tr_state%r_inner_support)
         if (r_fs_sub >= r_out_sub) then
          if (r_fs_prev < r_out_prev) then
           f_emerge = (r_out_prev - r_fs_prev) / &

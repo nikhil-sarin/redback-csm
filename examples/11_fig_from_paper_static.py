@@ -33,7 +33,7 @@ def main():
             "title": r"Extended CSM: $R_{\rm csm,out}=5\times10^4\,R_\odot$",
             "r_outer": 5.0e4 * R_SUN,
             "xlim": (1.0, 300.0),
-            "n_rad_zones": 100,
+            "n_rad_zones": 40,
         },
     ]
 
