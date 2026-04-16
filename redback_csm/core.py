@@ -315,7 +315,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -433,7 +433,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     lbol_shock = _get_csm().lc_mod.larray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -531,7 +531,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     lbol_shock = _get_csm().lc_mod.larray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -629,7 +629,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -724,7 +724,7 @@ def _get_lc_exponential_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -844,7 +844,7 @@ def _get_lc_exponential_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -975,7 +975,7 @@ def _get_lc_bpl_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1089,7 +1089,7 @@ def _get_lc_bpl_exponential(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1165,7 +1165,7 @@ def _get_lc_boxwind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1243,7 +1243,7 @@ def _get_lc_boxwind_bpl(
     lbol_shock = _get_csm().lc_mod.larray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1341,7 +1341,7 @@ def _get_lc_gausswind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1438,7 +1438,7 @@ def _get_lc_gausswind_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1559,7 +1559,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1666,7 +1666,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1770,7 +1770,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1888,7 +1888,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2027,7 +2027,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2152,7 +2152,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2299,7 +2299,7 @@ def _get_lc_multi_eruption_bpl_sn(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2411,7 +2411,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2535,7 +2535,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2954,7 +2954,7 @@ def _get_lc_generic_csm_exponential(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3112,7 +3112,7 @@ def _get_lc_generic_csm_bpl(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3181,7 +3181,7 @@ def _get_lc_static_powerlaw_csm_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3263,7 +3263,7 @@ def _get_lc_static_powerlaw_csm_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3429,7 +3429,7 @@ def _get_lc_generic_4shell_csm_bpl(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3669,7 +3669,7 @@ def _get_lc_generic_8shell_csm_bpl(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()

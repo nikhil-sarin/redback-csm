@@ -14,7 +14,9 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
                                    shock_motion_timestep_limit, shock_motion_timestep_limit_at, &
                                    find_transport_photosphere, comoving_transport_step, &
                                    forward_shock_radius, shell_leakage_timescale, &
-                                   total_radiation_energy
+                                   total_radiation_energy, &
+                                   dimless_state_type, dimless_comoving_transport_step, &
+                                   reset_dimless_state, initialize_dimless_state, dimless_to_cgs
 
  implicit none
 
@@ -29,7 +31,7 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
           lightcurve_exponential_explosion, lightcurve_explosion_exponential, &
           lightcurve_static_bpl, lightcurve_static_exponential, &
           set_model_mode, set_efficiency_mode, set_run_mode, set_hybrid_parameters, &
-          set_bpl_cutoff_ratio
+          set_bpl_cutoff_ratio, get_dimless_state_debug
 
  private:: finalize_outputs, do_main_loop
  private:: get_diffuse_lc
@@ -43,10 +45,13 @@ integer,parameter:: ll=200000
 
  ! Run mode: 1=simple, 2=hybrid
  integer :: run_mode = 1
- 
+
  ! Hybrid mode parameters
  integer :: n_rad_zones_global = 20
  real(8) :: opacity_const_global = 0.34d0
+
+ ! Mode 3 persistent state (survives across dimless_comoving_transport_step calls)
+ type(dimless_state_type) :: dl_state_global
 
 contains
 
@@ -816,9 +821,13 @@ end subroutine lightcurve_wind_bpl
 	  real(8) :: r_fs_prev, r_fs_sub, r_face_l, dr_nom
 	  real(8) :: lum_heat_cool, gap_denom, gap_frac
    real(8) :: rho_seed, dr_seed, r_out_seed, v_ej_init
+   character(len=32) :: m3_debug_env
+   integer :: m3_debug_status
+   logical :: mode3_debug
    type(transport_state_type) :: tr_state
 
 	  call reset_transport_state(tr_state)
+  call reset_dimless_state(dl_state_global)
   if(run_mode == 2)then
    t_end_run = min(t_end, 300d0*86400d0)
   else
@@ -828,26 +837,22 @@ end subroutine lightcurve_wind_bpl
   L_ph = 0.0d0
   r_ph = 0.0d0
   m3_log_counter = 0
+  mode3_debug = .false.
+  m3_debug_env = ''
+  m3_debug_status = 1
+  call get_environment_variable('TRANSFIT_MODE3_DEBUG', m3_debug_env, status=m3_debug_status)
+  if (m3_debug_status == 0) then
+   mode3_debug = len_trim(m3_debug_env) > 0 .and. m3_debug_env(1:1) /= '0' .and. m3_debug_env(1:1) /= 'f' .and. &
+                 m3_debug_env(1:1) /= 'F' .and. m3_debug_env(1:1) /= 'n' .and. m3_debug_env(1:1) /= 'N'
+  end if
+
   if (run_mode == 3) then
-   r = query_csm_inner_edge(t, op(2))
-   if (r <= 0d0) r = 1d0
-   ! Appendix A starts the interaction at t_in = R_csm,in / v_ej,max with
-   ! w(1) ~ 1. Use the characteristic outer ejecta speed as the initial shell
-   ! speed rather than the previous ad hoc super-fast launch.
-   if (op(1)%bpl_vt > 0d0) then
-    v_ej_init = op(1)%bpl_vmax
-    if (v_ej_init <= 0d0) v_ej_init = op(1)%bpl_vt
-   else
-    call get_exp_v0(op(1))
-    v_ej_init = op(1)%exp_v0
-   end if
-   if (v_ej_init <= 0d0) v_ej_init = 1d7
-   t = max(r / v_ej_init, t_start)
-   u = v_ej_init
-   r_out_seed = query_csm_outer_edge(t, op(2))
-   dr_seed = max((r_out_seed - r) / dble(max(n_rad_zones_global, 1)), 1d0)
-   rho_seed = max(query_csm_density(r, t, op(2)), 0d0)
-   m = max(4d0*pi*r*r*rho_seed*dr_seed, 1d-30)
+   call initialize_dimless_state(dl_state_global, opacity_const_global, eff_global, n_rad_zones_global)
+   call dimless_to_cgs(dl_state_global)
+   r = dl_state_global%r_sh_cgs
+   u = dl_state_global%v_sh_cgs
+   m = max(dl_state_global%m_sh_cgs, 1d-30)
+   t = dl_state_global%t_cgs
   end if
 
   t_array = -1d0
@@ -895,11 +900,11 @@ end subroutine lightcurve_wind_bpl
 
     ! Early-time high-cadence sampling to resolve dark-phase onset and peak.
     if (t < 30d0*86400d0) then
-     dt = min(dt, 0.02d0*86400d0)   ! 0.02 day
+     dt = min(dt, 0.005d0*86400d0)  ! 0.005 day
     else if (t < 120d0*86400d0) then
-     dt = min(dt, 0.1d0*86400d0)    ! 0.1 day
+     dt = min(dt, 0.05d0*86400d0)   ! 0.05 day
     else
-     dt = min(dt, 0.5d0*86400d0)    ! 0.5 day late-time
+     dt = min(dt, 0.25d0*86400d0)   ! 0.25 day late-time
     end if
 
     dt = max(dt, 10d0)              ! avoid zero/underflow
@@ -1152,28 +1157,19 @@ end subroutine lightcurve_wind_bpl
    endif
 
    if (run_mode == 3 .and. diffusion_enabled) then
-   if(.not.tr_state%initialized)then
-     tr_state%kappa = opacity_const_global
-     tr_state%n_zones = n_rad_zones_global
-     write(*,'(A,1X,ES12.5,1X,A,1X,I0)') 'M3_CFG kappa=', tr_state%kappa, 'nz=', tr_state%n_zones
-    end if
-    r_out_sub = query_csm_outer_edge(t, op(2))
-    lum_heat_sub = lum_heat
-    if (r >= r_out_sub) lum_heat_sub = 0d0
     m3_log_counter = m3_log_counter + 1
-    if (m3_log_counter <= 25 .or. mod(m3_log_counter, 200) == 0) then
+    if (mode3_debug .and. (m3_log_counter <= 25 .or. mod(m3_log_counter, 200) == 0)) then
      write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
-          'M3_LOOP_PRE t=', t, 'dt=', dt, 'r=', r, 'u=', u, 'Lheat=', lum_heat_sub
+          'M3_LOOP_PRE t=', t, 'dt=', dt, 'r=', r, 'u=', u, 'Lheat=', lum_heat
     end if
-    call comoving_transport_step(tr_state, dt, t, r, u, m, lum_heat_sub, L_ph)
-    r = tr_state%r_shell_current
-    u = tr_state%u_shell_current
-    m = max(tr_state%m_shocked_csm, 1d-30)
-    t = tr_state%t_shell
-    r_ph = r
-    if (m3_log_counter <= 25 .or. mod(m3_log_counter, 200) == 0) then
+    call dimless_comoving_transport_step(dl_state_global, dt, t, r, u, m, lum_heat, L_ph, r_ph)
+    r = dl_state_global%r_sh_cgs
+    u = dl_state_global%v_sh_cgs
+    m = max(dl_state_global%m_sh_cgs, 1d-30)
+    t = dl_state_global%t_cgs
+    if (mode3_debug .and. (m3_log_counter <= 25 .or. mod(m3_log_counter, 200) == 0)) then
      write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,L1)') &
-          'M3_LOOP_POST t=', t, 'L=', L_ph, 'r=', r, 'm=', m, 'cool=', tr_state%in_cooling_phase
+          'M3_LOOP_POST t=', t, 'L=', L_ph, 'r=', r, 'm=', m, 'cool=', dl_state_global%in_cooling_phase
     end if
     if (.not.(L_ph == L_ph) .or. abs(L_ph) > 1d250) L_ph = 0d0
    end if
@@ -1181,8 +1177,10 @@ end subroutine lightcurve_wind_bpl
 ! Store output arrays
    if((run_mode == 1 .and. t>1d4) .or. (run_mode == 2 .and. t>t_start .and. .not.diffusion_enabled) &
       .or. (run_mode == 3 .and. t>t_start))then
-    if (n >= 1) then
-      if (run_mode == 2 .or. run_mode == 3) then
+   if (n >= 1) then
+      if (run_mode == 3) then
+        if (t <= t_array(n) + 1d-6) cycle
+      else if (run_mode == 2) then
         if (t <= t_array(n) * (1.0d0 + 1.0d-3)) cycle
       else
         if (t <= t_array(n) * (1.0d0 + 1.0d-10)) cycle
@@ -1201,11 +1199,19 @@ end subroutine lightcurve_wind_bpl
      ld_array(n) = L_ph
      r_store = r
      if(diffusion_enabled)then
-      rfs_array(n) = forward_shock_radius(tr_state, r, t, m)
-      rph_array(n) = r_ph
-      etrap_array(n) = total_radiation_energy(tr_state)
-      tleak_array(n) = shell_leakage_timescale(tr_state, r, t, m)
-      tauhyb_array(n) = shell_optical_depth(r, t)
+      if (run_mode == 3) then
+       rfs_array(n) = r
+       rph_array(n) = r_ph
+       etrap_array(n) = 0d0
+       tleak_array(n) = 0d0
+       tauhyb_array(n) = shell_optical_depth(r, t)
+      else
+       rfs_array(n) = forward_shock_radius(tr_state, r, t, m)
+       rph_array(n) = r_ph
+       etrap_array(n) = total_radiation_energy(tr_state)
+       tleak_array(n) = shell_leakage_timescale(tr_state, r, t, m)
+       tauhyb_array(n) = shell_optical_depth(r, t)
+      end if
      else
       rfs_array(n) = r
       rph_array(n) = r_ph
@@ -1390,5 +1396,18 @@ end subroutine lightcurve_wind_bpl
 
   return
  end subroutine get_diffuse_lc
+
+ subroutine get_dimless_state_debug(x_sh_out, x_csm_out_val, in_cooling, nsub_val)
+  real(8), intent(out) :: x_sh_out, x_csm_out_val
+  integer, intent(out) :: in_cooling, nsub_val
+  x_sh_out = dl_state_global%x_sh
+  x_csm_out_val = dl_state_global%x_csm_out
+  if (dl_state_global%in_cooling_phase) then
+   in_cooling = 1
+  else
+   in_cooling = 0
+  end if
+  nsub_val = dl_state_global%nsub_last
+ end subroutine get_dimless_state_debug
 
 end module lc_mod
