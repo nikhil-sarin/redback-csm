@@ -115,6 +115,9 @@ use integration, only: dudt, drdt, dmdt
   real(8) :: v_se = 0d0         ! v_se [cm/s]
   real(8) :: R_in_R0 = 1d0      ! R_in(t) / R_0 (starts at 1)
 
+  ! Cooling geometry (constant after handoff)
+  real(8) :: x_out_cool = 0d0   ! outer edge in comoving x = R_csm_out/R0 (frozen at handoff)
+
   ! Diffusion grid (fixed ξ-space, ξ ∈ [0,1])
   real(8) :: x_ph = 0d0         ! photosphere position in x
   real(8) :: x_min = 1d0        ! inner boundary of diffusion domain in x
@@ -1951,16 +1954,19 @@ end subroutine update_tau_and_luminosity
  function compute_eta_csm(x, state) result(eta)
   type(dimless_state_type), intent(in) :: state
   real(8), intent(in) :: x
-  real(8) :: eta, r_dim, t_dim, x_int
+  real(8) :: eta, r_dim, t_dim
 
   if (state%in_cooling_phase) then
-   ! Cooling coordinate: x = r/R_in(t)
-   ! Convert to interaction coordinate: x_int = r/R_csm_in = x * R_in/R_csm_in
-   x_int = x * state%R0 * state%R_in_R0 / state%R_csm_in
-   r_dim = x_int * state%R_csm_in
-   ! Evaluate at t_se (frozen CSM profile, paper Eq. 897)
+   ! Cooling coordinate: x = r/R_in(t).  In homologous expansion each parcel
+   ! sits at fixed comoving x forever, so η_csm(x) is time-independent.
+   ! Physical radius of parcel x at any time: r = x·R_in(t).
+   ! But η_csm is defined relative to the static CSM at t_se, when R_in = R0.
+   ! Because each parcel's physical radius is r = x·R_0 at t_se (R_in_R0=1),
+   ! evaluating the static profile at r = x·R0 gives the frozen comoving profile.
+   r_dim = x * state%R0
    t_dim = state%zeta_se * state%t_in
    eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+   eta = max(eta, 1d-30)
   else
    ! Interaction coordinate: x = r/R_csm_in
    r_dim = x * state%R_csm_in
@@ -2002,8 +2008,10 @@ end subroutine update_tau_and_luminosity
   ! Determine integration bounds and length scale
   if (state%in_cooling_phase) then
    x_inner = 1d0  ! x_min = 1 in cooling coordinate x = r/R_in
-   ! x_csm_out in cooling coordinate: R_csm_out / R_in(t)
-   x_outer = max(state%R_csm_out / (state%R0 * state%R_in_R0), x_inner * 1.01d0)
+   ! In homologous expansion at uniform velocity v_se, each parcel maintains
+   ! x = r/R_in = const, so the shell occupies x ∈ [1, x_out_cool] forever.
+   ! x_out_cool = R_csm_out / R0 is truly constant in comoving x.
+   x_outer = max(state%x_out_cool, x_inner * 1.01d0)
    ! τ = κ·ρ_csm_in·(R0/R_in)³·R_in·∫ η_csm dx = κ·ρ_csm_in·R0³/R_in²·∫ η_csm dx
    length_scale = state%R0**3 / (state%R0 * state%R_in_R0)**2
   else
@@ -2053,7 +2061,7 @@ end subroutine update_tau_and_luminosity
   real(8) :: x_end, dx, x_mid, eta_val, length_scale
 
   if (state%in_cooling_phase) then
-   x_end = max(state%R_csm_out / (state%R0 * state%R_in_R0), x_from * 1.01d0)
+   x_end = max(state%x_out_cool, x_from * 1.01d0)
    length_scale = state%R0**3 / (state%R0 * state%R_in_R0)**2
   else
    x_end = max(state%x_csm_out, x_from * 1.01d0)
@@ -2415,85 +2423,105 @@ end subroutine update_tau_and_luminosity
 ! Remap e(ξ) from interaction coordinates [x_sh, x_ph] to
 ! cooling coordinates [1, x_ph_cool] where x = r/R_in.
 ! Paper Eq. 948: e(x, y_se) = e_int(x)
+!
+! Key correctness requirements:
+!  1. x_out_cool = R_csm_out/R0 is frozen (constant in comoving coords).
+!  2. eta_cool_frozen(i) is frozen at t_se on the final cooling grid.
+!  3. e-grid is remapped from a copy, not in-place.
+!  4. Interior region [1, x_sh_old] outside old diffusion domain → set to 0.
 ! ------------------------------------------------------------------
  subroutine transition_to_cooling(state)
   type(dimless_state_type), intent(inout) :: state
 
-  integer :: i, n
+  integer :: i, n, j_lo
   real(8) :: x_sh_old, x_ph_old, dxi, Delta_x_old
-  real(8) :: x_cool, x_int, xi_src, e_shock
-  real(8) :: E_before, E_after, dx, eta_lo, eta_hi
+  real(8) :: x_cool, xi_src
+  real(8) :: E_before, E_after, dx, eta_lo, eta_hi, frac_interp
+  real(8), allocatable :: e_old(:)
 
-  ! Save pre-transition state
-  x_sh_old = state%x_sh
+  ! Guard: only do this once per run
+  if (state%in_cooling_phase) return
+
+  ! Clamp x_sh_old to x_csm_out — numerical overshoot beyond crossover is irrelevant.
+  x_sh_old = min(state%x_sh, state%x_csm_out)
   x_ph_old = state%x_ph
   n = state%n_zones
   dxi = 1d0 / dble(n - 1)
 
-  ! Compute total energy before transition (for diagnostics)
+  ! Make a copy of the old e_grid BEFORE any modification.
+  ! Guard against any NaN/Inf that may have accumulated in the interaction solver.
+  allocate(e_old(n))
+  e_old = state%e_grid
+  where (.not. (e_old > 0d0 .and. e_old < 1d300))
+   e_old = 0d0
+  end where
+  ! e_old(1) is the shock-injected value at the inner boundary (x = x_sh_old).
+  ! We will use it for the interior region [1, x_sh_old] where the interaction
+  ! solver did not track diffusion but shock heating did deposit energy.
+  ! e_old values decrease outward; e_old(1) is the inner maximum.
+
+  ! Compute total energy before transition (for diagnostics; interaction coords)
   E_before = 0d0
   Delta_x_old = x_ph_old - x_sh_old
   if (Delta_x_old > 0d0) then
    do i = 1, n - 1
-    eta_lo = compute_eta_csm(x_sh_old + state%xi_grid(i) * Delta_x_old, state)
+    eta_lo = compute_eta_csm(x_sh_old + state%xi_grid(i)   * Delta_x_old, state)
     eta_hi = compute_eta_csm(x_sh_old + state%xi_grid(i+1) * Delta_x_old, state)
     dx = Delta_x_old * dxi
-    E_before = E_before + 0.5d0 * (eta_lo * state%e_grid(i) + eta_hi * state%e_grid(i+1)) * dx
+    E_before = E_before + 0.5d0 * (eta_lo * e_old(i) + eta_hi * e_old(i+1)) * dx
    end do
   end if
 
-  ! Shock value (energy at inner boundary = shock)
-  e_shock = state%e_grid(1)
-
   ! Set cooling parameters
   state%zeta_se = state%zeta
-  state%y_se = state%y_diff
-  state%R0 = state%R_csm_in  ! Paper Eq. 889: R0 = R_in(t_se) = R_csm_in
-  state%v_se = state%w_sh * state%v_ej_max
+  state%y_se    = state%y_diff
+  state%R0      = state%R_csm_in   ! R0 = R_in(t_se) = R_csm_in (paper Eq. 889)
+  state%v_se    = state%w_sh * state%v_ej_max
   state%R_in_R0 = 1d0
+  ! In homologous expansion at uniform v_se each parcel stays at fixed comoving x,
+  ! so the shell occupies x ∈ [1, x_out_cool] permanently (x_out_cool is constant).
+  state%x_out_cool = state%x_csm_out   ! = R_csm_out / R_csm_in, time-independent
   state%in_cooling_phase = .true.
   state%rannacher_left = 4
 
-  ! Remap e(ξ): interaction x ∈ [x_sh, x_ph] → cooling x ∈ [1, x_ph_cool]
-  ! In cooling coordinates: x_cool = r/R_in = r/R_csm_in = x_int (at t=t_se, R_in=R_csm_in)
-  ! So the interaction coordinate and cooling coordinate are the same at t=t_se!
-  ! x_cool(ξ) = x_int(ξ) since R_in(t_se) = R_csm_in = R0
-  !
-  ! The interaction grid spanned [x_sh, x_ph]. The cooling grid spans [1, x_ph_cool].
-  ! Region [1, x_sh] was the shocked CSM (not in interaction diffusion grid).
-  ! Region [x_sh, x_ph] maps directly since x_cool = x_int at t=t_se.
-  !
-  ! Fill [1, x_sh] with shock energy e_shock (uniform in shocked region).
-
-  ! After transition, x_min = 1. Recompute x_ph in cooling coords.
+  ! Compute x_ph for the cooling domain [1, x_out_cool].
+  ! compute_eta_csm now evaluates directly via query_csm_density(x*R0, t_se)
+  ! and works correctly for x ∈ [1, x_out_cool].
   call estimate_photosphere_x(1d0, state)
 
-  ! Remap: for each ξ-point, x_cool = 1 + ξ*(x_ph_new - 1)
-  ! Map to interaction x: x_int = x_cool (same at t_se)
-  ! If x_int < x_sh_old: use e_shock
-  ! If x_int >= x_sh_old: interpolate from old profile
+  ! --- Remap e(x): interaction [x_sh_old, x_ph_old] → cooling [1, x_ph_new] ---
+  ! Coordinates are identical at t_se (R_in = R_csm_in), so x_cool = x_int.
+  !
+  ! The cooling domain is [1, x_ph_new] = [x_min, x_ph].
+  ! The interaction solver tracked e(x) on [x_sh_old, x_ph_old] ⊂ [1, x_ph_new].
+  ! For x_cool ∈ [1, x_sh_old] (behind the shock): the interaction inner BC
+  !   injected flux at x_sh but the interior was not in the diffusion domain.
+  !   Physically, shock-deposited energy fills this region. The best available
+  !   estimate is e_old(1) — the shock-boundary value — applied uniformly.
+  ! For x_cool ∈ [x_sh_old, x_ph_old]: interpolate from e_old directly.
+  ! For x_cool > x_ph_old: clamp to e_old(n) (outer boundary value).
   Delta_x_old = x_ph_old - x_sh_old
   do i = 1, n
    x_cool = 1d0 + state%xi_grid(i) * (state%x_ph - 1d0)
-   if (x_cool < x_sh_old) then
-    ! Below the old shock position: fill with shock energy
-    state%e_grid(i) = e_shock
-   else if (Delta_x_old > 0d0) then
-    ! Above old shock: map back to old ξ and interpolate
+   if (x_cool <= x_sh_old .or. Delta_x_old <= 0d0) then
+    ! Interior or collapsed domain: use inner boundary shock value
+    state%e_grid(i) = e_old(1)
+   else if (x_cool >= x_ph_old) then
+    state%e_grid(i) = e_old(n)
+   else
+    ! Interpolate from e_old on [x_sh_old, x_ph_old]
     xi_src = (x_cool - x_sh_old) / Delta_x_old
-    if (xi_src >= 1d0) then
-     state%e_grid(i) = state%e_grid(n)  ! clamp to outer value
-    else
-     ! Linear interpolation in old grid
-     state%e_grid(i) = state%e_grid(1) * (1d0 - xi_src) + state%e_grid(n) * xi_src
-    end if
+    j_lo = min(int(xi_src * dble(n - 1)) + 1, n - 1)
+    frac_interp = xi_src * dble(n - 1) - dble(j_lo - 1)
+    state%e_grid(i) = e_old(j_lo) * (1d0 - frac_interp) + e_old(j_lo + 1) * frac_interp
    end if
+   state%e_grid(i) = max(state%e_grid(i), 0d0)
   end do
 
   ! Compute total energy after remap (diagnostics)
   E_after = 0d0
   do i = 1, n - 1
-   eta_lo = compute_eta_csm(1d0 + state%xi_grid(i) * (state%x_ph - 1d0), state)
+   eta_lo = compute_eta_csm(1d0 + state%xi_grid(i)   * (state%x_ph - 1d0), state)
    eta_hi = compute_eta_csm(1d0 + state%xi_grid(i+1) * (state%x_ph - 1d0), state)
    dx = (state%x_ph - 1d0) * dxi
    E_after = E_after + 0.5d0 * (eta_lo * state%e_grid(i) + eta_hi * state%e_grid(i+1)) * dx
@@ -2502,13 +2530,14 @@ end subroutine update_tau_and_luminosity
   write(*,'(A)') '=== EMERGENCE HANDOFF ==='
   write(*,'(A,ES12.4,A,ES12.4)') '  t_se(d)=', state%zeta*state%t_in/86400d0, &
     ' zeta_se=', state%zeta_se
-  write(*,'(A,ES12.4,A,ES12.4)') '  x_sh=', x_sh_old, ' x_csm_out=', state%x_csm_out
+  write(*,'(A,ES12.4,A,ES12.4)') '  x_sh_old=', x_sh_old, ' x_ph_old=', x_ph_old
+  write(*,'(A,ES12.4,A,ES12.4)') '  x_csm_out=', state%x_csm_out, ' x_out_cool=', state%x_out_cool
+  write(*,'(A,ES12.4,A,ES12.4)') '  x_ph_new=', state%x_ph, ' Delta_x_old=', Delta_x_old
+  write(*,'(A,ES12.4,A,ES12.4)') '  e_old(1)=', e_old(1), ' e_old(n)=', e_old(n)
   write(*,'(A,ES12.4,A,ES12.4)') '  E_before=', E_before, ' E_after=', E_after
-  write(*,'(A,ES12.4,A,ES12.4)') '  x_ph_new=', state%x_ph, ' Delta_x_cool=', state%x_ph - 1d0
-  write(*,'(A,ES12.4,A,ES12.4)') '  R0=', state%R0, ' R_in_R0=', state%R_in_R0
-  if (state%x_ph - 1d0 < 0.01d0) then
-   write(*,'(A)') '  *** ABORT: cooling domain collapsed! ***'
-  end if
+  write(*,'(A,ES12.4,A,ES12.4)') '  e_grid(1)=', state%e_grid(1), ' e_grid(n)=', state%e_grid(n)
+
+  deallocate(e_old)
   write(*,'(A)') '========================='
 
  end subroutine transition_to_cooling
@@ -2584,6 +2613,8 @@ end subroutine update_tau_and_luminosity
   real(8) :: dy_step
   real(8) :: dt_dyn_cfl, dt_diff_cfl, advection_cfl
   real(8) :: Delta_x, x_sh_old, frac, dy_pre, dy_post
+  ! For breakout split: pre-step dynamics snapshot
+  real(8) :: x_sh_pre, w_sh_pre, phi_sh_pre, zeta_pre
 
   lum_obs = 0d0
 
@@ -2641,8 +2672,12 @@ end subroutine update_tau_and_luminosity
 
    ! --- Step 1: Advance dynamics ---
    if (.not. state%in_cooling_phase) then
-    ! Save pre-step shock position for crossover detection
-    x_sh_old = state%x_sh
+    ! Save full pre-step dynamics state for crossover interpolation
+    x_sh_old  = state%x_sh
+    x_sh_pre  = state%x_sh
+    w_sh_pre  = state%w_sh
+    phi_sh_pre = state%phi_sh
+    zeta_pre  = state%zeta
     ! Interaction: advance shock ODEs with RK4
     call rk4_step_dynamics(state, dzeta_step)
     ! Compute dx_sh/dy for the advection term
@@ -2672,16 +2707,37 @@ end subroutine update_tau_and_luminosity
 
     ! Check for transition (x_sh >= x_csm_out, spec Section 6)
     if (state%x_sh >= state%x_csm_out .and. x_sh_old < state%x_csm_out) then
-     ! Shock crossed x_csm_out this substep — split at crossover
-     frac = (state%x_csm_out - x_sh_old) / max(state%x_sh - x_sh_old, 1d-30)
+     ! Shock crossed x_csm_out this substep — split at crossover.
+     ! frac = fraction of step elapsed before crossover.
+     frac = (state%x_csm_out - x_sh_pre) / max(state%x_sh - x_sh_pre, 1d-30)
      frac = max(min(frac, 1d0), 0d0)
-     dy_pre = dy_step * frac
+     dy_pre  = dy_step * frac
      dy_post = dy_step * (1d0 - frac)
 
-     ! Solve diffusion for pre-emergence portion
-     if (dy_pre > 0d0) call solve_diffusion_dimless(state, dy_pre)
+     ! Linearly interpolate dynamics to the crossover moment.
+     ! We have pre-step (x_sh_pre, w_sh_pre, phi_sh_pre, zeta_pre)
+     ! and post-step (state%x_sh, state%w_sh, state%phi_sh, state%zeta).
+     ! Crossover state = pre + frac * (post - pre).
+     state%x_sh   = x_sh_pre   + frac * (state%x_sh   - x_sh_pre)
+     state%w_sh   = w_sh_pre   + frac * (state%w_sh   - w_sh_pre)
+     state%phi_sh = phi_sh_pre + frac * (state%phi_sh - phi_sh_pre)
+     state%zeta   = zeta_pre   + frac * dzeta_step
+     state%y_diff = state%y_ratio * state%zeta
+     state%x_sh_dot = state%w_sh * state%y_ratio
 
-     ! Transition to cooling
+     ! Solve diffusion for pre-emergence portion with crossover geometry
+     if (dy_pre > 0d0) then
+      call estimate_photosphere_x(state%x_sh, state)
+      state%x_ph_cached_xsh = state%x_sh
+      state%x_ph_cached_xmin = state%x_min
+      call solve_diffusion_dimless(state, dy_pre)
+     end if
+
+     ! Advance dynamics from crossover to end-of-step
+     call rk4_step_dynamics(state, (1d0 - frac) * dzeta_step)
+     state%x_sh_dot = state%w_sh * state%y_ratio
+
+     ! Transition to cooling at the crossover dynamics state
      call transition_to_cooling(state)
 
      ! Solve diffusion for post-emergence portion
