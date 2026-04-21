@@ -828,11 +828,11 @@ end subroutine lightcurve_wind_bpl
 
 	  call reset_transport_state(tr_state)
   call reset_dimless_state(dl_state_global)
-  if(run_mode == 2)then
-   t_end_run = min(t_end, 300d0*86400d0)
-  else
-   t_end_run = t_end
-  end if
+	  if(run_mode == 2 .or. run_mode == 3)then
+	   t_end_run = min(t_end, 300d0*86400d0)
+	  else
+	   t_end_run = t_end
+	  end if
   
   L_ph = 0.0d0
   r_ph = 0.0d0

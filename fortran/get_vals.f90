@@ -337,6 +337,7 @@ function v_explosion(r,t,op)
   type(outflow_parameters):: op_local
 
   op_local = op_in
+  op_local%scan_i = 1  ! Reset scan to avoid stale index from outer loop
  rho_csm = rho4pir2_out(r,t,op_local)/(4d0*pi*max(r,1d0)**2)
  end function query_csm_density
 
@@ -349,6 +350,7 @@ function v_explosion(r,t,op)
   type(outflow_parameters):: op_local
 
   op_local = op_in
+  op_local%scan_i = 1  ! Reset scan to avoid stale index from outer loop
   rho_ej = rho4pir2_in(r,t,op_local)/(4d0*pi*max(r,1d0)**2)
  end function query_ejecta_density
 
