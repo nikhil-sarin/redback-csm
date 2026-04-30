@@ -5,7 +5,9 @@ module csm_transport
 use get_vals, only: op, query_csm_density, query_csm_inner_edge, query_csm_outer_edge, &
                      query_tau_to_edge, query_csm_photosphere_radius, query_csm_velocity, &
                      query_ejecta_density, query_ejecta_velocity
-use integration, only: dudt, drdt, dmdt
+use integration, only: dudt, drdt, dmdt, forward_shock_luminosity, reverse_shock_luminosity, &
+                       forward_shock_radiative_efficiency, reverse_shock_radiative_efficiency
+use csm_runtime, only: shock_efficiency_mode
 
  implicit none
 
@@ -75,6 +77,7 @@ use integration, only: dudt, drdt, dmdt
 
  logical, save :: mode3_debug_initialized = .false.
  logical, save :: mode3_debug_enabled_cached = .false.
+ integer, parameter :: max_dimless_history = 20000
 
 ! ==========================================================================
 ! Dimensionless formulation types (paper Appendix A)
@@ -114,6 +117,8 @@ use integration, only: dudt, drdt, dmdt
   real(8) :: R0 = 0d0           ! R_in(t_se) [cm]
   real(8) :: v_se = 0d0         ! v_se [cm/s]
   real(8) :: R_in_R0 = 1d0      ! R_in(t) / R_0 (starts at 1)
+  real(8) :: E_breakout_cgs = 0d0 ! breakout-layer energy [erg]
+  real(8) :: t_breakout_cgs = 0d0 ! breakout-layer diffusion time [s]
 
   ! Cooling geometry (constant after handoff)
   real(8) :: x_min_cool = 1d0   ! inner support in cooling x (usually 1)
@@ -154,13 +159,11 @@ use integration, only: dudt, drdt, dmdt
   ! Cumulative energy tracking for cooling handoff.
   real(8) :: E_injected_cum = 0d0   ! cumulative total shock heating [erg]
   real(8) :: E_radiated_cum = 0d0   ! cumulative diffusive emission [erg]
-  real(8) :: E_swept_cum = 0d0      ! radiation overtaken by shock and stored in shocked shell [erg]
-  ! History of local shock-deposition shape as the shock moves outward,
-  ! used to construct e_int(x) at the cooling handoff.
+  ! Shock-deposition history for the post-emergence cooling IC.
   integer :: n_history = 0
-  real(8) :: hist_x(500)      ! x_sh position at each sample
-  real(8) :: hist_e(500)      ! e at shock face (e_grid(1)) at each sample
- end type dimless_state_type
+  real(8) :: hist_x(max_dimless_history) = 0d0
+  real(8) :: hist_e(max_dimless_history) = 0d0
+end type dimless_state_type
 
  public :: dimless_state_type, dimless_comoving_transport_step, &
            reset_dimless_state, initialize_dimless_state, dimless_to_cgs
@@ -1844,13 +1847,13 @@ end subroutine update_tau_and_luminosity
   state%n_zones = 0
   state%x_sh = 1d0
   state%w_sh = 1d0
-	  state%phi_sh = 1d-6
+   state%phi_sh = 1d-6
   state%zeta = 1d0
   state%y_diff = 0d0
-	  state%R_in_R0 = 1d0
-	  state%x_sh_dot = 0d0
-	  state%x_ph_dot = 0d0
-	  state%rannacher_left = 0
+   state%R_in_R0 = 1d0
+   state%x_sh_dot = 0d0
+   state%x_ph_dot = 0d0
+   state%rannacher_left = 0
   state%x_ph_cached_xsh = -1d0
   state%x_ph_cached_xmin = -1d0
   state%lum_heat_cgs = 0d0
@@ -1863,7 +1866,8 @@ end subroutine update_tau_and_luminosity
   state%diag_step_counter = 0
   state%E_injected_cum = 0d0
   state%E_radiated_cum = 0d0
-  state%E_swept_cum = 0d0
+  state%E_breakout_cgs = 0d0
+  state%t_breakout_cgs = 0d0
   state%n_history = 0
   state%hist_x = 0d0
   state%hist_e = 0d0
@@ -1933,11 +1937,11 @@ end subroutine update_tau_and_luminosity
   ! Initial conditions: paper Eq. 756
   state%x_sh = 1d0
   state%w_sh = 1d0
-	  state%phi_sh = 1d-6
-	  state%zeta = 1d0
-	  state%y_diff = state%y_ratio * state%zeta
-	  state%x_sh_dot = state%w_sh / max(state%y_ratio, 1d-30)
-	  state%x_ph_dot = 0d0
+   state%phi_sh = 1d-6
+   state%zeta = 1d0
+   state%y_diff = state%y_ratio * state%zeta
+   state%x_sh_dot = state%w_sh / max(state%y_ratio, 1d-30)
+   state%x_ph_dot = 0d0
   ! Compute initial photosphere
   call estimate_photosphere_x(state%x_sh, state)
 
@@ -2159,6 +2163,32 @@ end subroutine update_tau_and_luminosity
         max(state%tau_csm_in * eta_sh, 1d-30)
  end function dimless_boundary_heating_luminosity
 
+ real(8) function current_dimless_shock_luminosity(state) result(lum)
+  type(dimless_state_type), intent(in) :: state
+  real(8) :: r_dim, t_dim, u_dim
+  real(8) :: lum_fs, lum_rs, eta_fs, eta_rs
+
+  lum = 0d0
+  if (state%in_cooling_phase) return
+
+  r_dim = max(state%x_sh * state%R_csm_in, 1d0)
+  t_dim = max(state%zeta * state%t_in, 1d-30)
+  u_dim = max(state%w_sh * state%v_ej_max, 0d0)
+
+  lum_fs = forward_shock_luminosity(r_dim, t_dim, u_dim, op)
+  lum_rs = reverse_shock_luminosity(r_dim, t_dim, u_dim, op)
+  select case (shock_efficiency_mode)
+  case (1)
+   eta_fs = forward_shock_radiative_efficiency(r_dim, t_dim, u_dim, op, state%eff)
+   eta_rs = reverse_shock_radiative_efficiency(r_dim, t_dim, u_dim, op, state%eff)
+   lum = eta_fs * lum_fs + eta_rs * lum_rs
+  case default
+   lum = state%eff * (lum_fs + lum_rs)
+  end select
+
+  lum = max(lum, 0d0)
+ end function current_dimless_shock_luminosity
+
  subroutine dimless_surface_flux_diag(state, dedx_surf, lum_grad_cgs)
   type(dimless_state_type), intent(in) :: state
   real(8), intent(out) :: dedx_surf, lum_grad_cgs
@@ -2204,14 +2234,66 @@ end subroutine update_tau_and_luminosity
   lum_grad_cgs = 4d0 * pi * r_ph**2 * max(flux_cgs, 0d0)
  end subroutine dimless_surface_flux_diag
 
- real(8) function cooling_profile_shape(state, x_cool) result(shape)
+ subroutine record_deposition_profile(state, x_left_in, x_right_in, lum_heat, dt_cgs)
+  type(dimless_state_type), intent(inout) :: state
+  real(8), intent(in) :: x_left_in, x_right_in, lum_heat, dt_cgs
+
+  real(8) :: x_left, x_right, x_mid, dvol_dimless, e_dep
+  integer :: n
+
+  if (state%in_cooling_phase) return
+  if (lum_heat <= 0d0 .or. dt_cgs <= 0d0) return
+  if (state%u0 <= 0d0 .or. state%R_csm_in <= 0d0) return
+
+  x_left = min(max(min(x_left_in, x_right_in), 1d0), state%x_csm_out)
+  x_right = min(max(max(x_left_in, x_right_in), 1d0), state%x_csm_out)
+  if (x_right <= x_left + 1d-10) return
+
+  dvol_dimless = (x_right**3 - x_left**3) / 3d0
+  if (dvol_dimless <= 0d0) return
+
+  x_mid = 0.5d0 * (x_left + x_right)
+
+  ! The deposited internal-energy density follows directly from the swept
+  ! shell volume: dE = 4*pi*u0*R_csm_in^3*e_dep*int x^2 dx.
+  e_dep = lum_heat * dt_cgs / max(4d0*pi*state%u0*state%R_csm_in**3*dvol_dimless, 1d-30)
+  if (.not.(e_dep > 0d0 .and. e_dep < 1d30)) return
+
+  if (state%n_history <= 0) then
+   state%n_history = 1
+   state%hist_x(1) = x_mid
+   state%hist_e(1) = e_dep
+   return
+  end if
+
+  n = state%n_history
+  if (x_mid <= state%hist_x(n) + 1d-10) then
+   state%hist_x(n) = max(state%hist_x(n), x_mid)
+   state%hist_e(n) = e_dep
+   return
+  end if
+
+  if (n < max_dimless_history) then
+   state%n_history = n + 1
+   state%hist_x(state%n_history) = x_mid
+   state%hist_e(state%n_history) = e_dep
+  else
+   ! Preserve monotonic coverage if an unusually fine run exhausts storage.
+   state%hist_x(n) = x_mid
+   state%hist_e(n) = e_dep
+  end if
+ end subroutine record_deposition_profile
+
+ real(8) function deposition_profile_at(state, x_cool) result(e_dep)
   type(dimless_state_type), intent(in) :: state
   real(8), intent(in) :: x_cool
 
   integer :: j
   real(8) :: x_pre, frac
 
-  shape = 0d0
+  e_dep = 0d0
+  if (state%n_history <= 0) return
+
   if (state%x_out_cool > state%x_min_cool + 1d-12) then
    x_pre = 1d0 + (x_cool - state%x_min_cool) * (state%x_sh_se - 1d0) / &
            (state%x_out_cool - state%x_min_cool)
@@ -2220,27 +2302,26 @@ end subroutine update_tau_and_luminosity
   end if
   x_pre = min(max(x_pre, 1d0), max(state%x_sh_se, 1d0))
 
-  if (state%n_history >= 2) then
-   if (x_pre <= state%hist_x(1)) then
-    shape = max(state%hist_e(1), 0d0)
-   else if (x_pre >= state%hist_x(state%n_history)) then
-    shape = max(state%hist_e(state%n_history), 0d0)
-   else
-    do j = 1, state%n_history - 1
-     if (x_pre >= state%hist_x(j) .and. x_pre <= state%hist_x(j+1)) then
-      frac = (x_pre - state%hist_x(j)) / max(state%hist_x(j+1) - state%hist_x(j), 1d-30)
-      shape = max((1d0 - frac) * state%hist_e(j) + frac * state%hist_e(j+1), 0d0)
-      exit
-     end if
-    end do
-   end if
+  if (x_pre <= state%hist_x(1)) then
+   e_dep = max(state%hist_e(1), 0d0)
+   return
+  end if
+  if (x_pre >= state%hist_x(state%n_history)) then
+   e_dep = max(state%hist_e(state%n_history), 0d0)
+   return
   end if
 
-  if (shape <= 0d0) shape = max(compute_eta_csm(x_cool, state), 1d-30)
- end function cooling_profile_shape
+  do j = 1, state%n_history - 1
+   if (x_pre >= state%hist_x(j) .and. x_pre <= state%hist_x(j+1)) then
+    frac = (x_pre - state%hist_x(j)) / max(state%hist_x(j+1) - state%hist_x(j), 1d-30)
+    e_dep = max((1d0 - frac) * state%hist_e(j) + frac * state%hist_e(j+1), 0d0)
+    return
+   end if
+  end do
+ end function deposition_profile_at
 
-! ------------------------------------------------------------------
-! Dynamics RHS: paper Eq. 746-750
+ ! ------------------------------------------------------------------
+ ! Dynamics RHS: paper Eq. 746-750
 ! ------------------------------------------------------------------
  subroutine dynamics_rhs(x_in, w_in, phi_in, zeta_in, state, dx_dz, dw_dz, dphi_dz)
   type(dimless_state_type), intent(in) :: state
@@ -2325,7 +2406,7 @@ end subroutine update_tau_and_luminosity
 ! PDE: ∂e/∂y = (1/Δx²)·(1/x̂²)·∂/∂ξ[D(ξ)·∂e/∂ξ] + V(ξ)·∂e/∂ξ
 ! where x̂(ξ) = x_min + ξ·Δx, Δx = x_ph - x_min
 ! Interaction: x_min = x_sh, V(ξ) = [ẋ_sh·(1-ξ)+ẋ_ph·ξ]/Δx
-! Cooling: x_min = x_min_cool, V(ξ) = 0 (comoving frame)
+! Cooling: x_min = x_min_cool, V(ξ) = ẋ_ph·ξ/Δx in the comoving frame
 ! Spec Section 3.3
 ! ------------------------------------------------------------------
  subroutine solve_diffusion_dimless(state, dy)
@@ -2334,15 +2415,14 @@ end subroutine update_tau_and_luminosity
 
   integer :: i, n
   real(8) :: theta, omt
-	 real(8) :: Delta_x, dxi, x_hat_i, x_hat_im, x_hat_ip
-	  real(8) :: eta_im, eta_ip, D_im, D_ip
-	  real(8) :: alpha_m, alpha_p, gamma_v, pe_cell
-	  real(8) :: f_ib, f_ob, V_sh, V_ph
+  real(8) :: Delta_x, dxi, x_hat_i, x_hat_im, x_hat_ip
+   real(8) :: eta_im, eta_ip, D_im, D_ip
+   real(8) :: alpha_m, alpha_p, gamma_v, pe_cell
+   real(8) :: f_ib, f_ob, V_sh, V_ph
   real(8) :: eta_min_val, f_ib_lum
-	  real(8) :: L_from_f_ib, f_ib_ratio
-	  real(8) :: robin_coeff, robin_denom
+   real(8) :: L_from_f_ib, f_ib_ratio
+  real(8) :: dx_bc
   real(8) :: inner_rate
-  real(8) :: a_n_std, b_n_std, c_n_std, a_n_rhs, b_n_rhs, c_n_rhs
   integer, save :: ibc_log_counter = 0
 
   n = state%n_zones
@@ -2374,15 +2454,17 @@ end subroutine update_tau_and_luminosity
   ! Advection velocity in ξ-coordinates.  The interaction grid is fixed in
   ! ξ but both endpoints can move: the shock advances and the photosphere
   ! recedes as the remaining optical depth changes.
-	  if (.not. state%in_cooling_phase) then
+   if (.not. state%in_cooling_phase) then
    ! Interaction: V(ξ) = [ẋ_sh·(1-ξ)+ẋ_ph·ξ]/Δx
-	   V_sh = state%x_sh_dot / Delta_x
-	   V_ph = state%x_ph_dot / Delta_x
-	  else
-	   ! Cooling: grid is stationary in comoving frame
-	   V_sh = 0d0
-	   V_ph = 0d0
-	  end if
+    V_sh = state%x_sh_dot / Delta_x
+    V_ph = state%x_ph_dot / Delta_x
+   else
+    ! Cooling: the homologous coordinate is comoving, but the numerical
+    ! diffusion interval ends at the photosphere, which recedes through that
+    ! coordinate as the optical depth drops.
+    V_sh = 0d0
+    V_ph = state%x_ph_dot / Delta_x
+   end if
 
   ! Zero out work arrays
   state%work_a = 0d0
@@ -2414,32 +2496,32 @@ end subroutine update_tau_and_luminosity
    alpha_p = D_ip / (x_hat_i**2 * Delta_x**2 * dxi**2)
 
    ! Advection: V(ξ_i)·∂e/∂ξ
-	   gamma_v = V_sh * (1d0 - state%xi_grid(i)) + V_ph * state%xi_grid(i)
+    gamma_v = V_sh * (1d0 - state%xi_grid(i)) + V_ph * state%xi_grid(i)
 
    ! Check Péclet number for upwinding
    pe_cell = abs(gamma_v) * dxi / max(alpha_m + alpha_p, 1d-60) * 2d0
 
-	   if (pe_cell > 2d0 .and. gamma_v > 0d0) then
-	    ! PDE term is +gamma*dE/dxi, equivalent to advection speed -gamma.
-	    ! Positive gamma therefore upwinds from the right.
-	    state%work_a(i) = -theta * dy * alpha_m
-	    state%work_c(i) = -theta * dy * (alpha_p + gamma_v / dxi)
-	    state%work_b(i) = 1d0 + theta * dy * (alpha_m + alpha_p + gamma_v / dxi)
+    if (pe_cell > 2d0 .and. gamma_v > 0d0) then
+     ! PDE term is +gamma*dE/dxi, equivalent to advection speed -gamma.
+     ! Positive gamma therefore upwinds from the right.
+     state%work_a(i) = -theta * dy * alpha_m
+     state%work_c(i) = -theta * dy * (alpha_p + gamma_v / dxi)
+     state%work_b(i) = 1d0 + theta * dy * (alpha_m + alpha_p + gamma_v / dxi)
 
-	    state%work_rhs(i) = state%work_old_e(i) &
-	        + omt * dy * alpha_m * state%work_old_e(i-1) &
-	        + omt * dy * (alpha_p + gamma_v / dxi) * state%work_old_e(i+1) &
-	        - omt * dy * (alpha_m + alpha_p + gamma_v / dxi) * state%work_old_e(i)
-	   else if (pe_cell > 2d0 .and. gamma_v < 0d0) then
-	    ! Negative gamma upwinds from the left.
-	    state%work_a(i) = -theta * dy * (alpha_m - gamma_v / dxi)
-	    state%work_c(i) = -theta * dy * alpha_p
-	    state%work_b(i) = 1d0 + theta * dy * (alpha_m + alpha_p - gamma_v / dxi)
+     state%work_rhs(i) = state%work_old_e(i) &
+         + omt * dy * alpha_m * state%work_old_e(i-1) &
+         + omt * dy * (alpha_p + gamma_v / dxi) * state%work_old_e(i+1) &
+         - omt * dy * (alpha_m + alpha_p + gamma_v / dxi) * state%work_old_e(i)
+    else if (pe_cell > 2d0 .and. gamma_v < 0d0) then
+     ! Negative gamma upwinds from the left.
+     state%work_a(i) = -theta * dy * (alpha_m - gamma_v / dxi)
+     state%work_c(i) = -theta * dy * alpha_p
+     state%work_b(i) = 1d0 + theta * dy * (alpha_m + alpha_p - gamma_v / dxi)
 
-	    state%work_rhs(i) = state%work_old_e(i) &
-	        + omt * dy * (alpha_m - gamma_v / dxi) * state%work_old_e(i-1) &
-	        + omt * dy * alpha_p * state%work_old_e(i+1) &
-	        - omt * dy * (alpha_m + alpha_p - gamma_v / dxi) * state%work_old_e(i)
+     state%work_rhs(i) = state%work_old_e(i) &
+         + omt * dy * (alpha_m - gamma_v / dxi) * state%work_old_e(i-1) &
+         + omt * dy * alpha_p * state%work_old_e(i+1) &
+         - omt * dy * (alpha_m + alpha_p - gamma_v / dxi) * state%work_old_e(i)
    else
     ! Central difference for advection
     state%work_a(i) = -theta * dy * (alpha_m - gamma_v / (2d0 * dxi))
@@ -2485,7 +2567,7 @@ end subroutine update_tau_and_luminosity
       'ratio=', f_ib_ratio, 'x_sh=', state%x_sh, 'x_ph=', state%x_ph, 'eta_min=', eta_min_val
     end if
    end if
-	   x_hat_i = state%x_min  ! ξ=0 → x̂ = x_min
+    x_hat_i = state%x_min  ! ξ=0 → x̂ = x_min
    x_hat_ip = state%x_min + 0.5d0 * dxi * Delta_x  ! x̂_{1+1/2}
 
    eta_ip = compute_eta_csm(x_hat_ip, state)
@@ -2495,7 +2577,7 @@ end subroutine update_tau_and_luminosity
    alpha_m = alpha_p  ! At ξ=0, left face mirrors right face for ghost elimination
 
    ! Advection at ξ=0: V(0) = ẋ_sh/Δx
-	   gamma_v = V_sh
+    gamma_v = V_sh
 
    state%work_a(1) = 0d0
    state%work_c(1) = -theta * dy * (alpha_m + alpha_p)
@@ -2507,12 +2589,12 @@ end subroutine update_tau_and_luminosity
    inner_rate = alpha_m + alpha_p
    if (gamma_v > 0d0) inner_rate = inner_rate + gamma_v / dxi
 
-	   state%work_c(1) = -theta * dy * inner_rate
-	   state%work_b(1) = 1d0 + theta * dy * inner_rate
+    state%work_c(1) = -theta * dy * inner_rate
+    state%work_b(1) = 1d0 + theta * dy * inner_rate
 
-	   state%work_rhs(1) = state%work_old_e(1) &
-	       + omt * dy * inner_rate * (state%work_old_e(2) - state%work_old_e(1)) &
-	       + dy * 2d0 * alpha_m * Delta_x * dxi * f_ib
+    state%work_rhs(1) = state%work_old_e(1) &
+        + omt * dy * inner_rate * (state%work_old_e(2) - state%work_old_e(1)) &
+        + dy * 2d0 * alpha_m * Delta_x * dxi * f_ib
   else
    ! Cooling phase: zero flux at inner boundary (spec Section 4.1)
    ! Ghost point: e_0 = e_2 (symmetry, G = 0)
@@ -2524,8 +2606,8 @@ end subroutine update_tau_and_luminosity
    alpha_p = D_ip / (x_hat_i**2 * Delta_x**2 * dxi**2)
    alpha_m = alpha_p
 
-   ! V(0) = 0 in the cooling comoving frame
-	   gamma_v = V_sh
+   ! V(0) = 0 because the inner cooling coordinate is fixed.
+    gamma_v = V_sh
 
    ! Ghost: e_0 = e_2 (G = 0)
    state%work_a(1) = 0d0
@@ -2550,41 +2632,15 @@ end subroutine update_tau_and_luminosity
           * state%R_in_R0**2
   end if
 
-  x_hat_i = state%x_ph  ! ξ=1 → x̂ = x_ph
-  x_hat_im = state%x_ph - 0.5d0 * dxi * Delta_x  ! x̂_{N-1/2}
-
-  eta_im = compute_eta_csm(x_hat_im, state)
-  D_im = x_hat_im**2 / max(eta_im, 1d-30)
-  if (state%in_cooling_phase) D_im = D_im * state%R_in_R0
-
-  alpha_m = D_im / (x_hat_i**2 * Delta_x**2 * dxi**2)
-  alpha_p = alpha_m  ! At ξ=1, right face mirrors left face for ghost elimination
-
-  ! Advection at ξ=1: V(1) = ẋ_ph/Δx during interaction, zero in cooling.
-	  gamma_v = V_ph
-
-  ! Ghost-point Robin BC: e_{N+1} = e_{N-1} + r*e_N
-  ! where r = 2Δξ·Δx/f_ob (from centered-difference Robin condition)
-  ! This preserves diffusion coupling at the boundary.
-  robin_coeff = 2d0 * dxi * Delta_x / f_ob  ! < 0 since f_ob < 0
-
-  ! Build standard row N before ghost elimination:
-  a_n_std = -theta * dy * (alpha_m - gamma_v / (2d0 * dxi))
-  c_n_std = -theta * dy * (alpha_p + gamma_v / (2d0 * dxi))
-  b_n_std = 1d0 + theta * dy * (alpha_m + alpha_p)
-  a_n_rhs = omt * dy * (alpha_m - gamma_v / (2d0 * dxi))
-  c_n_rhs = omt * dy * (alpha_p + gamma_v / (2d0 * dxi))
-  b_n_rhs = 1d0 - omt * dy * (alpha_m + alpha_p)
-
-  ! Ghost-point Robin elimination:
-  !   e_{N+1} = e_{N-1} + robin_coeff * e_N, robin_coeff = 2ΔξΔx/f_ob
-  robin_denom = sign(max(abs(f_ob), 1d-30), f_ob)
-  robin_coeff = 2d0 * dxi * Delta_x / robin_denom
-  state%work_a(n) = a_n_std + c_n_std
-  state%work_b(n) = b_n_std + c_n_std * robin_coeff
+  ! Algebraic Eddington surface closure:
+  !   e_N = f_ob * (e_N - e_{N-1}) / dx
+  ! -> (dx - f_ob) e_N + f_ob e_{N-1} = 0.
+  ! This avoids evolving a ghost surface reservoir after the radiation front.
+  dx_bc = Delta_x * dxi
+  state%work_a(n) = f_ob
+  state%work_b(n) = dx_bc - f_ob
   state%work_c(n) = 0d0
-  state%work_rhs(n) = (a_n_rhs + c_n_rhs) * state%work_old_e(n-1) + &
-                      (b_n_rhs + c_n_rhs * robin_coeff) * state%work_old_e(n)
+  state%work_rhs(n) = 0d0
 
   ! Solve tridiagonal system
   call tridag(state%work_a, state%work_b, state%work_c, state%work_rhs, &
@@ -2606,38 +2662,6 @@ end subroutine update_tau_and_luminosity
  end subroutine solve_diffusion_dimless
 
 ! ------------------------------------------------------------------
-! Interpolate deposition history to get e_int(x) shape for the interior
-! ------------------------------------------------------------------
- subroutine interp_history(x, state, e_val)
-  type(dimless_state_type), intent(in) :: state
-  real(8), intent(in) :: x
-  real(8), intent(out) :: e_val
-
-  integer :: j
-  real(8) :: frac
-
-  ! History is sorted by increasing x (shock moves outward)
-  if (x <= state%hist_x(1)) then
-   e_val = state%hist_e(1)
-   return
-  end if
-  if (x >= state%hist_x(state%n_history)) then
-   e_val = state%hist_e(state%n_history)
-   return
-  end if
-
-  ! Linear search (history is small, ≤500)
-  do j = 1, state%n_history - 1
-   if (x >= state%hist_x(j) .and. x < state%hist_x(j+1)) then
-    frac = (x - state%hist_x(j)) / max(state%hist_x(j+1) - state%hist_x(j), 1d-30)
-    e_val = state%hist_e(j) * (1d0 - frac) + state%hist_e(j+1) * frac
-    return
-   end if
-  end do
-  e_val = state%hist_e(state%n_history)
- end subroutine interp_history
-
-! ------------------------------------------------------------------
 ! Transition from interaction to cooling phase
 ! Transition criterion: x_sh >= x_csm_out (spec Section 6)
 ! Map the accumulated shocked-shell internal energy onto cooling coordinates
@@ -2656,17 +2680,20 @@ end subroutine update_tau_and_luminosity
   integer :: i, n
   real(8) :: x_sh_old, x_ph_old, dxi, Delta_x_old
   real(8) :: E_before, E_after, E_after_inner, E_store_cgs, E_budget
-  real(8) :: dx, frac_interp, x_split
+  real(8) :: E_residual_cgs
+  real(8) :: dx, frac_interp, x_split, x_breakout
   real(8) :: x_l, x_r, x_cap
-  real(8) :: profile_scale, volume_norm
+  real(8) :: profile_scale, profile_norm, e_l, e_r
   real(8) :: r_in_base, r_out_base, r_sh_se, v_sh_se
   real(8) :: t_dyn_csm, xi_global
+  real(8) :: tau_target, tau_total, tau_mid, x_lo_b, x_hi_b, E_breakout_dim, breakout_scale_cgs
   real(8), allocatable :: e_old(:)
 
   ! Guard: only do this once per run
   if (state%in_cooling_phase) return
   ! Clamp x_sh_old to x_csm_out — numerical overshoot beyond crossover is irrelevant.
   x_sh_old = min(state%x_sh, state%x_csm_out)
+  state%x_sh = x_sh_old
   x_ph_old = state%x_ph
   n = state%n_zones
   dxi = 1d0 / dble(n - 1)
@@ -2678,15 +2705,6 @@ end subroutine update_tau_and_luminosity
   where (.not. (e_old >= 0d0 .and. e_old < 1d6))
    e_old = 0d0
   end where
-
-  ! Ensure the deposition history reaches emergence for e_int interpolation.
-  if (state%n_history > 0 .and. x_sh_old > state%hist_x(state%n_history) + 1d-8) then
-   if (state%n_history < 500) state%n_history = state%n_history + 1
-   state%hist_x(state%n_history) = x_sh_old
-   state%hist_e(state%n_history) = state%hist_e(max(state%n_history - 1, 1))
-  else if (state%n_history > 0) then
-   state%hist_x(state%n_history) = x_sh_old
-  end if
 
   ! Compute total energy in the interaction-domain solution (diagnostic only).
   ! This can be very small near breakout because x_ph -> x_sh.
@@ -2722,51 +2740,143 @@ end subroutine update_tau_and_luminosity
   state%v_se = v_sh_se / max(state%x_out_cool, 1d-30)
   state%eta_cool_scale = 1d0
   state%in_cooling_phase = .true.
+  state%lum_heat_total_cgs = 0d0
+  state%lum_heat_cgs = 0d0
+  state%E_breakout_cgs = 0d0
+  state%t_breakout_cgs = 0d0
   state%rannacher_left = 4
 
   ! Compute x_ph for the cooling domain [x_min_cool, x_out_cool].
   call estimate_photosphere_x(state%x_min_cool, state)
 
+  t_dyn_csm = max((state%R_csm_out - state%R_csm_in) / max(state%v_ej_max, 1d-30), 1d-30)
+  xi_global = state%t_diff / t_dyn_csm
+
   ! Residual shocked-shell energy available for the cooling phase.  The
   ! interaction PDE has already accounted for diffusive luminosity escaping
-  ! before emergence, so only the remaining energy is mapped into e_int.
-  E_store_cgs = max(state%E_injected_cum - state%E_radiated_cum, 0d0)
+  ! before emergence, so only the remaining cumulative shock heating is mapped
+  ! into e_int.
+  E_residual_cgs = max(state%E_injected_cum - state%E_radiated_cum, 0d0)
+  E_store_cgs = E_residual_cgs
   E_budget = E_store_cgs / max(4d0 * pi * state%u0 * state%R0**3, 1d-30)
 
   ! --- Build e_int(x) on the cooling grid ---
-  ! The paper's cooling IC is e(x,y_se)=e_int(x).  In extended CSM the
-  ! interaction field has already leaked most of the heat, so use the live
-  ! radiation field.  In compact CSM the unresolved shocked shell is a trapped
-  ! internal-energy reservoir at emergence; map the residual energy
-  ! conservatively over the cooling support rather than preserving the narrow
-  ! moving-boundary injection history.
-  t_dyn_csm = max((state%R_csm_out - state%R_csm_in) / max(state%v_ej_max, 1d-30), 1d-30)
-  xi_global = state%t_diff / t_dyn_csm
+  ! The paper's cooling IC is e(x,y_se)=e_int(x): the residual internal
+  ! energy from cumulative shock heating during the interaction phase.
+  ! Compact CSM additionally separates the optically shallow breakout layer
+  ! from the deeper reservoir that powers the subsequent cooling phase.
+  profile_norm = 0d0
   if (xi_global < 1d0) then
    ! Extended CSM radiates most of the interaction energy before emergence.
    ! Carry forward only the live interaction radiation field.
    do i = 1, n
     state%e_grid(i) = max(e_old(i), 0d0)
    end do
-  else
-   volume_norm = 0d0
-   do i = 1, n - 1
-    x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
-    x_r = state%x_min_cool + state%xi_grid(i+1) * (state%x_ph - state%x_min_cool)
-    volume_norm = volume_norm + (x_r**3 - x_l**3) / 3d0
-   end do
-   if (volume_norm > 0d0 .and. E_budget > 0d0) then
-    profile_scale = E_budget / volume_norm
    else
-    profile_scale = 0d0
+    ! Compact CSM: the shock has overrun most of the optically thick shell, so
+    ! the cooling IC must come from the cumulative shock-deposition history.
+    ! Normalize the shape to the residual stored energy after subtracting the
+    ! luminosity that escaped during the interaction phase.
+    profile_norm = 0d0
+    do i = 1, n - 1
+     x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
+     x_r = state%x_min_cool + state%xi_grid(i+1) * (state%x_ph - state%x_min_cool)
+     e_l = deposition_profile_at(state, x_l)
+     e_r = deposition_profile_at(state, x_r)
+     dx = (state%x_ph - state%x_min_cool) * dxi
+     profile_norm = profile_norm + 0.5d0 * (x_l**2 * e_l + x_r**2 * e_r) * dx
+    end do
+
+    if (profile_norm > 0d0 .and. E_budget > 0d0) then
+     profile_scale = E_budget / profile_norm
+    else
+     profile_scale = 0d0
+    end if
+
+    do i = 1, n
+     x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
+     state%e_grid(i) = max(profile_scale * deposition_profile_at(state, x_l), 0d0)
+    end do
    end if
-   do i = 1, n
-    state%e_grid(i) = max(profile_scale, 0d0)
-   end do
-  end if
 
   ! Compute total energy after remap in cooling coordinates:
   ! E_dimless = ∫ x^2 e(x) dx
+  E_after = 0d0
+  do i = 1, n - 1
+   x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
+   x_r = state%x_min_cool + state%xi_grid(i+1) * (state%x_ph - state%x_min_cool)
+   dx = (state%x_ph - state%x_min_cool) * dxi
+   E_after = E_after + 0.5d0 * (x_l**2 * state%e_grid(i) + x_r**2 * state%e_grid(i+1)) * dx
+  end do
+
+  ! In compact, optically thick CSM, the layers above the shock-breakout
+  ! depth (tau ~= c/v_sh) release at shock emergence when the forward shock
+  ! reaches the surface.  Remove that breakout-layer energy from the later
+  ! passive cooling reservoir and emit it over the spherical light-travel
+  ! smoothing time across the photosphere.  Extended cases (xi_global < 1)
+  ! have already leaked their shock
+  ! energy during the interaction phase, so no separate breakout reservoir is
+  ! introduced.
+  x_breakout = state%x_ph
+  E_breakout_dim = 0d0
+  if (xi_global >= 1d0 .and. E_after > 0d0 .and. v_sh_se > 0d0) then
+   tau_target = clight / max(v_sh_se, 1d5)
+   call integrate_tau_from_x(state%x_min_cool, state, tau_total)
+   if (tau_total > tau_target) then
+    x_lo_b = state%x_min_cool
+    x_hi_b = state%x_ph
+    do i = 1, 40
+     x_breakout = 0.5d0 * (x_lo_b + x_hi_b)
+     call integrate_tau_from_x(x_breakout, state, tau_mid)
+     if (tau_mid > tau_target) then
+      x_lo_b = x_breakout
+     else
+      x_hi_b = x_breakout
+     end if
+    end do
+    x_breakout = 0.5d0 * (x_lo_b + x_hi_b)
+
+    do i = 1, n - 1
+     x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
+     x_r = state%x_min_cool + state%xi_grid(i+1) * (state%x_ph - state%x_min_cool)
+     if (x_r <= x_breakout) cycle
+     x_cap = max(x_l, x_breakout)
+     dx = x_r - x_cap
+     if (dx <= 0d0) cycle
+     if (x_r > x_l) then
+      frac_interp = (x_cap - x_l) / (x_r - x_l)
+     else
+      frac_interp = 0d0
+     end if
+     E_breakout_dim = E_breakout_dim + 0.5d0 * (x_cap**2 * (state%e_grid(i) * (1d0 - frac_interp) + &
+                    state%e_grid(i+1) * frac_interp) + x_r**2 * state%e_grid(i+1)) * dx
+    end do
+
+    if (E_breakout_dim > 0d0) then
+     breakout_scale_cgs = 4d0 * pi * state%u0 * state%R0**3
+     state%E_breakout_cgs = E_breakout_dim * breakout_scale_cgs
+     state%t_breakout_cgs = max(2d0 * state%x_ph * state%R0 / clight, 0.05d0 * 86400d0)
+     do i = 1, n
+      x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
+      if (x_l >= x_breakout) state%e_grid(i) = 0d0
+     end do
+    end if
+   end if
+  end if
+
+  if (xi_global >= 1d0) then
+   ! Compact CSM: deeper material was shocked earlier than the outer layers.
+   ! For a radiation-dominated shell, its total internal energy scales as R^-1
+   ! before the passive cooling solve begins.
+   do i = 1, n
+    x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
+    if (state%e_grid(i) > 0d0) then
+     state%e_grid(i) = state%e_grid(i) * x_l / max(state%x_out_cool, x_l)
+    end if
+   end do
+  end if
+
+  ! Recompute post-split cooling-reservoir energy.
   E_after = 0d0
   do i = 1, n - 1
    x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
@@ -2806,8 +2916,9 @@ end subroutine update_tau_and_luminosity
      ' x_split=', x_split
    write(*,'(A,ES12.4,A,ES12.4,A,ES12.4)') '  R0=', state%R0, ' v_se=', state%v_se, ' eta_scale=', state%eta_cool_scale
    write(*,'(A,ES12.4,A,ES12.4)') '  e_old(1)=', e_old(1), ' e_old(n)=', e_old(n)
-   write(*,'(A,ES12.4,A,ES12.4,A,ES12.4)') '  E_before=', E_before, ' E_budget=', E_budget, &
-     ' E_after=', E_after
+   write(*,'(A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4)') '  E_before=', E_before, ' E_budget=', E_budget, &
+     ' E_after=', E_after, ' prof_norm=', profile_norm
+   write(*,'(A,ES12.4,A,ES12.4)') '  Einj=', state%E_injected_cum, ' Erad=', state%E_radiated_cum
    write(*,'(A,ES12.4,A,ES12.4)') '  Einner_after=', E_after_inner, ' f_inner=', E_after_inner / max(E_after, 1d-30)
    write(*,'(A,ES12.4,A,ES12.4)') '  e_grid(1)=', state%e_grid(1), ' e_grid(n)=', state%e_grid(n)
    write(*,'(A)') '========================='
@@ -2851,7 +2962,7 @@ end subroutine update_tau_and_luminosity
 
   e_N = max(state%e_grid(state%n_zones), 0d0)
 
-  if (.not. state%in_cooling_phase) then
+ if (.not. state%in_cooling_phase) then
    ! Interaction: L = π·c·u₀·τ_csm_in·x_ph²·R_csm_in / (3·κ·ρ_csm_in) · e_N
    L_factor = pi * clight * state%u0 * state%tau_csm_in * state%x_ph**2 &
              * state%R_csm_in / (3d0 * state%kappa * state%rho_csm_in)
@@ -2861,6 +2972,10 @@ end subroutine update_tau_and_luminosity
    L_factor = 2d0 * pi * clight * state%u0 * state%tau_csm_in * state%x_ph**2 &
              * state%R0 / (3d0 * state%kappa * state%rho_csm_in)
    state%lum_obs_cgs = L_factor * e_N / max(state%R_in_R0, 1d-30)**2
+   if (state%E_breakout_cgs > 0d0 .and. state%t_breakout_cgs > 0d0) then
+    state%lum_obs_cgs = state%lum_obs_cgs + state%E_breakout_cgs / state%t_breakout_cgs * &
+                        exp(-max(state%t_cgs - state%zeta_se * state%t_in, 0d0) / state%t_breakout_cgs)
+   end if
   end if
 
   state%lum_obs_cgs = max(state%lum_obs_cgs, 0d0)
@@ -2886,9 +3001,9 @@ end subroutine update_tau_and_luminosity
   real(8) :: dzeta_step, dzeta_total, dzeta_target
   real(8) :: dy_step
   real(8) :: dt_dyn_cfl, dt_diff_cfl, advection_cfl
-	  real(8) :: Delta_x, x_sh_old, x_ph_old, frac, dy_pre, dy_post
+  real(8) :: Delta_x, x_sh_old, x_ph_old, frac, dy_pre, dy_post
   real(8) :: E_rad_dim, E_rad_cgs, dedx_surf, lum_grad_cgs, lum_grad_ratio
-  real(8) :: dt_int_cgs, profile_deposit
+  real(8) :: dt_int_cgs
   ! For breakout split: pre-step dynamics snapshot
   real(8) :: x_sh_pre, w_sh_pre, phi_sh_pre, zeta_pre
   integer, save :: step_log_counter = 0
@@ -2965,6 +3080,10 @@ end subroutine update_tau_and_luminosity
     zeta_pre  = state%zeta
     ! Interaction: advance shock ODEs with RK4
     call rk4_step_dynamics(state, dzeta_step)
+    ! Operator splitting: hydrodynamics is advanced first, then the shock
+    ! heating for this diffusion substep is evaluated from the updated shell.
+    state%lum_heat_total_cgs = current_dimless_shock_luminosity(state)
+    state%lum_heat_cgs = state%lum_heat_total_cgs
     ! Compute dx_sh/dy for the advection term
     state%x_sh_dot = state%w_sh / max(state%y_ratio, 1d-30)
     ! Debug: store sub-step count for diagnostics
@@ -2981,10 +3100,10 @@ end subroutine update_tau_and_luminosity
    ! --- Step 2: Advance diffusion ---
    dy_step = state%y_ratio * dzeta_step
 
-	  if (.not. state%in_cooling_phase) then
-	   ! Interaction phase: the shock boundary and the photosphere both move.
-	   ! Recompute x_ph every substep; cached percent-level jumps create
-	   ! nonphysical transport discontinuities before shock emergence.
+   if (.not. state%in_cooling_phase) then
+    ! Interaction phase: the shock boundary and the photosphere both move.
+    ! Recompute x_ph every substep; cached percent-level jumps create
+    ! nonphysical transport discontinuities before shock emergence.
 
     ! Check for transition (x_sh >= x_csm_out, spec Section 6)
     if (state%x_sh >= state%x_csm_out .and. x_sh_old < state%x_csm_out) then
@@ -3005,27 +3124,30 @@ end subroutine update_tau_and_luminosity
      state%zeta   = zeta_pre   + frac * dzeta_step
      state%y_diff = state%y_ratio * state%zeta
      state%x_sh_dot = state%w_sh / max(state%y_ratio, 1d-30)
+     state%lum_heat_total_cgs = current_dimless_shock_luminosity(state)
+     state%lum_heat_cgs = state%lum_heat_total_cgs
 
-	     ! Solve diffusion for pre-emergence portion with crossover geometry.
-	     if (dy_pre > 0d0) then
-	      x_ph_old = state%x_ph
-	      call estimate_photosphere_x(state%x_sh, state)
-	      if (x_ph_old > 0d0) then
-	       state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_pre, 1d-30)
-	      else
-	       state%x_ph_dot = 0d0
-	      end if
-	      state%x_ph_cached_xsh = state%x_sh
-	      state%x_ph_cached_xmin = state%x_min
-	      call solve_diffusion_dimless(state, dy_pre)
+      ! Solve diffusion for pre-emergence portion with crossover geometry.
+      if (dy_pre > 0d0) then
+       x_ph_old = state%x_ph
+       call estimate_photosphere_x(state%x_sh, state)
+       if (x_ph_old > 0d0) then
+        state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_pre, 1d-30)
+       else
+        state%x_ph_dot = 0d0
+       end if
+       state%x_ph_cached_xsh = state%x_sh
+       state%x_ph_cached_xmin = state%x_min
+       call solve_diffusion_dimless(state, dy_pre)
       dt_int_cgs = frac * dzeta_step * state%t_in
       call dimless_to_cgs(state)
       state%E_injected_cum = state%E_injected_cum + state%lum_heat_total_cgs * dt_int_cgs
       state%E_radiated_cum = state%E_radiated_cum + state%lum_obs_cgs * dt_int_cgs
-     end if
+      call record_deposition_profile(state, x_sh_pre, state%x_sh, state%lum_heat_total_cgs, dt_int_cgs)
+      end if
 
-	     ! Transition to cooling at the crossover dynamics state
-	     call transition_to_cooling(state)
+      ! Transition to cooling at the crossover dynamics state
+      call transition_to_cooling(state)
 
      ! Solve diffusion for post-emergence portion
      if (dy_post > 0d0) then
@@ -3033,67 +3155,62 @@ end subroutine update_tau_and_luminosity
       state%y_diff = state%y_ratio * state%zeta
       state%R_in_R0 = 1d0 + state%v_se * (state%zeta - state%zeta_se) * state%t_in / state%R0
       state%x_sh_dot = 0d0
-      state%x_ph_dot = 0d0
+      x_ph_old = state%x_ph
       call estimate_photosphere_x(state%x_min_cool, state)
+      if (x_ph_old > 0d0) then
+       state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_post, 1d-30)
+      else
+       state%x_ph_dot = 0d0
+      end if
       call solve_diffusion_dimless(state, dy_post)
      end if
 
      ! Update photosphere caching
      state%x_ph_cached_xsh = state%x_sh
      state%x_ph_cached_xmin = state%x_min
-	    else if (state%x_sh >= state%x_csm_out) then
-	     ! Already past crossover (transition already happened or x_sh was already >= x_csm_out)
-	     state%x_ph_dot = 0d0
-	     call transition_to_cooling(state)
-	     call solve_diffusion_dimless(state, dy_step)
-	     state%x_ph_cached_xsh = state%x_sh
-     state%x_ph_cached_xmin = state%x_min
-	    else
-	     ! Normal interaction step (no crossover)
-	     x_ph_old = state%x_ph
-	     call estimate_photosphere_x(state%x_sh, state)
-	     if (x_ph_old > 0d0) then
-	      state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_step, 1d-30)
-	     else
-	      state%x_ph_dot = 0d0
-	     end if
-	     state%x_ph_cached_xsh = state%x_sh
-	     state%x_ph_cached_xmin = state%x_min
-	     call solve_diffusion_dimless(state, dy_step)
-     dt_int_cgs = dzeta_step * state%t_in
-     call dimless_to_cgs(state)
-     state%E_injected_cum = state%E_injected_cum + state%lum_heat_total_cgs * dt_int_cgs
-     state%E_radiated_cum = state%E_radiated_cum + state%lum_obs_cgs * dt_int_cgs
-    end if
-
-    ! Record the local shock-deposition profile used for the cooling IC.
-    if (.not. state%in_cooling_phase) then
-     Delta_x = max(state%x_csm_out - 1d0, 1d-6)
-     advection_cfl = max(Delta_x / 450d0, 1d-3)
-     profile_deposit = max(state%lum_heat_total_cgs, 0d0) / &
-                       (max(state%w_sh * state%v_ej_max, 1d-30) * max(state%x_sh**2, 1d-30))
-     if (state%n_history == 0) then
-      state%n_history = 1
-      state%hist_x(1) = state%x_sh
-      state%hist_e(1) = max(profile_deposit, 0d0)
-     else if (state%x_sh - state%hist_x(state%n_history) >= advection_cfl .or. state%x_sh >= state%x_csm_out) then
-      if (state%n_history < 500) then
-       state%n_history = state%n_history + 1
+     else if (state%x_sh >= state%x_csm_out) then
+      ! Already past crossover (transition already happened or x_sh was already >= x_csm_out)
+      call transition_to_cooling(state)
+      x_ph_old = state%x_ph
+      call estimate_photosphere_x(state%x_min_cool, state)
+      if (x_ph_old > 0d0) then
+       state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_step, 1d-30)
+      else
+       state%x_ph_dot = 0d0
       end if
-      state%hist_x(state%n_history) = state%x_sh
-      state%hist_e(state%n_history) = max(profile_deposit, 0d0)
+      call solve_diffusion_dimless(state, dy_step)
+      state%x_ph_cached_xsh = state%x_sh
+     state%x_ph_cached_xmin = state%x_min
+     else
+      ! Normal interaction step (no crossover)
+      x_ph_old = state%x_ph
+      call estimate_photosphere_x(state%x_sh, state)
+      if (x_ph_old > 0d0) then
+       state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_step, 1d-30)
+      else
+       state%x_ph_dot = 0d0
+      end if
+      state%x_ph_cached_xsh = state%x_sh
+      state%x_ph_cached_xmin = state%x_min
+      call solve_diffusion_dimless(state, dy_step)
+     dt_int_cgs = dzeta_step * state%t_in
+      call dimless_to_cgs(state)
+      state%E_injected_cum = state%E_injected_cum + state%lum_heat_total_cgs * dt_int_cgs
+      state%E_radiated_cum = state%E_radiated_cum + state%lum_obs_cgs * dt_int_cgs
+      call record_deposition_profile(state, x_sh_old, state%x_sh, state%lum_heat_total_cgs, dt_int_cgs)
      end if
-    end if
-	   else
-	    ! Cooling phase: R_in/R0 already updated in Step 1
-	    state%x_ph_dot = 0d0
-    ! Photosphere caching: recompute when R_in_R0 changes >1%
-    if (state%x_ph_cached_xmin < 0d0 .or. &
-        abs(state%R_in_R0 - state%x_ph_cached_xmin) > 0.01d0 * max(state%R_in_R0, 1d0)) then
-     call estimate_photosphere_x(state%x_sh, state)
+
+    else
+     ! Cooling phase: R_in/R0 already updated in Step 1
+     x_ph_old = state%x_ph
+     call estimate_photosphere_x(state%x_min_cool, state)
+     if (x_ph_old > 0d0) then
+      state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_step, 1d-30)
+     else
+      state%x_ph_dot = 0d0
+     end if
      state%x_ph_cached_xsh = state%x_sh
      state%x_ph_cached_xmin = state%R_in_R0
-    end if
     call solve_diffusion_dimless(state, dy_step)
    end if
 
