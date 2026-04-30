@@ -1198,13 +1198,16 @@ end subroutine lightcurve_wind_bpl
      lum_store = lum_heat
      ld_array(n) = L_ph
      r_store = r
+     if (run_mode == 3 .and. dl_state_global%in_cooling_phase) then
+      r_store = dl_state_global%x_out_cool * dl_state_global%R0 * dl_state_global%R_in_R0
+     end if
      if(diffusion_enabled)then
       if (run_mode == 3) then
-       rfs_array(n) = r
+       rfs_array(n) = r_store
        rph_array(n) = r_ph
        etrap_array(n) = 0d0
        tleak_array(n) = 0d0
-       tauhyb_array(n) = shell_optical_depth(r, t)
+       tauhyb_array(n) = shell_optical_depth(r_store, t)
       else
        rfs_array(n) = forward_shock_radius(tr_state, r, t, m)
        rph_array(n) = r_ph

@@ -2812,10 +2812,10 @@ end subroutine update_tau_and_luminosity
   ! In compact, optically thick CSM, the layers above the shock-breakout
   ! depth (tau ~= c/v_sh) release at shock emergence when the forward shock
   ! reaches the surface.  Remove that breakout-layer energy from the later
-  ! passive cooling reservoir and emit it over the spherical light-travel
-  ! smoothing time across the photosphere.  Extended cases (xi_global < 1)
-  ! have already leaked their shock
-  ! energy during the interaction phase, so no separate breakout reservoir is
+  ! passive cooling reservoir and emit it over the characteristic angular
+  ! light-travel time of the visible photosphere.  Extended cases
+  ! (xi_global < 1) have already leaked their shock energy during the
+  ! interaction phase, so no separate breakout reservoir is
   ! introduced.
   x_breakout = state%x_ph
   E_breakout_dim = 0d0
@@ -2855,7 +2855,7 @@ end subroutine update_tau_and_luminosity
     if (E_breakout_dim > 0d0) then
      breakout_scale_cgs = 4d0 * pi * state%u0 * state%R0**3
      state%E_breakout_cgs = E_breakout_dim * breakout_scale_cgs
-     state%t_breakout_cgs = max(2d0 * state%x_ph * state%R0 / clight, 0.05d0 * 86400d0)
+     state%t_breakout_cgs = max(1.5d0 * state%x_ph * state%R0 / clight, 0.05d0 * 86400d0)
      do i = 1, n
       x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
       if (x_l >= x_breakout) state%e_grid(i) = 0d0
@@ -2865,9 +2865,10 @@ end subroutine update_tau_and_luminosity
   end if
 
   if (xi_global >= 1d0) then
-   ! Compact CSM: deeper material was shocked earlier than the outer layers.
-   ! For a radiation-dominated shell, its total internal energy scales as R^-1
-   ! before the passive cooling solve begins.
+   ! Compact CSM: material shocked well before emergence is carried by the
+   ! moving thin shell before the passive cooling solve begins.  Convert the
+   ! cumulative deposition profile to breakout-time internal energy using the
+   ! radiation-dominated shell scaling E_int proportional to R^-1.
    do i = 1, n
     x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
     if (state%e_grid(i) > 0d0) then
@@ -2937,7 +2938,9 @@ end subroutine update_tau_and_luminosity
   type(dimless_state_type), intent(inout) :: state
   real(8) :: e_N, L_factor
 
-  ! Basic conversions
+  ! Basic conversions.  r_sh_cgs/v_sh_cgs remain the frozen shell-dynamics
+  ! state used by the outer thin-shell driver; post-emergence homologous
+  ! expansion is exported from csm.f90 without feeding back into that driver.
   state%r_sh_cgs = state%x_sh * state%R_csm_in
   state%v_sh_cgs = state%w_sh * state%v_ej_max
   state%m_sh_cgs = state%phi_sh * 4d0 * pi * state%R_csm_in**3 * state%rho_ej_in
