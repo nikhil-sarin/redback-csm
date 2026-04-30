@@ -139,6 +139,10 @@ use csm_runtime, only: shock_efficiency_mode
   integer :: rannacher_left = 0
   real(8) :: x_ph_cached_xsh = -1d0  ! x_sh when x_ph was last computed
   real(8) :: x_ph_cached_xmin = -1d0 ! x_min when x_ph was last computed
+  logical :: x_ph_cache_valid = .false.
+  real(8) :: x_ph_cache_start = -1d0
+  real(8) :: x_ph_cache_outer = -1d0
+  real(8) :: x_ph_cache_scale = -1d0
   real(8), allocatable :: xi_grid(:)   ! fixed uniform ξ = (i-1)/(n-1)
   real(8), allocatable :: e_grid(:)    ! dimensionless energy density e(ξ)
   ! Tridiagonal work arrays
@@ -1856,6 +1860,10 @@ end subroutine update_tau_and_luminosity
    state%rannacher_left = 0
   state%x_ph_cached_xsh = -1d0
   state%x_ph_cached_xmin = -1d0
+  state%x_ph_cache_valid = .false.
+  state%x_ph_cache_start = -1d0
+  state%x_ph_cache_outer = -1d0
+  state%x_ph_cache_scale = -1d0
   state%lum_heat_cgs = 0d0
   state%lum_heat_total_cgs = 0d0
   state%lum_obs_cgs = 0d0
@@ -2038,10 +2046,11 @@ end subroutine update_tau_and_luminosity
   real(8), intent(in) :: x_start
   type(dimless_state_type), intent(inout) :: state
 
-  integer, parameter :: n_scan = 100
   integer :: i
-  real(8) :: x_lo, x_hi, dx_scan, tau_cum, eta_val, x_mid, tau_mid
+  real(8) :: x_lo, x_hi, tau_cum, x_mid, tau_mid, tau_guess
   real(8) :: x_inner, x_outer, length_scale
+  real(8) :: rel_start, rel_outer, rel_scale, x_guess
+  real(8), parameter :: tau_ph = 2d0 / 3d0
 
   ! Determine integration bounds and length scale
   if (state%in_cooling_phase) then
@@ -2059,38 +2068,74 @@ end subroutine update_tau_and_luminosity
 
   if (x_outer <= x_inner + 1d-12) then
    state%x_ph = x_inner
+   state%x_ph_cache_valid = .false.
    return
   end if
 
-  ! Scan from x_inner to x_outer, integrating τ
-  dx_scan = (x_outer - x_inner) / dble(n_scan)
+  if (state%x_ph_cache_valid .and. state%x_ph > 0d0) then
+   rel_start = abs(x_inner - state%x_ph_cache_start) / max(abs(state%x_ph_cache_start), 1d0)
+   rel_outer = abs(x_outer - state%x_ph_cache_outer) / max(abs(state%x_ph_cache_outer), 1d0)
+   rel_scale = abs(length_scale - state%x_ph_cache_scale) / max(abs(state%x_ph_cache_scale), 1d-30)
+   if (state%in_cooling_phase) then
+    ! During cooling the density scale changes smoothly as R_in^-2.  Reusing
+    ! the last photosphere over sub-percent scale changes avoids thousands of
+    ! identical optical-depth inversions during the early cooling refinement.
+    if (rel_start < 1d-12 .and. rel_outer < 1d-12 .and. rel_scale < 2d-3) then
+     state%x_ph = min(max(state%x_ph, x_inner), x_outer)
+     return
+    end if
+   else
+    ! In interaction the tau=2/3 surface is independent of the inner boundary
+    ! until the shock approaches it.  Cache only when the boundary moved very
+    ! little, so breakout timing remains controlled by explicit inversions.
+    if (rel_start < 5d-4 .and. rel_outer < 1d-12 .and. state%x_ph > x_inner) then
+     state%x_ph = min(max(state%x_ph, x_inner), x_outer)
+     return
+    end if
+   end if
+  end if
 
-  tau_cum = 0d0
-  do i = n_scan, 1, -1
-   x_mid = x_inner + (dble(i) - 0.5d0) * dx_scan
-   eta_val = compute_eta_csm(x_mid, state)
-   tau_cum = tau_cum + state%kappa * state%rho_csm_in * length_scale * eta_val * dx_scan
-  end do
+  call integrate_tau_from_x(x_inner, state, tau_cum)
 
-  if (tau_cum <= 2d0 / 3d0) then
+  if (tau_cum <= tau_ph) then
    ! Optically thin: place emitting boundary at outer support.
    state%x_ph = x_outer
+   state%x_ph_cache_valid = .true.
+   state%x_ph_cache_start = x_inner
+   state%x_ph_cache_outer = x_outer
+   state%x_ph_cache_scale = length_scale
    return
   end if
 
   ! Bisection: find x_ph where tau from x_ph to x_outer = 2/3
   x_lo = x_inner
   x_hi = x_outer
-  do i = 1, 30
+  if (state%x_ph_cache_valid) then
+   x_guess = min(max(state%x_ph, x_inner), x_outer)
+   if (x_guess > x_inner + 1d-12 .and. x_guess < x_outer - 1d-12) then
+    call integrate_tau_from_x(x_guess, state, tau_guess)
+    if (tau_guess > tau_ph) then
+     x_lo = x_guess
+    else
+     x_hi = x_guess
+    end if
+   end if
+  end if
+
+  do i = 1, 22
    x_mid = 0.5d0 * (x_lo + x_hi)
    call integrate_tau_from_x(x_mid, state, tau_mid)
-   if (tau_mid > 2d0 / 3d0) then
+   if (tau_mid > tau_ph) then
     x_lo = x_mid
    else
     x_hi = x_mid
    end if
   end do
   state%x_ph = 0.5d0 * (x_lo + x_hi)
+  state%x_ph_cache_valid = .true.
+  state%x_ph_cache_start = x_inner
+  state%x_ph_cache_outer = x_outer
+  state%x_ph_cache_scale = length_scale
  end subroutine estimate_photosphere_x
 
  subroutine integrate_tau_from_x(x_from, state, tau_out)
@@ -2098,7 +2143,7 @@ end subroutine update_tau_and_luminosity
   type(dimless_state_type), intent(in) :: state
   real(8), intent(out) :: tau_out
 
-  integer, parameter :: n_int = 50
+  integer, parameter :: n_int = 32
   integer :: i
   real(8) :: x_end, dx, x_mid, eta_val, length_scale
 
@@ -2546,7 +2591,7 @@ end subroutine update_tau_and_luminosity
    ! positive outward flux implies de/dx < 0.
    eta_min_val = compute_eta_csm(state%x_min, state)
    if (state%lum_heat_cgs > 0d0 .and. state%u0 > 0d0 .and. state%x_sh > 0d0) then
-    f_ib_lum = state%lum_heat_cgs * state%tau_csm_in * max(eta_min_val, 1d-30) / &
+   f_ib_lum = state%lum_heat_cgs * state%tau_csm_in * max(eta_min_val, 1d-30) / &
                (4d0 * pi * state%x_sh**2 * state%R_csm_in**2 * clight * state%u0)
     f_ib = max(f_ib_lum, 0d0)
    else
@@ -2744,6 +2789,7 @@ end subroutine update_tau_and_luminosity
   state%lum_heat_cgs = 0d0
   state%E_breakout_cgs = 0d0
   state%t_breakout_cgs = 0d0
+  state%x_ph_cache_valid = .false.
   state%rannacher_left = 4
 
   ! Compute x_ph for the cooling domain [x_min_cool, x_out_cool].
@@ -2775,8 +2821,7 @@ end subroutine update_tau_and_luminosity
    else
     ! Compact CSM: the shock has overrun most of the optically thick shell, so
     ! the cooling IC must come from the cumulative shock-deposition history.
-    ! Normalize the shape to the residual stored energy after subtracting the
-    ! luminosity that escaped during the interaction phase.
+    ! Normalize the cumulative heating profile to the residual stored energy.
     profile_norm = 0d0
     do i = 1, n - 1
      x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
@@ -2815,8 +2860,7 @@ end subroutine update_tau_and_luminosity
   ! passive cooling reservoir and emit it over the characteristic angular
   ! light-travel time of the visible photosphere.  Extended cases
   ! (xi_global < 1) have already leaked their shock energy during the
-  ! interaction phase, so no separate breakout reservoir is
-  ! introduced.
+  ! interaction phase, so no separate breakout reservoir is introduced.
   x_breakout = state%x_ph
   E_breakout_dim = 0d0
   if (xi_global >= 1d0 .and. E_after > 0d0 .and. v_sh_se > 0d0) then
@@ -2865,10 +2909,9 @@ end subroutine update_tau_and_luminosity
   end if
 
   if (xi_global >= 1d0) then
-   ! Compact CSM: material shocked well before emergence is carried by the
-   ! moving thin shell before the passive cooling solve begins.  Convert the
-   ! cumulative deposition profile to breakout-time internal energy using the
-   ! radiation-dominated shell scaling E_int proportional to R^-1.
+   ! Material shocked at smaller radii does PdV work before emergence.  For a
+   ! radiation-dominated homologously expanding layer, total internal energy
+   ! scales as R^-1; this maps the raw deposition history to e_int at t_se.
    do i = 1, n
     x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
     if (state%e_grid(i) > 0d0) then
@@ -2877,7 +2920,7 @@ end subroutine update_tau_and_luminosity
    end do
   end if
 
-  ! Recompute post-split cooling-reservoir energy.
+  ! Recompute cooling-reservoir energy after constructing e_int.
   E_after = 0d0
   do i = 1, n - 1
    x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
@@ -3065,9 +3108,9 @@ end subroutine update_tau_and_luminosity
    ! Post-emergence refinement
    if (state%in_cooling_phase .and. state%zeta_se > 0d0) then
     if ((state%zeta - state%zeta_se) * state%t_in < 0.05d0 * 86400d0) then
-     dzeta_step = min(dzeta_step, 0.0005d0 * 86400d0 / state%t_in)
-    else if ((state%zeta - state%zeta_se) * state%t_in < 0.2d0 * 86400d0) then
      dzeta_step = min(dzeta_step, 0.002d0 * 86400d0 / state%t_in)
+    else if ((state%zeta - state%zeta_se) * state%t_in < 0.2d0 * 86400d0) then
+     dzeta_step = min(dzeta_step, 0.005d0 * 86400d0 / state%t_in)
     end if
    end if
 
