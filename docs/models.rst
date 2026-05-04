@@ -30,12 +30,12 @@ keywords controlling diffusion / transport:
      - Meaning
    * - ``mode='simple'``
      - Default thin-shell calculation. If ``kappa`` is supplied, this uses the legacy post-processed diffusion light curve.
-   * - ``mode='hybrid'``
+   * - ``mode='transport'``
      - Use the newer transport solver for the observed luminosity while keeping the same shell dynamics.
    * - ``kappa``
-     - Opacity in ``cm^2 g^-1``. Optional in simple mode. In hybrid mode it defaults to ``0.34`` if omitted.
+     - Opacity in ``cm^2 g^-1``. Optional in simple mode. In transport mode it defaults to ``0.34`` if omitted.
    * - ``n_rad_zones``
-     - Number of transport zones used in hybrid mode. Larger values reduce numerical roughness at higher runtime cost.
+     - Number of transport zones used in transport mode. Larger values reduce numerical roughness at higher runtime cost.
    * - ``efficiency_mode``
      - Optional alternate forward-shock efficiency mode. Default ``0`` keeps the user-supplied constant ``eff``.
 
@@ -45,6 +45,48 @@ Output convention:
 - ``lbol_shock`` is the shock-powered luminosity
 - ``lbol_diffuse`` is the diffusion / transport luminosity when available
 - ``rph`` is the historical field name, but currently stores the shell radius by convention
+
+JAX static CSM backend
+----------------------
+
+The package also includes a JAX-native backend for the static finite power-law
+CSM shell plus broken-power-law ejecta model. This backend is intended for fast
+inference experiments and validation against the Fortran backend. It supports
+the same ``mode='simple'`` and ``mode='transport'`` terminology, but it is not
+yet a general replacement for the arbitrary-CSM Fortran implementation.
+
+.. code-block:: python
+
+   from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve
+
+   lbol = get_static_powerlaw_csm_bpl_lightcurve(
+       time=time_days,
+       eta=-2.0,
+       r_inner=5e2 * 6.957e10,
+       r_outer=5e3 * 6.957e10,
+       delta_sn=1.0,
+       nn_sn=10.0,
+       mej_sn=5.0,
+       esn=1.0,
+       eff=1.0,
+       m_csm=1.0,
+       mode='transport',
+       kappa=0.2,
+   )
+
+Radio and X-ray variants
+------------------------
+
+Each radio-enabled CSM scenario also has matching ``_radio`` and ``_xray``
+wrappers. The radio wrappers compute synchrotron emission from the CSM
+interaction shock. The X-ray wrappers compute an approximate thermal
+bremsstrahlung diagnostic using the same shock trajectory and upstream CSM
+density. The X-ray calculation is a fast post-processor, not a resolved cooling
+layer or spectral-fitting model.
+
+Common X-ray controls include ``logepsx``, ``e_min_kev``, ``e_max_kev``,
+``output_format``, ``n_h_host``, ``n_h_mw``, ``absorb_csm``,
+``shock_component``, ``normalization``, and ``max_xray_efficiency``.
 
 Wind / Simple CSM Models
 ------------------------
@@ -151,7 +193,7 @@ For example, ``wind_exponential`` means a steady wind CSM with an exponential SN
 Note some models are the other way round, e.g. ``exponential_wind`` means an exponential eruption
 followed by a steady wind, and ``bpl_exponential`` means a BPL eruption followed by an exponential eruption.
 
-Example with hybrid transport:
+Example with transport mode:
 
 .. code-block:: python
 
@@ -166,7 +208,7 @@ Example with hybrid transport:
        mexp=10.0,
        eexp=1.0,
        eff=0.5,
-       mode='hybrid',
+       mode='transport',
        kappa=0.34,
        n_rad_zones=120,
    )

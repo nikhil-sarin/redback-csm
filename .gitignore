@@ -8,6 +8,7 @@ fortran/*.f90
 .DS_Store
 scripts/
 *.png
+examples/runtime_summary.csv
 .idea/
 *.tmp_runtime
 *.tex
