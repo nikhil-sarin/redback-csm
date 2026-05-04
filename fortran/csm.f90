@@ -902,13 +902,19 @@ end subroutine lightcurve_wind_bpl
     if(abs(km)>1d-30)dt = min(dt,abs(m/km))
     dt = 0.02d0*dt
 
-    ! Early-time high-cadence sampling to resolve dark-phase onset and peak.
-    if (t < 30d0*86400d0) then
-     dt = min(dt, 0.005d0*86400d0)  ! 0.005 day
+    ! Keep the compact-CSM peak finely sampled, but avoid writing thousands of
+    ! redundant dark-phase and late-tail points.  The transport step below
+    ! still subcycles internally when the diffusion/handoff problem requires it.
+    if (t < 4d0*86400d0) then
+     dt = min(dt, 0.05d0*86400d0)
+    else if (t < 10d0*86400d0) then
+     dt = min(dt, 0.01d0*86400d0)
+    else if (t < 30d0*86400d0) then
+     dt = min(dt, 0.05d0*86400d0)
     else if (t < 120d0*86400d0) then
-     dt = min(dt, 0.05d0*86400d0)   ! 0.05 day
+     dt = min(dt, 0.25d0*86400d0)
     else
-     dt = min(dt, 0.25d0*86400d0)   ! 0.25 day late-time
+     dt = min(dt, 1.00d0*86400d0)
     end if
 
     dt = max(dt, 10d0)              ! avoid zero/underflow

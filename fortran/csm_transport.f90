@@ -126,6 +126,9 @@ use csm_runtime, only: shock_efficiency_mode
   real(8) :: E_cooling_tail_cgs = 0d0    ! trapped shocked-ejecta/shell reservoir [erg]
   real(8) :: t_cooling_tail0_cgs = 0d0   ! leakage time at shock emergence [s]
   real(8) :: lum_cooling_tail_cgs = 0d0  ! substep-averaged tail leakage [erg/s]
+  real(8) :: E_surface_handoff_cgs = 0d0 ! photospheric radiation carried across handoff [erg]
+  real(8) :: t_surface_handoff_cgs = 0d0 ! surface leakage time after handoff [s]
+  real(8) :: lum_surface_handoff_cgs = 0d0 ! substep-averaged surface leakage [erg/s]
   real(8) :: tau_ahead_csm = 0d0        ! optical depth from shock to CSM edge
   logical :: breakout_active = .false.  ! true when tau_ahead <= c/v_sh
 
@@ -153,6 +156,8 @@ use csm_runtime, only: shock_efficiency_mode
   real(8) :: x_ph_cache_start = -1d0
   real(8) :: x_ph_cache_outer = -1d0
   real(8) :: x_ph_cache_scale = -1d0
+  logical :: csm_powerlaw_fast = .false.
+  real(8) :: csm_eta_pow = 0d0
   real(8), allocatable :: xi_grid(:)   ! fixed uniform ξ = (i-1)/(n-1)
   real(8), allocatable :: e_grid(:)    ! dimensionless energy density e(ξ)
   ! Frozen η_csm on the cooling ξ-grid (set at handoff, used throughout cooling)
@@ -1882,6 +1887,8 @@ end subroutine update_tau_and_luminosity
   state%x_ph_cache_start = -1d0
   state%x_ph_cache_outer = -1d0
   state%x_ph_cache_scale = -1d0
+  state%csm_powerlaw_fast = .false.
+  state%csm_eta_pow = 0d0
   state%lum_heat_cgs = 0d0
   state%lum_heat_total_cgs = 0d0
   state%lum_heat_fs_cgs = 0d0
@@ -1905,6 +1912,9 @@ end subroutine update_tau_and_luminosity
   state%E_cooling_tail_cgs = 0d0
   state%t_cooling_tail0_cgs = 0d0
   state%lum_cooling_tail_cgs = 0d0
+  state%E_surface_handoff_cgs = 0d0
+  state%t_surface_handoff_cgs = 0d0
+  state%lum_surface_handoff_cgs = 0d0
   state%tau_ahead_csm = 0d0
   state%breakout_active = .false.
   state%n_history = 0
@@ -1936,7 +1946,10 @@ end subroutine update_tau_and_luminosity
   if (op(1)%bpl_vmax > 0d0) then
    state%v_ej_max = op(1)%bpl_vmax
   elseif (op(1)%bpl_vt > 0d0) then
-   state%v_ej_max = op(1)%bpl_vt
+   ! The untruncated BPL branch has no formal finite outer edge.  The legacy
+   ! TransFit dynamics initialize the fastest ejecta at 100*v_tr, so use the
+   ! same effective v_ej,max for the Appendix-A nondimensionalization.
+   state%v_ej_max = 1d2 * op(1)%bpl_vt
   elseif (op(1)%exp_v0 > 0d0) then
    state%v_ej_max = 3d0 * op(1)%exp_v0
   elseif (associated(op(1)%v_grid)) then
@@ -1952,6 +1965,7 @@ end subroutine update_tau_and_luminosity
   t_dim = state%t_in
   state%rho_csm_in = max(query_csm_density(state%R_csm_in, t_dim, op(2)), 1d-30)
   state%rho_ej_in = max(query_ejecta_density(state%R_csm_in, t_dim, op(1)), 1d-30)
+  state%csm_powerlaw_fast = static_powerlaw_csm_slope(state, state%csm_eta_pow)
 
   ! q = rho_csm_in / rho_ej_in (paper Eq. 751)
   state%q = state%rho_csm_in / state%rho_ej_in
@@ -2046,15 +2060,23 @@ end subroutine update_tau_and_luminosity
     x_pre = state%x_sh_se
    end if
    x_pre = min(max(x_pre, 1d0), max(state%x_sh_se, 1d0))
-   r_dim = x_pre * state%R_csm_in
-   t_dim = state%zeta_se * state%t_in
-   eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+   if (state%csm_powerlaw_fast) then
+    eta = max(x_pre, 1d-300)**state%csm_eta_pow
+   else
+    r_dim = x_pre * state%R_csm_in
+    t_dim = state%zeta_se * state%t_in
+    eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+   end if
    eta = max(eta, 1d-30)
   else
    ! Interaction coordinate: x = r/R_csm_in
-   r_dim = x * state%R_csm_in
-   t_dim = state%zeta * state%t_in
-   eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+   if (state%csm_powerlaw_fast) then
+    eta = max(x, 1d-300)**state%csm_eta_pow
+   else
+    r_dim = x * state%R_csm_in
+    t_dim = state%zeta * state%t_in
+    eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+   end if
   end if
  end function compute_eta_csm
 
@@ -2115,6 +2137,149 @@ end subroutine update_tau_and_luminosity
 ! Interaction: x = r/R_csm_in, integrate τ from x_sh to x_csm_out
 ! Cooling: x = r/R_in(t), integrate τ from x_min to x_csm_out_cool
 ! ------------------------------------------------------------------
+ logical function static_powerlaw_csm_slope(state, eta_pow) result(ok)
+  type(dimless_state_type), intent(in) :: state
+  real(8), intent(out) :: eta_pow
+
+  integer :: n, im
+  real(8) :: r1, r2, rm, rho1, rho2, rhom, rho_pred
+
+  ok = .false.
+  eta_pow = 0d0
+  if (.not. associated(op(2)%r_grid_static)) return
+  if (.not. associated(op(2)%rho_static)) return
+  n = size(op(2)%r_grid_static)
+  if (n < 3) return
+
+  r1 = op(2)%r_grid_static(1)
+  r2 = op(2)%r_grid_static(n)
+  rho1 = op(2)%rho_static(1)
+  rho2 = op(2)%rho_static(n)
+  if (r2 <= r1 .or. r1 <= 0d0 .or. rho1 <= 0d0 .or. rho2 <= 0d0) return
+
+  eta_pow = log(rho2 / rho1) / log(r2 / r1)
+
+  ! Guard the analytic path so arbitrary tabulated CSM profiles still use the
+  ! general quadrature/inversion code.
+  im = max(2, min(n - 1, n / 2))
+  rm = op(2)%r_grid_static(im)
+  rhom = op(2)%rho_static(im)
+  if (rm <= 0d0 .or. rhom <= 0d0) return
+  rho_pred = rho1 * (rm / r1)**eta_pow
+  if (abs(log(max(rhom, 1d-300) / max(rho_pred, 1d-300))) > 1d-3) return
+
+  ok = .true.
+ end function static_powerlaw_csm_slope
+
+ subroutine analytic_powerlaw_tau_from_x(x_from, state, tau_out, ok)
+  real(8), intent(in) :: x_from
+  type(dimless_state_type), intent(in) :: state
+  real(8), intent(out) :: tau_out
+  logical, intent(out) :: ok
+
+  real(8) :: eta_pow, x_end, length_scale, p, integ
+
+  tau_out = 0d0
+  if (state%csm_powerlaw_fast) then
+   ok = .true.
+   eta_pow = state%csm_eta_pow
+  else
+   ok = static_powerlaw_csm_slope(state, eta_pow)
+  end if
+  if (.not. ok) return
+
+  if (state%in_cooling_phase) then
+   x_end = max(state%x_out_cool, x_from)
+   length_scale = state%R0 / state%R_in_R0**2
+  else
+   x_end = max(state%x_csm_out, x_from)
+   length_scale = state%R_csm_in
+  end if
+  if (x_end <= x_from + 1d-12) then
+   tau_out = 0d0
+   return
+  end if
+
+  p = eta_pow + 1d0
+  if (abs(p) < 1d-12) then
+   integ = log(max(x_end, 1d-300) / max(x_from, 1d-300))
+  else
+   integ = (x_end**p - x_from**p) / p
+  end if
+  tau_out = max(state%kappa * state%rho_csm_in * length_scale * integ, 0d0)
+ end subroutine analytic_powerlaw_tau_from_x
+
+ subroutine analytic_powerlaw_photosphere_x(x_start, state, found)
+  real(8), intent(in) :: x_start
+  type(dimless_state_type), intent(inout) :: state
+  logical, intent(out) :: found
+
+  real(8) :: eta_pow, x_inner, x_outer, length_scale, tau_cum, tau_target
+  real(8) :: p, rhs, x_ph_analytic
+  real(8), parameter :: tau_ph = 2d0 / 3d0
+
+  if (state%csm_powerlaw_fast) then
+   found = .true.
+   eta_pow = state%csm_eta_pow
+  else
+   found = static_powerlaw_csm_slope(state, eta_pow)
+  end if
+  if (.not. found) return
+
+  if (state%in_cooling_phase) then
+   x_inner = max(state%x_min_cool, 1d-12)
+   x_outer = max(state%x_out_cool, x_inner)
+   length_scale = state%R0 / state%R_in_R0**2
+  else
+   x_inner = max(x_start, 1d0)
+   x_outer = max(state%x_csm_out, x_inner)
+   length_scale = state%R_csm_in
+  end if
+
+  if (x_outer <= x_inner + 1d-12) then
+   state%x_ph = x_inner
+   return
+  end if
+
+  call analytic_powerlaw_tau_from_x(x_inner, state, tau_cum, found)
+  if (.not. found) return
+  if (tau_cum <= tau_ph) then
+   if (.not. state%in_cooling_phase) then
+    ! Once the remaining shock-to-edge layer is optically thinner than 2/3,
+    ! no tau=2/3 surface exists ahead of the shock.  The emitting surface is
+    ! then shock-adjacent/free-streaming; jumping the transport boundary to
+    ! x_outer artificially re-expands the diffusion column and creates a notch
+    ! just before shock emergence.
+    if (state%x_ph_cache_valid .and. state%x_ph > x_inner) then
+     state%x_ph = min(max(state%x_ph, x_inner + max(1d-3 * (x_outer - x_inner), 1d-6)), x_outer)
+    else
+     state%x_ph = min(x_inner + max(1d-3 * (x_outer - x_inner), 1d-6), x_outer)
+    end if
+   else
+    state%x_ph = x_outer
+   end if
+  else
+   tau_target = tau_ph / max(state%kappa * state%rho_csm_in * length_scale, 1d-300)
+   p = eta_pow + 1d0
+   if (abs(p) < 1d-12) then
+    x_ph_analytic = x_outer * exp(-tau_target)
+   else
+    rhs = x_outer**p - p * tau_target
+    if (rhs <= 0d0 .and. p > 0d0) then
+     x_ph_analytic = x_inner
+    else
+     x_ph_analytic = max(rhs, 1d-300)**(1d0 / p)
+    end if
+   end if
+   state%x_ph = min(max(x_ph_analytic, x_inner), x_outer)
+  end if
+
+  state%x_ph_cache_valid = .true.
+  state%x_ph_cache_start = x_inner
+  state%x_ph_cache_outer = x_outer
+  state%x_ph_cache_scale = length_scale
+ end subroutine analytic_powerlaw_photosphere_x
+
  subroutine estimate_photosphere_x(x_start, state)
   real(8), intent(in) :: x_start
   type(dimless_state_type), intent(inout) :: state
@@ -2123,6 +2288,7 @@ end subroutine update_tau_and_luminosity
   real(8) :: x_lo, x_hi, tau_cum, x_mid, tau_mid, tau_guess
   real(8) :: x_inner, x_outer, length_scale
   real(8) :: rel_start, rel_outer, rel_scale, x_guess
+  logical :: analytic_found
   real(8), parameter :: tau_ph = 2d0 / 3d0
 
   ! Determine integration bounds and length scale
@@ -2150,6 +2316,9 @@ end subroutine update_tau_and_luminosity
    x_outer = max(state%x_csm_out, x_inner)
    length_scale = state%R_csm_in
   end if
+
+  call analytic_powerlaw_photosphere_x(x_start, state, analytic_found)
+  if (analytic_found) return
 
   if (x_outer <= x_inner + 1d-12) then
    state%x_ph = x_inner
@@ -2183,10 +2352,19 @@ end subroutine update_tau_and_luminosity
   call integrate_tau_from_x(x_inner, state, tau_cum)
 
   if (tau_cum <= tau_ph) then
-   ! Optically thin over the active transport layer: no tau=2/3 surface lies
-   ! between the shock/inner support and the outer CSM edge, so keep the
-   ! emitting boundary at the outer support of the diffusion domain.
-   state%x_ph = x_outer
+   ! Optically thin over the active interaction layer: no tau=2/3 surface lies
+   ! between the shock and the outer CSM edge.  Keep the boundary adjacent to
+   ! the shock/free-streaming surface instead of jumping to x_outer, which
+   ! would discontinuously create a new diffusion column.
+   if (.not. state%in_cooling_phase) then
+    if (state%x_ph_cache_valid .and. state%x_ph > x_inner) then
+     state%x_ph = min(max(state%x_ph, x_inner + max(1d-3 * (x_outer - x_inner), 1d-6)), x_outer)
+    else
+     state%x_ph = min(x_inner + max(1d-3 * (x_outer - x_inner), 1d-6), x_outer)
+    end if
+   else
+    state%x_ph = x_outer
+   end if
    state%x_ph_cache_valid = .true.
    state%x_ph_cache_start = x_inner
    state%x_ph_cache_outer = x_outer
@@ -2230,9 +2408,13 @@ end subroutine update_tau_and_luminosity
   type(dimless_state_type), intent(in) :: state
   real(8), intent(out) :: tau_out
 
-  integer, parameter :: n_int = 32
+ integer, parameter :: n_int = 32
   integer :: i
   real(8) :: x_end, dx, x_mid, eta_val, length_scale
+  logical :: analytic_ok
+
+  call analytic_powerlaw_tau_from_x(x_from, state, tau_out, analytic_ok)
+  if (analytic_ok) return
 
   if (state%in_cooling_phase) then
    ! Cooling phase uses the frozen η_csm profile (set at handoff) and the
@@ -2449,6 +2631,29 @@ subroutine advance_cooling_tail_reservoir(state, dt_cgs)
  state%E_cooling_tail_cgs = max(e_new, 0d0)
  state%lum_cooling_tail_cgs = max(emitted / dt_cgs, 0d0)
 end subroutine advance_cooling_tail_reservoir
+
+subroutine advance_surface_handoff_reservoir(state, dt_cgs)
+ type(dimless_state_type), intent(inout) :: state
+ real(8), intent(in) :: dt_cgs
+
+ real(8) :: e_old, decay, emitted, t_emit
+
+ state%lum_surface_handoff_cgs = 0d0
+ if (dt_cgs <= 0d0) return
+ if (.not. state%in_cooling_phase) return
+
+ e_old = max(state%E_surface_handoff_cgs, 0d0)
+ if (e_old <= 0d0) then
+  state%E_surface_handoff_cgs = 0d0
+  return
+ end if
+
+ t_emit = max(state%t_surface_handoff_cgs, 1d-30)
+ decay = exp(-min(dt_cgs / t_emit, 80d0))
+ emitted = e_old * (1d0 - decay)
+ state%E_surface_handoff_cgs = max(e_old * decay, 0d0)
+ state%lum_surface_handoff_cgs = max(emitted / dt_cgs, 0d0)
+end subroutine advance_surface_handoff_reservoir
 
 subroutine prepare_interaction_heating(state, dt_cgs)
  type(dimless_state_type), intent(inout) :: state
@@ -3216,7 +3421,7 @@ subroutine transition_to_cooling(state)
   integer :: i, n
   real(8) :: x_sh_old, x_ph_old, dxi, Delta_x_old
   real(8) :: E_before, E_after, E_after_inner, E_store_cgs, E_budget
-  real(8) :: E_residual_cgs
+  real(8) :: E_residual_cgs, E_surface_cgs, L_surface_pre_cgs, t_surface_cgs, surface_weight
   real(8) :: dx, frac_interp, x_split
   real(8) :: x_l, x_r, x_cap
   real(8) :: profile_scale, profile_norm, density_norm, surface_norm
@@ -3235,6 +3440,7 @@ subroutine transition_to_cooling(state)
   x_sh_old = min(state%x_sh, state%x_csm_out)
   state%x_sh = x_sh_old
   x_ph_old = state%x_ph
+  L_surface_pre_cgs = max(state%lum_obs_cgs, 0d0)
   n = state%n_zones
   dxi = 1d0 / dble(n - 1)
 
@@ -3314,6 +3520,24 @@ subroutine transition_to_cooling(state)
   ! so it must be folded into e_int(x), not subtracted and discarded.  After the
   ! handoff the paper cooling PDE carries the whole passive reservoir.
   E_residual_cgs = max(state%E_injected_cum - state%E_radiated_cum, 0d0)
+  ! The interaction solve has a photospheric skin already carrying the
+  ! pre-emergence luminosity.  If it is folded entirely into the passive
+  ! cooling grid, the emitting boundary is rebuilt from a different coordinate
+  ! system and extended-CSM curves acquire a numerical dip at t_se.  Reserve a
+  ! light-crossing/diffusion-skin amount of that surface radiation and emit it
+  ! exponentially after handoff.  This is not post-emergence heating: it is
+  ! radiation produced before shock emergence and still in the emitting skin.
+  surface_weight = min(max((state%x_out_cool - 15d0) / 35d0, 0d0), 1d0)
+  t_surface_cgs = max(state%x_ph * state%R0 / clight, 0.02d0 * 86400d0)
+  if (surface_weight > 0d0) then
+   t_surface_cgs = max(t_surface_cgs, surface_weight * 0.12d0 * state%zeta_se * state%t_in)
+  end if
+  E_surface_cgs = surface_weight * min(max(L_surface_pre_cgs, 0d0) * t_surface_cgs, &
+                                       (0.05d0 + 0.30d0 * surface_weight) * E_residual_cgs)
+  E_residual_cgs = max(E_residual_cgs - E_surface_cgs, 0d0)
+  state%E_surface_handoff_cgs = max(E_surface_cgs, 0d0)
+  state%t_surface_handoff_cgs = t_surface_cgs
+  state%lum_surface_handoff_cgs = 0d0
   state%E_breakout_cgs = 0d0
   state%lum_breakout_cgs = 0d0
   state%lum_breakout_avg_cgs = 0d0
@@ -3337,7 +3561,7 @@ subroutine transition_to_cooling(state)
   ! retaining a compact-like trapped ejecta shoulder.
   pdv_retention_power = 2d0 + 1.5d0 * min(s_tail_eff, 2d0)
   tail_shape_retention = exp(-0.8d0 * s_tail_eff)
-  tail_fraction = min(1d0, (10d0 / max(state%x_out_cool, 1d0))**1.2d0) * tail_shape_retention
+  tail_fraction = min(1d0, 10d0 / max(state%x_out_cool, 1d0)) * tail_shape_retention
   tail_energy_cgs = min(max(state%E_injected_rs_cum, 0d0) * tail_fraction, &
                         0.6d0 * E_residual_cgs)
   E_store_cgs = max(E_residual_cgs - tail_energy_cgs, 0d0)
@@ -3518,6 +3742,8 @@ subroutine transition_to_cooling(state)
      ' Ers=', state%E_injected_rs_cum, ' Esurf=', surface_budget, ' Edens=', density_budget
    write(*,'(A,ES12.4,A,ES12.4)') '  Etail=', state%E_cooling_tail_cgs, &
      ' ttail(d)=', state%t_cooling_tail0_cgs/86400d0
+   write(*,'(A,ES12.4,A,ES12.4)') '  Esurfhand=', state%E_surface_handoff_cgs, &
+     ' tsurfhand(d)=', state%t_surface_handoff_cgs/86400d0
    write(*,'(A,ES12.4)') '  tbo=', state%t_breakout_cgs
    write(*,'(A,ES12.4,A,ES12.4)') '  Einner_after=', E_after_inner, ' f_inner=', E_after_inner / max(E_after, 1d-30)
    write(*,'(A,ES12.4,A,ES12.4)') '  e_grid(1)=', state%e_grid(1), ' e_grid(n)=', state%e_grid(n)
@@ -3570,7 +3796,8 @@ subroutine transition_to_cooling(state)
    L_factor = 2d0 * pi * clight * state%u0 * state%x_ph**2 * state%R0**2
    state%lum_obs_cgs = L_factor * e_N / max(state%R_in_R0, 1d-30)**2 + &
                        max(state%lum_breakout_cgs, 0d0) + &
-                       max(state%lum_cooling_tail_cgs, 0d0)
+                       max(state%lum_cooling_tail_cgs, 0d0) + &
+                       max(state%lum_surface_handoff_cgs, 0d0)
   end if
   state%lum_obs_cgs = max(state%lum_obs_cgs, 0d0)
 
@@ -3653,8 +3880,18 @@ subroutine transition_to_cooling(state)
    if (advection_cfl < huge(1d0)) dzeta_step = min(dzeta_step, advection_cfl)
    dzeta_step = max(dzeta_step, 1d-10)
 
-   ! Cap at 0.2 day in zeta units
-   dzeta_step = min(dzeta_step, 0.2d0 * 86400d0 / state%t_in)
+   ! Accuracy cap in physical time.  Early compact-CSM peaks need fine
+   ! stepping; later interaction/cooling evolution is much smoother and does
+   ! not need a fixed 0.2 day ceiling on every internal solve.
+   if (state%zeta * state%t_in < 10d0 * 86400d0) then
+    dzeta_step = min(dzeta_step, 0.10d0 * 86400d0 / state%t_in)
+   else if (state%zeta * state%t_in < 30d0 * 86400d0) then
+    dzeta_step = min(dzeta_step, 0.25d0 * 86400d0 / state%t_in)
+   else if (state%zeta * state%t_in < 120d0 * 86400d0) then
+    dzeta_step = min(dzeta_step, 0.50d0 * 86400d0 / state%t_in)
+   else
+    dzeta_step = min(dzeta_step, 1.00d0 * 86400d0 / state%t_in)
+   end if
 
    ! Post-emergence refinement
    if (state%in_cooling_phase .and. state%zeta_se > 0d0) then
@@ -3777,6 +4014,7 @@ subroutine transition_to_cooling(state)
       state%x_sh_dot = 0d0
       call advance_breakout_reservoir(state, (1d0 - frac) * dzeta_step * state%t_in, 0d0, &
                                       max(state%t_breakout_cgs, state%x_ph * state%R0 / clight, 1d-30))
+      call advance_surface_handoff_reservoir(state, (1d0 - frac) * dzeta_step * state%t_in)
       call advance_cooling_tail_reservoir(state, (1d0 - frac) * dzeta_step * state%t_in)
       x_ph_old = state%x_ph
       call estimate_photosphere_x(state%x_min_cool, state)
@@ -3796,6 +4034,7 @@ subroutine transition_to_cooling(state)
      call transition_to_cooling(state)
      call advance_breakout_reservoir(state, dzeta_step * state%t_in, 0d0, &
                                      max(state%t_breakout_cgs, state%x_ph * state%R0 / clight, 1d-30))
+     call advance_surface_handoff_reservoir(state, dzeta_step * state%t_in)
      call advance_cooling_tail_reservoir(state, dzeta_step * state%t_in)
      x_ph_old = state%x_ph
      call estimate_photosphere_x(state%x_min_cool, state)
@@ -3841,6 +4080,7 @@ subroutine transition_to_cooling(state)
     ! Cooling phase: R_in/R0 already updated in Step 1
     call advance_breakout_reservoir(state, dzeta_step * state%t_in, 0d0, &
                                     max(state%t_breakout_cgs, state%x_ph * state%R0 / clight, 1d-30))
+    call advance_surface_handoff_reservoir(state, dzeta_step * state%t_in)
     call advance_cooling_tail_reservoir(state, dzeta_step * state%t_in)
     x_ph_old = state%x_ph
     call estimate_photosphere_x(state%x_min_cool, state)
