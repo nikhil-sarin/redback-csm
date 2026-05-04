@@ -25,8 +25,9 @@ from redback.utils import calc_kcorrected_properties as _calc_kcorrected_propert
 from redback.utils import lambda_to_nu as _lambda_to_nu
 import redback.sed as _sed
 import redback.photosphere as _photosphere
+import redback.interaction_processes as _interaction_processes
 from redback.transient_models.supernova_models import (
-    arnett_bolometric as _arnett_bolometric,
+    _nickelcobalt_engine as _nickelcobalt_engine,
 )
 
 from redback_csm.core import _call_csm, _call_csm_radio
@@ -34,6 +35,7 @@ from redback_csm.core import _call_csm, _call_csm_radio
 DAY = 86400.0    # seconds per day
 _AU = 1.496e13   # cm per AU
 _SOLAR_MASS = 1.989e33
+_TRAPEZOID = getattr(_np, "trapezoid", _np.trapz)
 
 __all__ = [
     "wind_exponential_bolometric",
@@ -179,21 +181,186 @@ def _csm_rph_temp_impl(time, csm_model, **kwargs):
     return lbol, rph, temp
 
 
+def _nickel_ejecta_mass_energy(kwargs):
+    """Return the SN ejecta mass/energy used for nickel production."""
+    if "mej_sn" in kwargs and "esn" in kwargs:
+        return float(kwargs["mej_sn"]), float(kwargs["esn"])
+    if "mexp_out" in kwargs and "eexp_out" in kwargs:
+        return float(kwargs["mexp_out"]), float(kwargs["eexp_out"])
+    if "mexp" in kwargs and "eexp" in kwargs:
+        return float(kwargs["mexp"]), float(kwargs["eexp"])
+    raise ValueError("Nickel CSM models require ejecta mass/energy parameters")
+
+
+def _finite_wind_mass_from_grid(tgrid, mdot):
+    """Integrate a finite mass-loss history in Msun/yr over years."""
+    tgrid = _np.asarray(tgrid, dtype=float)
+    mdot = _np.asarray(mdot, dtype=float)
+    if tgrid.size < 2:
+        return 0.0
+    order = _np.argsort(tgrid)
+    return max(float(_TRAPEZOID(_np.maximum(mdot[order], 0.0), tgrid[order])), 0.0)
+
+
+def _generic_density_csm_mass(kwargs, n_shells):
+    """Estimate CSM mass for generic density-profile constructors."""
+    r_inner = float(kwargs.get("r_inner", 1e10))
+    r_outer = float(kwargs.get("r_outer", 1e20))
+    if not (r_outer > r_inner > 0.0):
+        return 0.0
+
+    r_grid = _np.logspace(_np.log10(r_inner), _np.log10(r_outer), 1000)
+    base_density = float(kwargs.get("base_density", 0.0))
+    base_index = float(kwargs.get("base_index", -2.0))
+    rho = base_density * (r_grid / 1e14) ** base_index
+
+    for shell_idx in range(1, n_shells + 1):
+        density = float(kwargs.get(f"shell{shell_idx}_density", 0.0))
+        if density <= 0.0:
+            continue
+        radius = float(kwargs.get(f"shell{shell_idx}_radius", 0.0))
+        width = float(kwargs.get(f"shell{shell_idx}_width", 0.0))
+        if radius <= 0.0 or width <= 0.0:
+            continue
+        sigma = width / 2.355
+        rho = rho + density * _np.exp(-0.5 * ((r_grid - radius) / sigma) ** 2)
+
+    mass_cgs = _TRAPEZOID(4.0 * _np.pi * r_grid**2 * _np.maximum(rho, 0.0), r_grid)
+    return max(float(mass_cgs / _SOLAR_MASS), 0.0)
+
+
+def _csm_mass_for_nickel_diffusion(csm_model, kwargs):
+    """Return CSM mass to add to the nickel diffusion mass, in Msun."""
+    if "mej_arnett" in kwargs:
+        mej_ejecta, _ = _nickel_ejecta_mass_energy(kwargs)
+        return max(float(kwargs["mej_arnett"]) - mej_ejecta, 0.0)
+
+    if "m_csm" in kwargs:
+        return max(float(kwargs["m_csm"]), 0.0)
+    if "csm_mass" in kwargs:
+        return max(float(kwargs["csm_mass"]), 0.0)
+
+    if "mexp_out" in kwargs and "mexp" in kwargs:
+        return max(float(kwargs["mexp"]), 0.0)
+
+    if csm_model.startswith("boxwind_"):
+        return max(float(kwargs.get("mdot_1", 0.0)), 0.0) * max(
+            float(kwargs.get("t2", 0.0)) - float(kwargs.get("t1", 0.0)), 0.0
+        )
+
+    if csm_model.startswith("gausswind_"):
+        t_peak = float(kwargs.get("t_peak", 0.0))
+        t_width = float(kwargs.get("t_width", 0.0))
+        if t_width <= 0.0:
+            return 0.0
+        tgrid = _np.linspace(t_peak - 4.0 * t_width, t_peak + 4.0 * t_width, 200)
+        profile = _np.exp(-0.5 * ((tgrid - t_peak) / t_width) ** 2)
+        mdot = float(kwargs.get("mdot_baseline", 0.0)) + (
+            float(kwargs.get("mdot_peak", 0.0)) - float(kwargs.get("mdot_baseline", 0.0))
+        ) * profile
+        return _finite_wind_mass_from_grid(tgrid, mdot)
+
+    if "triple_powerlaw_wind" in csm_model:
+        t_break1 = float(kwargs.get("t_break1", 0.0))
+        t_break2 = float(kwargs.get("t_break2", 0.0))
+        if t_break1 <= 0.0 or t_break2 <= t_break1:
+            return 0.0
+        n_points = int(kwargs.get("n_points", 50))
+        tgrid = _np.logspace(_np.log10(0.1), _np.log10(max(t_break2 * 2.0, 10.0)), n_points)
+        mdot_0 = float(kwargs.get("mdot_0", 0.0))
+        alpha1 = float(kwargs.get("alpha1", 0.0))
+        alpha2 = float(kwargs.get("alpha2", 0.0))
+        alpha3 = float(kwargs.get("alpha3", 0.0))
+        mdot_break1 = mdot_0 * t_break1**alpha1
+        mdot_break2 = mdot_break1 * (t_break2 / t_break1) ** alpha2
+        if csm_model.startswith("smooth_triple_powerlaw_wind_"):
+            smooth_factor = float(kwargs.get("smooth_factor", 0.2))
+            smooth_width1 = smooth_factor * _np.log10(t_break1) if t_break1 > 1.0 else smooth_factor
+            smooth_width2 = smooth_factor * _np.log10(t_break2) if t_break2 > 1.0 else smooth_factor
+            transition1 = 0.5 * (1.0 + _np.tanh((_np.log10(tgrid) - _np.log10(t_break1)) / smooth_width1))
+            transition2 = 0.5 * (1.0 + _np.tanh((_np.log10(tgrid) - _np.log10(t_break2)) / smooth_width2))
+            mdot = (
+                (1.0 - transition1) * mdot_0 * tgrid**alpha1
+                + transition1 * (1.0 - transition2) * mdot_break1 * (tgrid / t_break1) ** alpha2
+                + transition2 * mdot_break2 * (tgrid / t_break2) ** alpha3
+            )
+        else:
+            mdot = _np.zeros_like(tgrid)
+            mask1 = tgrid < t_break1
+            mask2 = (tgrid >= t_break1) & (tgrid < t_break2)
+            mask3 = tgrid >= t_break2
+            mdot[mask1] = mdot_0 * tgrid[mask1] ** alpha1
+            mdot[mask2] = mdot_break1 * (tgrid[mask2] / t_break1) ** alpha2
+            mdot[mask3] = mdot_break2 * (tgrid[mask3] / t_break2) ** alpha3
+        return _finite_wind_mass_from_grid(tgrid, mdot)
+
+    if csm_model.startswith("generic_8shell_csm_"):
+        return _generic_density_csm_mass(kwargs, 8)
+    if csm_model.startswith("generic_4shell_csm_"):
+        return _generic_density_csm_mass(kwargs, 4)
+    if csm_model.startswith("generic_csm_"):
+        return _generic_density_csm_mass(kwargs, 3)
+
+    return 0.0
+
+
+def _clean_nickel_diffusion_kwargs(kwargs):
+    """Strip CSM and nickel bookkeeping keys before calling redback Diffusion."""
+    cleaned = dict(kwargs)
+    for key in (
+        "f_nickel",
+        "mej",
+        "vej",
+        "mexp",
+        "eexp",
+        "mexp_out",
+        "eexp_out",
+        "mej_sn",
+        "esn",
+        "mej_arnett",
+    ):
+        cleaned.pop(key, None)
+    return cleaned
+
+
 def _csm_nickel_bolometric_impl(time, csm_model, **kwargs):
     """Combined CSM shock + radioactive nickel bolometric luminosity."""
-    # mej and vej for Arnett diffusion are derived from the CSM explosion parameters.
-    # Supports two naming conventions:
-    #   wind models:        mexp / eexp
-    #   generic CSM models: mej_sn / esn
     import redback.constants as _rc
-    arnett_kwargs = dict(kwargs)
-    mexp = kwargs.get("mexp", kwargs.get("mej_sn"))
-    eexp = kwargs.get("eexp", kwargs.get("esn"))
-    arnett_kwargs["mej"] = mexp
-    arnett_kwargs["vej"] = _np.sqrt(2.0 * eexp * 1e51 / (mexp * _rc.solar_mass)) / 1e5
-    return _csm_bolometric_impl(time, csm_model, **kwargs) + _arnett_bolometric(
-        time=time, **arnett_kwargs
-    )
+
+    time = _np.asarray(time, dtype=float)
+    mej_ejecta, eexp = _nickel_ejecta_mass_energy(kwargs)
+    mej_arnett = float(kwargs.get(
+        "mej_arnett",
+        mej_ejecta + _csm_mass_for_nickel_diffusion(csm_model, kwargs),
+    ))
+    vej = float(kwargs.get(
+        "vej",
+        _np.sqrt(2.0 * eexp * 1e51 / (mej_ejecta * _rc.solar_mass)) / 1e5,
+    ))
+
+    interaction_process = kwargs.get("interaction_process", _interaction_processes.Diffusion)
+    if interaction_process is None:
+        nickel_lbol = _nickelcobalt_engine(
+            time=time, f_nickel=kwargs["f_nickel"], mej=mej_ejecta
+        )
+    else:
+        dense_resolution = int(kwargs.get("dense_resolution", 1000))
+        dense_times = _np.linspace(0.0, float(time[-1]) + 100.0, dense_resolution)
+        dense_lbol = _nickelcobalt_engine(
+            time=dense_times, f_nickel=kwargs["f_nickel"], mej=mej_ejecta
+        )
+        diffusion_kwargs = _clean_nickel_diffusion_kwargs(kwargs)
+        diffusion_kwargs.pop("interaction_process", None)
+        nickel_lbol = interaction_process(
+            time=time,
+            dense_times=dense_times,
+            luminosity=dense_lbol,
+            mej=mej_arnett,
+            vej=vej,
+            **diffusion_kwargs,
+        ).new_luminosity
+
+    return _csm_bolometric_impl(time, csm_model, **kwargs) + nickel_lbol
 
 
 def _multiband_csm_flux_density(time, redshift, csm_model, csm_kwargs, dl):

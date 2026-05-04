@@ -51,8 +51,11 @@ The multiband functions accept an `output_format` keyword:
 
 The `_nickel` variants add `f_nickel` (nickel mass fraction) and `kappa_gamma`
 (gamma-ray opacity) to model radioactive ⁵⁶Ni/⁵⁶Co heating alongside CSM shock
-emission. The ejecta mass and velocity for nickel diffusion are derived internally
-from `mexp` and `eexp`, so no additional mass parameter is needed.
+emission. The nickel mass is always computed from the SN ejecta mass
+(`M_Ni = f_nickel * M_ej`), while the Arnett diffusion mass includes the
+finite CSM shell mass when that mass is defined by the CSM constructor. There
+is no separate CSM-mass parameter for the nickel component; for unusual cases
+you can override only the total Arnett diffusion mass with `mej_arnett`.
 
 ### Shared Runtime Options
 

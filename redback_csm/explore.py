@@ -30,7 +30,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple
 
-from redback_csm.core import _get_csm, DAY, foe, solar_mass
+from redback_csm.core import _get_csm, _configure_runtime_from_kwargs, DAY, foe, solar_mass
 
 __all__ = ["csm_lightcurve_from_density"]
 
@@ -75,7 +75,7 @@ def _run_fortran(
 
     time = csm.lc_mod.tarray.copy()
     lbol_shock = csm.lc_mod.larray.copy()
-    rph = csm.lc_mod.rarray.copy()
+    rph = csm.lc_mod.rpharray.copy()
     temperature = csm.lc_mod.temparray.copy()
     lbol_diffuse = csm.lc_mod.ldiff.copy() if kappa is not None else None
     lbol = lbol_diffuse if kappa is not None else lbol_shock
@@ -136,6 +136,9 @@ def csm_lightcurve_from_density(
     delta=1.0,
     nn=12.0,
     kappa=None,
+    mode="simple",
+    n_rad_zones=40,
+    efficiency_mode=0,
     ax=None,
     label=None,
     color=None,
@@ -185,6 +188,14 @@ def csm_lightcurve_from_density(
         (and plotted) luminosity is the diffuse (observed) luminosity; otherwise
         it is the raw shock luminosity.  Common values: 0.34 (electron
         scattering), 0.1 (lower bound).
+    mode : {'simple', 'transport'}, optional
+        Runtime mode. ``'simple'`` uses the thin-shell luminosity/post-processed
+        diffusion path. ``'transport'`` uses run mode 3 with the sampled CSM
+        density grid. Default ``'simple'``.
+    n_rad_zones : int, optional
+        Number of radiation zones for ``mode='transport'``. Default 40.
+    efficiency_mode : int, optional
+        Fortran shock-efficiency mode. Default 0.
     ax : matplotlib.axes.Axes or None, optional
         Axes to plot on.  If None, a new figure is created.
     label : str or None, optional
@@ -244,6 +255,18 @@ def csm_lightcurve_from_density(
     t_ref_sec = t_ref * DAY
     mexp_g = mexp * solar_mass
     eexp_erg = eexp * foe
+
+    runtime_kwargs = dict(
+        mode=mode,
+        kappa=kappa,
+        n_rad_zones=n_rad_zones,
+        efficiency_mode=efficiency_mode,
+        delta=delta,
+        nn=nn,
+        mexp=mexp,
+        eexp=eexp,
+    )
+    mode, kappa = _configure_runtime_from_kwargs(runtime_kwargs, default_n_rad_zones=n_rad_zones)
 
     v_grid, density_interp = _radius_density_to_vgrid(radius, density, t_ref_sec)
 

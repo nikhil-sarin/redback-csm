@@ -6,9 +6,9 @@ Demonstrates:
   - How the nickel tail dominates at late times
   - Varying the nickel mass fraction
 
-The nickel component uses the Arnett (1982) model via redback's implementation.
-Required extra parameters: f_nickel (mass fraction), mej (ejecta mass for
-diffusion timescale), kappa (opacity), kappa_gamma (gamma-ray opacity), vej.
+The nickel component uses the Arnett (1982) diffusion process. The nickel mass
+is f_nickel times the SN ejecta mass; finite CSM constructors add the CSM shell
+mass to the Arnett diffusion mass.
 
 Run:
     python examples/03_nickel.py
@@ -31,7 +31,6 @@ csm_kw = dict(
 nickel_kw = dict(
     kappa=0.34,
     kappa_gamma=10.0,
-    vej=8000.0,   # km/s — sets diffusion timescale
 )
 
 fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
@@ -47,7 +46,7 @@ ax.plot(time, lbol_csm, "k--", lw=2, label="CSM only")
 for f_ni, color in [(0.01, "steelblue"), (0.05, "darkorange"), (0.15, "crimson")]:
     lbol = wind_bpl_nickel_bolometric(
         time=time,
-        f_nickel=f_ni, mej=5.0,
+        f_nickel=f_ni,
         **csm_kw, **nickel_kw,
     )
     ax.plot(time, lbol, color=color,
@@ -70,7 +69,7 @@ ax = axes[1]
 f_ni = 0.05
 lbol_csm  = wind_bpl_bolometric(time=time, kappa=0.34, **csm_kw)
 lbol_both = wind_bpl_nickel_bolometric(
-    time=time, f_nickel=f_ni, mej=5.0,
+    time=time, f_nickel=f_ni,
     **csm_kw, **nickel_kw,
 )
 lbol_ni = np.clip(lbol_both - lbol_csm, 1e38, None)  # nickel contribution
