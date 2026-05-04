@@ -13,7 +13,7 @@ class TransportParams(NamedTuple):
 
 def solve_full_model(params: TransportParams):
     """
-    Coordinate the full TransFit-CSM model:
+    Coordinate the original experimental CSM transport model:
     Dynamics -> Interaction Diffusion -> Shock Cooling
     """
     # 1. Characteristic Scales

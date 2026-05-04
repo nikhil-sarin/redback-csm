@@ -77,6 +77,36 @@ Current output convention:
 - `lbol_diffuse` is the diffusion / transport luminosity when available
 - `rph` is the historical output field name, but currently stores the shell radius by convention
 
+### JAX static CSM prototype
+
+The `jax-attempt` branch includes a JAX-native prototype for fast inference with
+static finite power-law CSM shells and BPL ejecta:
+
+```python
+from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve
+
+lbol = get_static_powerlaw_csm_bpl_lightcurve(
+    time=time_days,
+    eta=-2.0,
+    r_inner=5e2 * 6.957e10,
+    r_outer=5e3 * 6.957e10,
+    delta_sn=1.0,
+    nn_sn=10.0,
+    mej_sn=5.0,
+    esn=1.0,
+    eff=1.0,
+    m_csm=1.0,
+    mode="simple",
+)
+```
+
+`mode="simple"` shares the current static-shell mass normalization and finite
+BPL ejecta cutoff convention with the Fortran backend. `mode="transport"` uses
+the same dimensionless diffusion setup as the Fortran static power-law/BPL
+transport path, including breakout-reservoir leakage and homologous
+post-emergence cooling. It is still scoped to static finite power-law CSMs,
+not every arbitrary CSM constructor supported by the Fortran backend.
+
 ### Radio synchrotron model variants
 
 Each of the 24 CSM scenarios also has a `{name}_radio` function that computes
