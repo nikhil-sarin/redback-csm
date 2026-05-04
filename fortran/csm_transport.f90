@@ -2440,7 +2440,7 @@ subroutine advance_cooling_tail_reservoir(state, dt_cgs)
  ! expansion time.
  t_exp = max(state%R0 * r_ratio / max(state%v_se, 1d-30), 1d-30)
  leak_rate = 1d0 / t_leak
- ad_rate = 0.25d0 / t_exp
+ ad_rate = 0.15d0 / t_exp
  total_rate = leak_rate + ad_rate
  decay = exp(-min(total_rate * dt_cgs, 80d0))
  emitted = e_old * (1d0 - decay) * leak_rate / max(total_rate, 1d-30)
@@ -3224,8 +3224,7 @@ subroutine transition_to_cooling(state)
   real(8) :: surface_budget, density_budget, mixed_budget
   real(8) :: E_channel_total, E_fs_residual_cgs, E_rs_residual_cgs
   real(8) :: tail_fraction, tail_energy_cgs, shell_radius_cgs, diffusion_beta
-  real(8) :: eta_out_tail, s_tail_eff, tail_shape_retention
-  real(8), parameter :: pdv_retention_power = 3d0
+  real(8) :: eta_out_tail, s_tail_eff, tail_shape_retention, pdv_retention_power
   real(8) :: e_l, e_r
   real(8) :: r_in_base, r_out_base, r_sh_se, v_sh_se, r_dim
   real(8), allocatable :: e_old(:)
@@ -3336,7 +3335,8 @@ subroutine transition_to_cooling(state)
   ! a pre-emergence retention to that unresolved component as well as to the
   ! resolved CSM grid below.  The radial-size factor keeps extended CSM from
   ! retaining a compact-like trapped ejecta shoulder.
-  tail_shape_retention = exp(-0.35d0 * s_tail_eff)
+  pdv_retention_power = 2d0 + 1.5d0 * min(s_tail_eff, 2d0)
+  tail_shape_retention = exp(-0.8d0 * s_tail_eff)
   tail_fraction = min(1d0, (10d0 / max(state%x_out_cool, 1d0))**1.2d0) * tail_shape_retention
   tail_energy_cgs = min(max(state%E_injected_rs_cum, 0d0) * tail_fraction, &
                         0.6d0 * E_residual_cgs)
