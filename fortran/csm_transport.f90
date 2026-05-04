@@ -135,6 +135,8 @@ use csm_runtime, only: shock_efficiency_mode
   ! lum_heat_cgs as the paper's L_heat boundary condition.
   real(8) :: lum_heat_cgs = 0d0
   real(8) :: lum_heat_total_cgs = 0d0
+  real(8) :: lum_heat_fs_cgs = 0d0
+  real(8) :: lum_heat_rs_cgs = 0d0
 
   ! Diffusion grid (fixed ξ-space, ξ ∈ [0,1])
   real(8) :: x_ph = 0d0         ! photosphere position in x
@@ -169,10 +171,17 @@ use csm_runtime, only: shock_efficiency_mode
   ! Cumulative energy tracking for cooling handoff.
   real(8) :: E_injected_cum = 0d0   ! cumulative total shock heating [erg]
   real(8) :: E_radiated_cum = 0d0   ! cumulative diffusive emission [erg]
+  real(8) :: E_injected_fs_cum = 0d0 ! cumulative forward-shock heating [erg]
+  real(8) :: E_injected_rs_cum = 0d0 ! cumulative reverse-shock heating [erg]
   ! Shock-deposition history for the post-emergence cooling IC.
   integer :: n_history = 0
   real(8) :: hist_x(max_dimless_history) = 0d0
   real(8) :: hist_e(max_dimless_history) = 0d0
+  ! Explicit shocked-shell internal-energy field.  This is the e_int(x)
+  ! named by the cooling appendix: it is built as the shock sweeps CSM layers
+  ! and drained by luminosity that escapes during the interaction phase.
+  real(8), allocatable :: shell_x(:)
+  real(8), allocatable :: shell_e(:)
 end type dimless_state_type
 
  public :: dimless_state_type, dimless_comoving_transport_step, &
@@ -419,7 +428,11 @@ subroutine initialize_interaction_grid(state, r_shell, t_shell, m_shell, kappa, 
   if (.not.(state%r_outer_support > state%r_inner_support)) then
    state%r_outer_support = state%r_inner_support * (1d0 + 1d-3)
   end if
-  state%r_inner = min(max(state%r_shell_current, state%r_inner_support), state%r_outer_support * (1d0 - 1d-10))
+  ! Full-grid transport keeps the complete CSM support active during the
+  ! interaction phase. The shock is an internal heating front, not a moving
+  ! computational boundary, so the radiation field behind the shock is the
+  ! cooling initial condition at emergence.
+  state%r_inner = state%r_inner_support
   state%r_outer = state%r_outer_support
 
   allocate(state%radius(state%n_zones), state%radius_ref(state%n_zones), &
@@ -432,8 +445,8 @@ subroutine initialize_interaction_grid(state, r_shell, t_shell, m_shell, kappa, 
 
   call build_radial_grid(state%r_inner_support, state%r_outer_support, state%radius_ref)
   call fill_stationary_reference_profile(state, t_shell)
-  call build_radial_grid(state%r_inner, state%r_outer, state%radius)
-  call fill_active_profile_from_reference(state)
+  state%radius = state%radius_ref
+  state%rho = state%rho_ref
 
   state%y = 0d0
   state%e_swept = 0d0
@@ -512,50 +525,28 @@ subroutine interaction_zone_geometry_at(state, i, r_shell, r_face_l, r_face_r, v
   integer, intent(in) :: i
   real(8), intent(in) :: r_shell
   real(8), intent(out) :: r_face_l, r_face_r, vol_i
-  integer :: ihi
 
+  ! Full-grid interaction: cell geometry is fixed over the complete CSM.
+  ! r_shell is retained in the interface for compatibility with older callers.
   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-  if (state%r_inner >= min(max(r_shell, state%r_inner_support), state%r_outer_support * (1d0 - 1d-10))) then
-   ihi = 1
-  else
-   ihi = first_active_zone_at(state, r_shell)
-  end if
-  if (i == ihi) then
-    r_face_l = min(max(r_shell, r_face_l), r_face_r)
-    vol_i = 4d0 * pi * max(r_face_r**3 - r_face_l**3, 1d-30) / 3d0
-  end if
 end subroutine interaction_zone_geometry_at
 
 subroutine update_interaction_geometry(state, r_shell, t_shell, m_shell)
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: r_shell, t_shell, m_shell
-  real(8), allocatable :: old_radius(:), old_y(:)
-  real(8) :: old_inner, old_outer, new_inner, e_removed
 
   state%t_shell = t_shell
   state%r_shell_prev = state%r_shell_current
   state%r_shell_current = max(r_shell, 1d0)
-  old_inner = state%r_inner
-  old_outer = state%r_outer
-  allocate(old_radius(state%n_zones), old_y(state%n_zones))
-  old_radius = state%radius
-  old_y = state%y
 
-  new_inner = max(state%r_shell_current, state%r_inner_support)
-  if (state%r_outer_support > state%r_inner_support) then
-   new_inner = min(new_inner, state%r_outer_support * (1d0 - 1d-10))
-  end if
-  state%r_inner = new_inner
+  ! The full diffusion solve keeps a fixed CSM grid until shock emergence.
+  ! This is the key difference from the Appendix-A moving-boundary solver:
+  ! swept material stays on-grid, so no internal energy is discarded or
+  ! reconstructed at t_se.
+  state%r_inner = state%r_inner_support
   state%r_outer = state%r_outer_support
-  call build_radial_grid(state%r_inner, state%r_outer, state%radius)
-  call fill_active_profile_from_reference(state)
-
-  ! e_swept is now accumulated in solve_transport_step (lum_heat*dt per zone).
-  ! e_residual is updated via energy balance in interaction_transport_step.
-  call remap_y_conservative(old_radius, old_inner, old_outer, old_y, state%n_zones, &
-       state%radius, state%r_inner, state%r_outer, state%y, state%n_zones, e_removed)
-
-  deallocate(old_radius, old_y)
+  state%radius = state%radius_ref
+  state%rho = state%rho_ref
 end subroutine update_interaction_geometry
 
 subroutine remap_y_conservative(old_r, old_inner, old_outer, old_y, n_old, &
@@ -791,19 +782,10 @@ subroutine interaction_transport_step(state, dt, r_shell, u_shell, t_shell, m_sh
   end if
   call find_transport_photosphere(state, r_ph, lum_obs)
 
-  if (state%initialized) then
-   u_grid = 0d0
-   do i = 1, state%n_zones
-    call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
-    u_grid = u_grid + a_rad * max(state%y(i), 0d0) * vol_i
-   end do
-   e_tot_after_target = max(e_tot_before + (lum_input - max(lum_obs, 0d0)) * max(dt, 0d0), 0d0)
-   state%e_residual = max(e_tot_after_target - u_grid, 0d0)
-
-   ! e_swept is accumulated in solve_transport_step (dt*lum_heat at ihi).
-   ! No additional accumulation needed here; e_residual is updated above.
-  end if
-end subroutine interaction_transport_step
+  ! Full-grid transport keeps swept material on the grid, so there is no
+  ! unresolved behind-shock reservoir to reconstruct at emergence.
+  state%e_residual = 0d0
+ end subroutine interaction_transport_step
 
 subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_shell, t_shell, lum_target, lum_heat, u_reservoir, &
      pre_y_in, pre_radius_in, pre_r_inner_in, pre_r_outer_in)
@@ -1284,7 +1266,7 @@ subroutine photosphere_boundary_from_tau(state, istart, iph, r_ph)
   integer, intent(out) :: iph
   real(8), intent(out) :: r_ph
   integer :: i, jstart
-  real(8) :: tau_lo, tau_hi, frac, r_floor
+  real(8) :: tau_lo, tau_hi, frac, r_floor, r_cross
 
   jstart = min(max(istart, 1), state%n_zones)
   if (state%in_cooling_phase) then
@@ -1303,13 +1285,43 @@ subroutine photosphere_boundary_from_tau(state, istart, iph, r_ph)
     tau_hi = state%tau(i)
     frac = (2d0/3d0 - tau_lo) / max(tau_hi - tau_lo, 1d-30)
     frac = min(max(frac, 0d0), 1d0)
-    r_ph = state%radius(i-1) + frac * (state%radius(i) - state%radius(i-1))
-    r_ph = min(max(r_ph, state%radius(i-1)), state%radius(i))
-    r_ph = max(r_ph, r_floor)
+    r_cross = state%radius(i-1) + frac * (state%radius(i) - state%radius(i-1))
+    r_cross = min(max(r_cross, state%radius(i-1)), state%radius(i))
+    r_ph = max(r_cross, r_floor)
+    if (r_ph > r_cross * (1d0 + 1d-12)) then
+     ! If the optical-depth crossing is behind the shock/inner cooling edge,
+     ! the boundary is physically at r_floor.  Keep iph consistent with that
+     ! clamped radius; otherwise the matrix truncates before the shock-heating
+     ! cell and drops the breakout source term.
+     iph = zone_index_at_current_radius(state, r_ph, jstart)
+    end if
     return
    end if
   end do
 end subroutine photosphere_boundary_from_tau
+
+integer function zone_index_at_current_radius(state, r_target, istart) result(idx)
+  type(transport_state_type), intent(in) :: state
+  real(8), intent(in) :: r_target
+  integer, intent(in) :: istart
+
+  integer :: i, ilo
+  real(8) :: r_face_l, r_face_r, vol_i, r_loc
+
+  ilo = min(max(istart, 1), state%n_zones)
+  idx = ilo
+  if (state%n_zones <= 0) return
+
+  r_loc = min(max(r_target, state%r_inner), state%r_outer)
+  do i = ilo, state%n_zones
+   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
+   if (r_loc >= r_face_l .and. r_loc <= r_face_r) then
+    idx = i
+    return
+   end if
+  end do
+  idx = state%n_zones
+end function zone_index_at_current_radius
 
 real(8) function outer_escape_conductance(state, iph, r_ph) result(k_escape)
   type(transport_state_type), intent(in) :: state
@@ -1326,17 +1338,12 @@ real(8) function outer_escape_conductance(state, iph, r_ph) result(k_escape)
   call zone_geometry(state, iph, r_face_l, r_face_r, vol_i)
   r_face_r = min(max(r_ph, r_face_l), r_face_r)
   area_ph = 4d0 * pi * r_face_r**2
-  if (state%in_cooling_phase) then
-   ! Cooling phase outer Robin BC (paper §3.2, eq. 917-923):
-   ! The f_ob(y) factor differs from interaction by (R_in/R_0)^2/2 relative to
-   ! the interaction factor of 4. The conductance is:
-   !   stream_factor = (1/4) * (1/2) * (R_in/R_0)^2 = cooling_scale^2 / 8
-   ! where cooling_scale = R_in(t)/R_0 = 1 at emergence and grows with time.
-   stream_factor = 0.125d0 * max(state%cooling_scale, 1d0)**2
-  else
-   ! Interaction phase: Eddington closure at τ=2/3 photosphere: F = (c/4) u.
-   stream_factor = 0.25d0
-  end if
+  ! This finite-volume solver evolves physical radii, densities, and radiation
+  ! energy density directly. Expansion factors that appear in the dimensionless
+  ! Appendix-A Robin coefficient are therefore already represented by geometry,
+  ! rho ∝ R^-3, and y ∝ R^-4. The boundary conductance should remain the
+  ! physical Eddington/free-streaming closure F = c u / 4 in both phases.
+  stream_factor = 0.25d0
   k_escape = area_ph * clight * a_rad * stream_factor
 end function outer_escape_conductance
 
@@ -1349,7 +1356,6 @@ subroutine find_transport_photosphere(state, r_ph, lum_obs)
   real(8) :: r_face_l, r_face_r, vol_i, dr, rho_face, dcoef, e_n, e_nm1, flux_out
 
   ihi = 1
-  if (.not. state%in_cooling_phase) ihi = first_active_zone(state)
   call photosphere_boundary_from_tau(state, ihi, iph, r_ph)
   call zone_geometry(state, iph, r_face_l, r_face_r, vol_i)
   y_obs = max(state%y(iph), 0d0)
@@ -1366,12 +1372,7 @@ subroutine find_transport_photosphere(state, r_ph, lum_obs)
    end if
   end if
   e_n = a_rad * y_obs
-  if (state%in_cooling_phase) then
-   ! Cooling phase: same stream_factor as outer_escape_conductance
-   flux_out = 0.125d0 * max(state%cooling_scale, 1d0)**2 * clight * e_n
-  else
-   flux_out = 0.25d0 * clight * e_n
-  end if
+  flux_out = 0.25d0 * clight * e_n
   lum_obs = max(4d0 * pi * r_obs**2 * flux_out, 0d0)
   ! No luminosity override during the gap: let the boundary condition set the flux.
 end subroutine find_transport_photosphere
@@ -1391,7 +1392,6 @@ real(8) function transport_timestep_limit(state)
    return
   end if
   ihi = 1
-  if (.not. state%in_cooling_phase) ihi = first_active_zone(state)
   ilo = ihi
   call photosphere_boundary_from_tau(state, ilo, iph, r_ph)
 
@@ -1488,7 +1488,7 @@ subroutine solve_transport_step(state, dt, lum_heat, theta_in)
   real(8), intent(in) :: dt, lum_heat
   real(8), intent(in), optional :: theta_in
 
-  integer :: i, n, ihi, iph
+  integer :: i, n, ihi, iph, ish
   real(8) :: dr_l, dr_r, r_face_l, r_face_r, area_l, area_r, vol_i
   real(8) :: vol_old
   real(8) :: rho_face_l, rho_face_r, dcoef_l, dcoef_r, k_l, k_r, k_escape, r_ph
@@ -1512,9 +1512,8 @@ subroutine solve_transport_step(state, dt, lum_heat, theta_in)
   state%work_vol = 0d0
   state%work_vol_old = 0d0
   ihi = 1
-  if (.not. state%in_cooling_phase) then
-   ihi = first_active_zone(state)
-  end if
+  ish = 1
+  if (.not. state%in_cooling_phase) ish = first_active_zone_at(state, state%r_shell_current)
   call photosphere_boundary_from_tau(state, ihi, iph, r_ph)
 
   expansion_lambda = 0d0
@@ -1620,7 +1619,8 @@ subroutine solve_transport_step(state, dt, lum_heat, theta_in)
    end if
 
    if (max(lum_heat, 0d0) > 0d0 .and. .not. state%in_cooling_phase) then
-    if (i == ihi) then
+    if (i == ish .and. state%r_shell_current >= state%r_inner_support .and. &
+        state%r_shell_current <= state%r_outer_support) then
      state%work_rhs(i) = state%work_rhs(i) + max(lum_heat, 0d0)
     end if
    end if
@@ -1639,6 +1639,12 @@ subroutine solve_transport_step(state, dt, lum_heat, theta_in)
         omt * (k_l + k_escape) * state%work_old_y(iph)
    if (iph > 1) then
     state%work_rhs(iph) = state%work_rhs(iph) + omt * k_l * state%work_old_y(iph-1)
+   end if
+   if (max(lum_heat, 0d0) > 0d0 .and. .not. state%in_cooling_phase) then
+    if (iph == ish .and. state%r_shell_current >= state%r_inner_support .and. &
+        state%r_shell_current <= state%r_outer_support) then
+     state%work_rhs(iph) = state%work_rhs(iph) + max(lum_heat, 0d0)
+    end if
    end if
   end if
 
@@ -1853,6 +1859,8 @@ end subroutine update_tau_and_luminosity
   if (allocated(state%work_gam)) deallocate(state%work_gam)
   if (allocated(state%work_old_e)) deallocate(state%work_old_e)
   if (allocated(state%eta_cool_grid)) deallocate(state%eta_cool_grid)
+  if (allocated(state%shell_x)) deallocate(state%shell_x)
+  if (allocated(state%shell_e)) deallocate(state%shell_e)
   state%initialized = .false.
   state%in_cooling_phase = .false.
   state%n_zones = 0
@@ -1873,6 +1881,8 @@ end subroutine update_tau_and_luminosity
   state%x_ph_cache_scale = -1d0
   state%lum_heat_cgs = 0d0
   state%lum_heat_total_cgs = 0d0
+  state%lum_heat_fs_cgs = 0d0
+  state%lum_heat_rs_cgs = 0d0
   state%lum_obs_cgs = 0d0
   state%x_min_cool = 1d0
   state%x_out_cool = 0d0
@@ -1881,6 +1891,8 @@ end subroutine update_tau_and_luminosity
   state%diag_step_counter = 0
   state%E_injected_cum = 0d0
   state%E_radiated_cum = 0d0
+  state%E_injected_fs_cum = 0d0
+  state%E_injected_rs_cum = 0d0
   state%E_breakout_cgs = 0d0
   state%t_breakout_cgs = 0d0
   state%lum_breakout_cgs = 0d0
@@ -1989,13 +2001,17 @@ end subroutine update_tau_and_luminosity
   allocate(state%work_a(n), state%work_b(n), state%work_c(n))
   allocate(state%work_rhs(n), state%work_sol(n), state%work_gam(n))
   allocate(state%work_old_e(n))
+  allocate(state%shell_x(n), state%shell_e(n))
 
   ! Fixed uniform ξ ∈ [0,1]
   do i = 1, n
    state%xi_grid(i) = dble(i - 1) / dble(max(n - 1, 1))
+   state%shell_x(i) = 1d0 + (dble(i) - 0.5d0) * &
+                      (max(state%x_csm_out, 1.0001d0) - 1d0) / dble(max(n, 1))
   end do
 
   state%e_grid = 0d0
+  state%shell_e = 0d0
  end subroutine setup_xi_grid
 
 ! ------------------------------------------------------------------
@@ -2104,14 +2120,26 @@ end subroutine update_tau_and_luminosity
   real(8), parameter :: tau_ph = 2d0 / 3d0
 
   ! Determine integration bounds and length scale
-  if (state%in_cooling_phase) then
-   x_inner = max(state%x_min_cool, 1d-12)
-   ! Cooling uses a comoving coordinate tied to the expanding shell support.
-   ! x_min_cool and x_out_cool are frozen at handoff and remain fixed in x.
-   x_outer = max(state%x_out_cool, x_inner)
-   ! τ = κ·ρ_csm_in·(R0/R_in)³·R_in·∫ η_csm dx = κ·ρ_csm_in·R0³/R_in²·∫ η_csm dx
-   length_scale = state%R0**3 / (state%R0 * state%R_in_R0)**2
-  else
+	  if (state%in_cooling_phase) then
+	   x_inner = max(state%x_min_cool, 1d-12)
+	   ! Cooling uses a comoving coordinate tied to the expanding shell support.
+	   ! x_min_cool and x_out_cool are frozen at handoff and remain fixed in x.
+	   x_outer = max(state%x_out_cool, x_inner)
+	   ! τ = κ·ρ_csm_in·(R0/R_in)³·R_in·∫ η_csm dx = κ·ρ_csm_in·R0³/R_in²·∫ η_csm dx
+	   length_scale = state%R0**3 / (state%R0 * state%R_in_R0)**2
+	   ! Keep the cooling diffusion solve on the full homologous shell support.
+	   ! The previous moving-photosphere boundary shrank the computational
+	   ! domain without conservatively remapping the radiation field, which
+	   ! numerically removed the post-breakout reservoir.  The photosphere
+	   ! recession should be handled as an emission/diagnostic surface, not by
+	   ! deleting the outer shell from the diffusion state.
+	   state%x_ph = x_outer
+	   state%x_ph_cache_valid = .true.
+	   state%x_ph_cache_start = x_inner
+	   state%x_ph_cache_outer = x_outer
+	   state%x_ph_cache_scale = length_scale
+	   return
+	  else
    x_inner = max(x_start, 1d0)
    x_outer = max(state%x_csm_out, x_inner)
    length_scale = state%R_csm_in
@@ -2280,6 +2308,25 @@ real(8) function current_dimless_shock_luminosity(state) result(lum)
   lum = max(lum_fs + lum_rs, 0d0)
 end function current_dimless_shock_luminosity
 
+subroutine update_dimless_shock_luminosities(state)
+  type(dimless_state_type), intent(inout) :: state
+
+  if (state%in_cooling_phase) then
+   state%lum_heat_fs_cgs = 0d0
+   state%lum_heat_rs_cgs = 0d0
+   state%lum_heat_total_cgs = 0d0
+   state%lum_heat_cgs = 0d0
+   return
+  end if
+
+  call current_dimless_shock_components(state, state%lum_heat_fs_cgs, state%lum_heat_rs_cgs)
+  state%lum_heat_total_cgs = max(state%lum_heat_fs_cgs + state%lum_heat_rs_cgs, 0d0)
+  ! The observable diffusion column is sourced by the total shock power in the
+  ! thin-shell approximation; the component bookkeeping is retained for
+  ! diagnostics and possible future resolved e_int closures.
+  state%lum_heat_cgs = state%lum_heat_total_cgs
+end subroutine update_dimless_shock_luminosities
+
 subroutine current_dimless_shock_components(state, lum_fs, lum_rs)
   type(dimless_state_type), intent(in) :: state
   real(8), intent(out) :: lum_fs, lum_rs
@@ -2379,7 +2426,7 @@ subroutine prepare_interaction_heating(state, dt_cgs)
  v_sh = max(state%w_sh * state%v_ej_max, 1d5)
  tau_breakout = clight / v_sh
 
- lum_trapped = max(state%lum_heat_total_cgs, 0d0)
+  lum_trapped = max(state%lum_heat_total_cgs, 0d0)
 
  if (state%tau_ahead_csm <= tau_breakout) then
   state%breakout_active = .true.
@@ -2583,6 +2630,185 @@ subroutine dimless_surface_flux_diag(state, dedx_surf, lum_grad_cgs)
    end if
   end do
   end function deposition_profile_at
+
+subroutine shell_bin_bounds(state, i, x_l, x_r)
+  type(dimless_state_type), intent(in) :: state
+  integer, intent(in) :: i
+  real(8), intent(out) :: x_l, x_r
+  real(8) :: dx_shell
+
+  dx_shell = (max(state%x_csm_out, 1.0001d0) - 1d0) / dble(max(state%n_zones, 1))
+  x_l = 1d0 + dble(i - 1) * dx_shell
+  x_r = 1d0 + dble(i) * dx_shell
+end subroutine shell_bin_bounds
+
+subroutine advance_shocked_shell_energy(state, x_left_in, x_right_in, lum_heat, dt_cgs)
+  type(dimless_state_type), intent(inout) :: state
+  real(8), intent(in) :: x_left_in, x_right_in, lum_heat, dt_cgs
+
+  integer :: i
+  real(8) :: x_left, x_right, bin_l, bin_r, ov_l, ov_r
+  real(8) :: sweep_vol, e_add, E_dim
+
+  if (.not. allocated(state%shell_e)) return
+  if (state%in_cooling_phase) return
+  if (lum_heat <= 0d0 .or. dt_cgs <= 0d0) return
+  if (state%u0 <= 0d0 .or. state%R_csm_in <= 0d0) return
+
+  x_left = min(max(min(x_left_in, x_right_in), 1d0), state%x_csm_out)
+  x_right = min(max(max(x_left_in, x_right_in), 1d0), state%x_csm_out)
+  if (x_right <= x_left + 1d-10) return
+
+  sweep_vol = (x_right**3 - x_left**3) / 3d0
+  if (sweep_vol <= 0d0) return
+
+  E_dim = lum_heat * dt_cgs / max(4d0 * pi * state%u0 * state%R_csm_in**3, 1d-30)
+  e_add = E_dim / sweep_vol
+  if (.not. (e_add > 0d0 .and. e_add < 1d30)) return
+
+  do i = 1, state%n_zones
+   call shell_bin_bounds(state, i, bin_l, bin_r)
+   ov_l = max(bin_l, x_left)
+   ov_r = min(bin_r, x_right)
+   if (ov_r > ov_l) state%shell_e(i) = state%shell_e(i) + e_add
+  end do
+end subroutine advance_shocked_shell_energy
+
+subroutine drain_shocked_shell_energy(state, E_loss_cgs)
+  type(dimless_state_type), intent(inout) :: state
+  real(8), intent(in) :: E_loss_cgs
+
+  integer :: i, i_start
+  real(8) :: remaining, bin_l, bin_r, bin_vol, E_bin, dE, x_drain
+
+  if (.not. allocated(state%shell_e)) return
+  if (E_loss_cgs <= 0d0) return
+  if (state%u0 <= 0d0 .or. state%R_csm_in <= 0d0) return
+
+  remaining = E_loss_cgs / max(4d0 * pi * state%u0 * state%R_csm_in**3, 1d-30)
+  if (remaining <= 0d0) return
+
+  ! Escaping photons drain the photospheric shocked layers first.  Material
+  ! outside x_ph is already optically thin and does not set the post-emergence
+  ! diffusion boundary, so spending the loss budget there leaves an artificial
+  ! hot photospheric surface at handoff.
+  x_drain = min(max(state%x_ph, 1d0), max(state%x_csm_out, 1d0))
+  i_start = state%n_zones
+  do i = 1, state%n_zones
+   call shell_bin_bounds(state, i, bin_l, bin_r)
+   if (x_drain >= bin_l .and. x_drain <= bin_r) then
+    i_start = i
+    exit
+   end if
+  end do
+
+  do i = i_start, 1, -1
+   call shell_bin_bounds(state, i, bin_l, bin_r)
+   bin_vol = (bin_r**3 - bin_l**3) / 3d0
+   if (bin_vol <= 0d0) cycle
+   E_bin = max(state%shell_e(i), 0d0) * bin_vol
+   if (E_bin <= 0d0) cycle
+   dE = min(E_bin, remaining)
+   state%shell_e(i) = max(state%shell_e(i) - dE / bin_vol, 0d0)
+   remaining = remaining - dE
+   if (remaining <= 0d0) exit
+  end do
+
+  if (remaining <= 0d0) return
+
+  do i = i_start + 1, state%n_zones
+   call shell_bin_bounds(state, i, bin_l, bin_r)
+   bin_vol = (bin_r**3 - bin_l**3) / 3d0
+   if (bin_vol <= 0d0) cycle
+   E_bin = max(state%shell_e(i), 0d0) * bin_vol
+   if (E_bin <= 0d0) cycle
+   dE = min(E_bin, remaining)
+   state%shell_e(i) = max(state%shell_e(i) - dE / bin_vol, 0d0)
+   remaining = remaining - dE
+   if (remaining <= 0d0) exit
+  end do
+end subroutine drain_shocked_shell_energy
+
+real(8) function shocked_shell_dimless_energy(state) result(E_dim)
+  type(dimless_state_type), intent(in) :: state
+
+  integer :: i
+  real(8) :: bin_l, bin_r, bin_vol
+
+  E_dim = 0d0
+  if (.not. allocated(state%shell_e)) return
+  do i = 1, state%n_zones
+   call shell_bin_bounds(state, i, bin_l, bin_r)
+   bin_vol = (bin_r**3 - bin_l**3) / 3d0
+   E_dim = E_dim + max(state%shell_e(i), 0d0) * max(bin_vol, 0d0)
+  end do
+end function shocked_shell_dimless_energy
+
+subroutine enforce_shocked_shell_energy_budget(state)
+  type(dimless_state_type), intent(inout) :: state
+
+  real(8) :: E_field_dim, E_field_cgs, E_target_cgs, E_target_dim
+  real(8) :: E_shell_dim, scale
+
+  if (.not. allocated(state%shell_e)) return
+  if (state%in_cooling_phase) return
+  if (state%u0 <= 0d0 .or. state%R_csm_in <= 0d0) return
+
+  E_field_dim = dimless_total_radiation_energy(state)
+  E_field_cgs = 4d0 * pi * state%u0 * state%R_csm_in**3 * E_field_dim
+  ! shell_e tracks the forward-shock/surface reservoir only.  Diffusive
+  ! luminosity escapes through the surface, so remove it from this component
+  ! before the reverse-shock/mixed reservoir is constructed at handoff.
+  E_target_cgs = state%E_injected_fs_cum - state%E_radiated_cum - &
+                 state%E_breakout_cgs - E_field_cgs
+  E_target_cgs = max(E_target_cgs, 0d0)
+  E_target_dim = E_target_cgs / max(4d0 * pi * state%u0 * state%R_csm_in**3, 1d-30)
+
+  E_shell_dim = shocked_shell_dimless_energy(state)
+  if (E_target_dim <= 0d0) then
+   state%shell_e = 0d0
+  else if (E_shell_dim > 0d0) then
+   scale = E_target_dim / E_shell_dim
+   state%shell_e = max(state%shell_e * scale, 0d0)
+  end if
+end subroutine enforce_shocked_shell_energy_budget
+
+real(8) function shocked_shell_profile_at(state, x_cool) result(e_shell)
+  type(dimless_state_type), intent(in) :: state
+  real(8), intent(in) :: x_cool
+
+  integer :: j
+  real(8) :: x_pre, frac
+
+  e_shell = 0d0
+  if (.not. allocated(state%shell_e)) return
+  if (state%n_zones <= 0) return
+
+  if (state%x_out_cool > state%x_min_cool + 1d-12) then
+   x_pre = 1d0 + (x_cool - state%x_min_cool) * (state%x_sh_se - 1d0) / &
+           (state%x_out_cool - state%x_min_cool)
+  else
+   x_pre = state%x_sh_se
+  end if
+  x_pre = min(max(x_pre, 1d0), max(state%x_sh_se, 1d0))
+
+  if (x_pre <= state%shell_x(1)) then
+   e_shell = max(state%shell_e(1), 0d0)
+   return
+  end if
+  if (x_pre >= state%shell_x(state%n_zones)) then
+   e_shell = max(state%shell_e(state%n_zones), 0d0)
+   return
+  end if
+
+  do j = 1, state%n_zones - 1
+   if (x_pre >= state%shell_x(j) .and. x_pre <= state%shell_x(j+1)) then
+    frac = (x_pre - state%shell_x(j)) / max(state%shell_x(j+1) - state%shell_x(j), 1d-30)
+    e_shell = max((1d0 - frac) * state%shell_e(j) + frac * state%shell_e(j+1), 0d0)
+    return
+   end if
+  end do
+end function shocked_shell_profile_at
 
   ! ------------------------------------------------------------------
   ! Dynamics RHS: paper Eq. 746-750
@@ -2948,7 +3174,8 @@ subroutine transition_to_cooling(state)
   real(8) :: E_residual_cgs, E_prompt_breakout_cgs
   real(8) :: dx, frac_interp, x_split
   real(8) :: x_l, x_r, x_cap
-  real(8) :: profile_scale, profile_norm
+  real(8) :: profile_scale, profile_norm, density_norm, surface_norm
+  real(8) :: surface_budget, density_budget
   real(8) :: e_l, e_r
   real(8) :: r_in_base, r_out_base, r_sh_se, v_sh_se, r_dim
   real(8), allocatable :: e_old(:)
@@ -3007,6 +3234,8 @@ subroutine transition_to_cooling(state)
   state%in_cooling_phase = .true.
   state%lum_heat_total_cgs = 0d0
   state%lum_heat_cgs = 0d0
+  state%lum_heat_fs_cgs = 0d0
+  state%lum_heat_rs_cgs = 0d0
   state%lum_breakout_avg_cgs = 0d0
   state%x_ph_cache_valid = .false.
   state%rannacher_left = 4
@@ -3050,38 +3279,88 @@ subroutine transition_to_cooling(state)
 
   ! --- Build e_int(x) on the cooling grid ---
   ! Paper Eq. 948 sets the cooling IC to e_int(x), supplied by the interaction
-  ! stage.  The thin-shell dynamics do not resolve the microscopic shocked-shell
-  ! structure, so use the cumulative shock-heating history as the shape and
-  ! normalize it to the residual energy budget.  This gives a single
-  ! energy-conserving handoff for both compact and extended CSM.  Do not add
-  ! an extra spatial dilution factor here: the appendix absorbs homologous
-  ! adiabatic expansion through u=u0*e*(R0/R_in)^4 and D∝R_in/R0 after y_se.
+  ! stage.  The Appendix-A interaction PDE only solves the unshocked
+  ! shock-to-photosphere diffusion column, so its live e_grid is not the full
+  ! shocked-shell reservoir.  Use the explicit shocked-shell tracker built as
+  ! the shock sweeps through the CSM and drained by the luminosity that escaped
+  ! before emergence.  This keeps the paper interaction transport while giving
+  ! the cooling phase a genuine e_int(x) instead of a reconstructed live-field
+  ! copy.  Do not add a spatial dilution factor here: homologous expansion is
+  ! handled after y_se by u=u0*e*(R0/R_in)^4 and D∝R_in/R0.
   do i = 1, n
    x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
-   state%e_grid(i) = deposition_profile_at(state, x_l)
+   ! Forward-shock heat is deposited at the newly swept CSM interface and is
+   ! allowed to retain that surface-weighted history.  Reverse-shock heat is
+   ! generated on the inner shocked/ejecta side; because the thin-shell
+   ! dynamics do not resolve that microscopic stratification, close it with
+   ! constant specific internal energy over the shocked shell, i.e. volumetric
+   ! energy follows the frozen density profile.  Both components are normalized
+   ! conservatively below to the tracked residual interaction energy.
+   state%work_old_e(i) = shocked_shell_profile_at(state, x_l)
+   state%e_grid(i) = max(compute_eta_csm(x_l, state), 0d0)
   end do
 
-  profile_norm = 0d0
+  density_norm = 0d0
+  surface_norm = 0d0
   do i = 1, n - 1
    x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
    x_r = state%x_min_cool + state%xi_grid(i+1) * (state%x_ph - state%x_min_cool)
    e_l = max(state%e_grid(i), 0d0)
    e_r = max(state%e_grid(i+1), 0d0)
    dx = (state%x_ph - state%x_min_cool) * dxi
-   profile_norm = profile_norm + 0.5d0 * (x_l**2 * e_l + x_r**2 * e_r) * dx
+   density_norm = density_norm + 0.5d0 * (x_l**2 * e_l + x_r**2 * e_r) * dx
+   e_l = max(state%work_old_e(i), 0d0)
+   e_r = max(state%work_old_e(i+1), 0d0)
+   surface_norm = surface_norm + 0.5d0 * (x_l**2 * e_l + x_r**2 * e_r) * dx
   end do
 
-  if (profile_norm > 0d0) then
-   ! Normalize the cumulative heating profile to the residual interaction
-   ! energy at shock emergence.
-   profile_scale = E_budget / profile_norm
+  ! Activate the well-mixed thin-shell closure by default.  The raw
+  ! forward-shock surface history is retained in work_old_e for diagnostics,
+  ! but using it directly makes the handoff a surface flash rather than the
+  ! cooling reservoir described by the paper.
+  surface_budget = 0d0
+  if (density_norm <= 0d0) surface_budget = max(E_budget, 0d0)
+  density_budget = max(E_budget - surface_budget, 0d0)
+
+  profile_norm = surface_norm + density_norm
+  if (profile_norm <= 0d0) then
+   ! Fallback for old partially initialized states: use the deposition history
+   ! if the explicit shocked-shell field has not received any energy.
+   do i = 1, n
+    x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
+    state%e_grid(i) = deposition_profile_at(state, x_l)
+   end do
+   profile_norm = 0d0
+   do i = 1, n - 1
+    x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
+    x_r = state%x_min_cool + state%xi_grid(i+1) * (state%x_ph - state%x_min_cool)
+    e_l = max(state%e_grid(i), 0d0)
+    e_r = max(state%e_grid(i+1), 0d0)
+    dx = (state%x_ph - state%x_min_cool) * dxi
+    profile_norm = profile_norm + 0.5d0 * (x_l**2 * e_l + x_r**2 * e_r) * dx
+   end do
+   if (profile_norm > 0d0) then
+    profile_scale = E_budget / profile_norm
+   else
+    profile_scale = 0d0
+   end if
+   do i = 1, n
+    state%e_grid(i) = max(profile_scale * state%e_grid(i), 0d0)
+   end do
   else
-   profile_scale = 0d0
+   do i = 1, n
+    if (surface_norm > 0d0 .and. density_norm > 0d0) then
+     state%e_grid(i) = surface_budget * max(state%work_old_e(i), 0d0) / surface_norm + &
+                       density_budget * max(state%e_grid(i), 0d0) / density_norm
+    else if (surface_norm > 0d0) then
+     state%e_grid(i) = E_budget * max(state%work_old_e(i), 0d0) / surface_norm
+    else if (density_norm > 0d0) then
+     state%e_grid(i) = E_budget * max(state%e_grid(i), 0d0) / density_norm
+    else
+     state%e_grid(i) = 0d0
+    end if
+   end do
   end if
-
-  do i = 1, n
-   state%e_grid(i) = max(profile_scale * state%e_grid(i), 0d0)
-  end do
 
   ! Eq. 948 initializes the remaining interaction reservoir directly as
   ! e_int(x).  Any interaction breakout reservoir accumulated before emergence
@@ -3135,6 +3414,8 @@ subroutine transition_to_cooling(state)
    write(*,'(A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4)') '  E_before=', E_before, ' E_budget=', E_budget, &
      ' E_after=', E_after, ' prof_norm=', profile_norm
    write(*,'(A,ES12.4,A,ES12.4)') '  Einj=', state%E_injected_cum, ' Erad=', state%E_radiated_cum
+   write(*,'(A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4)') '  Efs=', state%E_injected_fs_cum, &
+     ' Ers=', state%E_injected_rs_cum, ' Esurf=', surface_budget, ' Edens=', density_budget
    write(*,'(A,ES12.4)') '  tbo=', state%t_breakout_cgs
    write(*,'(A,ES12.4,A,ES12.4)') '  Einner_after=', E_after_inner, ' f_inner=', E_after_inner / max(E_after, 1d-30)
    write(*,'(A,ES12.4,A,ES12.4)') '  e_grid(1)=', state%e_grid(1), ' e_grid(n)=', state%e_grid(n)
@@ -3294,8 +3575,7 @@ subroutine transition_to_cooling(state)
     call rk4_step_dynamics(state, dzeta_step)
     ! Operator splitting: hydrodynamics is advanced first, then the shock
     ! heating for this diffusion substep is evaluated from the updated shell.
-    state%lum_heat_total_cgs = current_dimless_shock_luminosity(state)
-    state%lum_heat_cgs = state%lum_heat_total_cgs
+    call update_dimless_shock_luminosities(state)
     ! Compute dx_sh/dy for the advection term
     state%x_sh_dot = state%w_sh / max(state%y_ratio, 1d-30)
     ! Debug: store sub-step count for diagnostics
@@ -3345,8 +3625,7 @@ subroutine transition_to_cooling(state)
       state%zeta   = zeta_pre + 0.5d0 * frac * dzeta_step
       state%y_diff = state%y_ratio * state%zeta
       state%x_sh_dot = (x_sh_cross - x_sh_pre) / max(dy_pre, 1d-30)
-      state%lum_heat_total_cgs = current_dimless_shock_luminosity(state)
-      state%lum_heat_cgs = state%lum_heat_total_cgs
+      call update_dimless_shock_luminosities(state)
       call prepare_interaction_heating(state, dt_int_cgs)
       call estimate_photosphere_x(state%x_sh, state)
       if (x_ph_pre > 0d0) then
@@ -3358,13 +3637,19 @@ subroutine transition_to_cooling(state)
       state%x_ph_cached_xmin = state%x_min
       call solve_diffusion_dimless(state, dy_pre)
       state%E_injected_cum = state%E_injected_cum + state%lum_heat_total_cgs * dt_int_cgs
+      state%E_injected_fs_cum = state%E_injected_fs_cum + state%lum_heat_fs_cgs * dt_int_cgs
+      state%E_injected_rs_cum = state%E_injected_rs_cum + state%lum_heat_rs_cgs * dt_int_cgs
       call record_deposition_profile(state, x_sh_pre, state%x_sh, state%lum_heat_cgs, dt_int_cgs)
+      call advance_shocked_shell_energy(state, x_sh_pre, state%x_sh, state%lum_heat_fs_cgs, dt_int_cgs)
       call dimless_to_cgs(state)
       lum_diff_cgs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0)
       state%E_radiated_cum = state%E_radiated_cum + lum_diff_cgs * dt_int_cgs
+      call drain_shocked_shell_energy(state, lum_diff_cgs * dt_int_cgs)
       call release_interaction_breakout_reservoir(state, dt_int_cgs)
       call dimless_to_cgs(state)
       state%E_radiated_cum = state%E_radiated_cum + state%lum_breakout_avg_cgs * dt_int_cgs
+      call drain_shocked_shell_energy(state, state%lum_breakout_avg_cgs * dt_int_cgs)
+      call enforce_shocked_shell_energy_budget(state)
      end if
 
      ! Restore the exact crossover state before constructing the cooling IC.
@@ -3374,8 +3659,7 @@ subroutine transition_to_cooling(state)
      state%zeta   = zeta_cross
      state%y_diff = state%y_ratio * state%zeta
      state%x_sh_dot = state%w_sh / max(state%y_ratio, 1d-30)
-     state%lum_heat_total_cgs = current_dimless_shock_luminosity(state)
-     state%lum_heat_cgs = state%lum_heat_total_cgs
+     call update_dimless_shock_luminosities(state)
      call estimate_photosphere_x(state%x_sh, state)
      state%x_ph_dot = 0d0
 
@@ -3433,13 +3717,19 @@ subroutine transition_to_cooling(state)
       state%x_ph_cached_xmin = state%x_min
       call solve_diffusion_dimless(state, dy_step)
       state%E_injected_cum = state%E_injected_cum + state%lum_heat_total_cgs * dt_int_cgs
+      state%E_injected_fs_cum = state%E_injected_fs_cum + state%lum_heat_fs_cgs * dt_int_cgs
+      state%E_injected_rs_cum = state%E_injected_rs_cum + state%lum_heat_rs_cgs * dt_int_cgs
       call record_deposition_profile(state, x_sh_old, state%x_sh, state%lum_heat_cgs, dt_int_cgs)
+      call advance_shocked_shell_energy(state, x_sh_old, state%x_sh, state%lum_heat_fs_cgs, dt_int_cgs)
       call dimless_to_cgs(state)
       lum_diff_cgs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0)
       state%E_radiated_cum = state%E_radiated_cum + lum_diff_cgs * dt_int_cgs
+      call drain_shocked_shell_energy(state, lum_diff_cgs * dt_int_cgs)
       call release_interaction_breakout_reservoir(state, dt_int_cgs)
       call dimless_to_cgs(state)
       state%E_radiated_cum = state%E_radiated_cum + state%lum_breakout_avg_cgs * dt_int_cgs
+      call drain_shocked_shell_energy(state, state%lum_breakout_avg_cgs * dt_int_cgs)
+      call enforce_shocked_shell_energy_budget(state)
      end if
 
    else

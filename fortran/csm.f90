@@ -847,6 +847,10 @@ end subroutine lightcurve_wind_bpl
   end if
 
   if (run_mode == 3) then
+   ! Run mode 3 uses the Appendix-A dimensionless interaction solve so the
+   ! active diffusion column is the paper's shock-to-photosphere domain.  The
+   ! same state also tracks the swept shocked-shell e_int(x) used at cooling
+   ! handoff.
    call initialize_dimless_state(dl_state_global, opacity_const_global, eff_global, n_rad_zones_global)
    call dimless_to_cgs(dl_state_global)
    r = dl_state_global%r_sh_cgs
@@ -1206,7 +1210,7 @@ end subroutine lightcurve_wind_bpl
        rfs_array(n) = r_store
        rph_array(n) = r_ph
        etrap_array(n) = 0d0
-       tleak_array(n) = 0d0
+       tleak_array(n) = shell_leakage_timescale(tr_state, r_store, t, m)
        tauhyb_array(n) = shell_optical_depth(r_store, t)
       else
        rfs_array(n) = forward_shock_radius(tr_state, r, t, m)
