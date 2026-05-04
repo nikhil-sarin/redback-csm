@@ -4073,7 +4073,7 @@ subroutine transition_to_cooling(state)
 
 ! ------------------------------------------------------------------
 ! Main driver: dimensionless comoving transport step
-! Replaces old comoving_transport_step for run_mode 3
+! Main transport implementation used by mode='transport'
 ! Paper Sec. A3: operator splitting (dynamics first, then diffusion)
 ! ------------------------------------------------------------------
  subroutine dimless_comoving_transport_step(state, dt, lum_heat, lum_obs, r_ph_out)

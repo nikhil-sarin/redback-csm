@@ -118,7 +118,6 @@ ax2.set_xlim(1, 1000)
 fig.tight_layout()
 fig.savefig("variable_wind_overview.png", dpi=150)
 print("Saved: variable_wind_overview.png")
-plt.show()
 
 # ---------------------------------------------------------------------------
 # Figure 2: Synthetic data from Gaussian wind
@@ -150,7 +149,6 @@ ax.set_xlim(0.8, 600)
 fig.tight_layout()
 fig.savefig("variable_wind_synthetic_data.png", dpi=150)
 print("Saved: variable_wind_synthetic_data.png")
-plt.show()
 
 # ---------------------------------------------------------------------------
 # Bayesian inference with redback
@@ -286,4 +284,3 @@ ax_lc.grid(True, alpha=0.3)
 fig.tight_layout()
 fig.savefig("variable_wind_posterior_predictions.png", dpi=150)
 print("Saved: variable_wind_posterior_predictions.png")
-plt.show()

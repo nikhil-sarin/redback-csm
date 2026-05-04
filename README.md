@@ -79,8 +79,8 @@ Current output convention:
 
 ### JAX static CSM prototype
 
-The `jax-attempt` branch includes a JAX-native prototype for fast inference with
-static finite power-law CSM shells and BPL ejecta:
+This release includes a JAX-native prototype for fast inference with static
+finite power-law CSM shells and BPL ejecta:
 
 ```python
 from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve
@@ -275,6 +275,31 @@ bash setup_fortran.sh
 # 3. Install
 pip install -e .
 ```
+
+Optional development extras:
+
+```bash
+pip install -e ".[dev]"
+pip install -e ".[jax]"   # optional static-CSM JAX backend
+```
+
+## Validation and smoke tests
+
+Run the fast smoke tests with:
+
+```bash
+python -m pytest tests/test_smoke.py -q
+```
+
+Useful release-validation scripts are:
+
+```bash
+MPLBACKEND=Agg python examples/08_static_power_law_transport.py
+MPLBACKEND=Agg python examples/06_xray.py
+```
+
+These regenerate the static finite power-law CSM transport example and the
+thermal bremsstrahlung X-ray example.
 
 ## Quick start
 

@@ -1200,7 +1200,7 @@ end subroutine lightcurve_wind_bpl
     
     ! Determine what to output based on mode
      if(run_mode == 2 .or. run_mode == 3)then
-     ! HYBRID MODE: store shock power and emergent diffuse luminosity separately.
+     ! TRANSPORT MODE: store shock power and emergent diffuse luminosity separately.
      lum_store = lum_heat
      ld_array(n) = L_ph
      r_store = r

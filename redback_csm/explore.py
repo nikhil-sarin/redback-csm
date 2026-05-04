@@ -190,8 +190,8 @@ def csm_lightcurve_from_density(
         scattering), 0.1 (lower bound).
     mode : {'simple', 'transport'}, optional
         Runtime mode. ``'simple'`` uses the thin-shell luminosity/post-processed
-        diffusion path. ``'transport'`` uses run mode 3 with the sampled CSM
-        density grid. Default ``'simple'``.
+        diffusion path. ``'transport'`` uses the radiation transport solver with
+        the sampled CSM density grid. Default ``'simple'``.
     n_rad_zones : int, optional
         Number of radiation zones for ``mode='transport'``. Default 40.
     efficiency_mode : int, optional

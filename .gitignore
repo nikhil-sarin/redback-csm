@@ -7,7 +7,16 @@ build/
 fortran/*.f90
 .DS_Store
 scripts/
+examples/07_hydro_comparison.py
+examples/11_fig_from_paper_jax.py
+examples/11_fig_from_paper_static.py
+examples/15_fig11_resolution_convergence.py
+examples/16_fig11_interaction_audit.py
+examples/17_fig11_cutoff_sweep.py
+examples/18_jax_vs_fortran_transport.py
+examples/19_runtime_summary.py
 *.png
+examples/runtime_summary.csv
 .idea/
 *.tmp_runtime
 *.tex

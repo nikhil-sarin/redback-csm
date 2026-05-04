@@ -14,9 +14,15 @@ when the package is installed, via the redback.model.modules entry point.
 Citation: Sarin & Hirai (in prep); Sarin et al. 2024 (redback)
 """
 
-import numpy as _np
 import inspect as _inspect
+import os as _os
 from collections import namedtuple as _namedtuple
+
+_os.environ.setdefault("MPLCONFIGDIR", "/tmp/redback_csm_mpl_cache")
+_os.environ.setdefault("XDG_CACHE_HOME", "/tmp/redback_csm_xdg_cache")
+_os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/redback_csm_numba_cache")
+
+import numpy as _np
 from scipy.interpolate import interp1d as _interp1d
 import astropy.units as _uu
 from astropy.cosmology import Planck18 as _cosmo
