@@ -13,13 +13,16 @@ setup(
     author='Nikhil Sarin, Ryosuke Hirai',
     author_email='nsarin.astro@gmail.com',
     license='GNU General Public License v3 (GPLv3)',
-    packages=['redback_csm'],
+    packages=['redback_csm', 'jax_csm'],
     package_data={'redback_csm': ['priors/*.prior', 'csm*.so', 'csm*.pyd']},
     install_requires=[
         'numpy',
         'scipy',
         'redback>=1.15.0',
     ],
+    extras_require={
+        'jax': ['jax'],
+    },
     entry_points={
         'redback.model.modules': [
             'csm_models = redback_csm.models',
