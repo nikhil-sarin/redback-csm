@@ -5389,3 +5389,76 @@ def _call_csm_radio(csm_model, redshift, logepsb, logepse, p, frequency,
         luminosity_distance_cm=luminosity_distance_cm,
     )
     return lc.time / DAY, flux_mJy
+
+
+def _call_csm_xray(csm_model, redshift, logepsx, luminosity_distance_cm,
+                   e_min_kev=0.3, e_max_kev=10.0, output_format="luminosity",
+                   energy_kev=None, frequency=None, n_h_host=0.0, n_h_mw=0.0,
+                   absorb=True, absorb_csm=False, csm_column_factor=1.0,
+                   shock_component="total", mu=0.62,
+                   mu_e=1.18, mu_i=1.30, electron_temperature_fraction=1.0,
+                   compression_factor=4.0, gaunt_factor=1.2,
+                   normalization="emission_measure", max_xray_efficiency=1.0,
+                   n_energy=128, **kwargs):
+    """
+    Run the CSM model and compute thermal bremsstrahlung X-ray emission on the
+    Fortran time grid.
+
+    The default X-ray normalization is a free-free emission-measure estimate
+    from the upstream CSM density and swept CSM mass, capped by shock power.
+    """
+    from redback_csm.xray import (
+        local_csm_column_density,
+        thermal_bremsstrahlung_xray,
+    )
+
+    kwargs_density = dict(kwargs)
+    lc = _call_csm(csm_model, **kwargs)
+
+    shock_component = str(shock_component).lower()
+    if shock_component in ("forward", "fs"):
+        shock_luminosity = getattr(lc, "lbol_fs", lc.lbol_shock)
+    elif shock_component in ("reverse", "rs"):
+        shock_luminosity = getattr(lc, "lbol_rs", lc.lbol_shock)
+    elif shock_component in ("total", "both", "shock"):
+        shock_luminosity = lc.lbol_shock
+    else:
+        raise ValueError("shock_component must be 'total', 'forward', or 'reverse'")
+
+    rho = _get_rho_csm_at_shock(csm_model, lc, **kwargs_density)
+
+    n_h_csm = None
+    if absorb_csm:
+        n_h_csm = local_csm_column_density(
+            lc.rph, rho, column_factor=float(csm_column_factor)
+        )
+
+    xray = thermal_bremsstrahlung_xray(
+        time_days=lc.time / DAY,
+        shock_luminosity_cgs=shock_luminosity,
+        vshell_cgs=lc.vshell,
+        redshift=redshift,
+        logepsx=logepsx,
+        luminosity_distance_cm=luminosity_distance_cm,
+        e_min_kev=e_min_kev,
+        e_max_kev=e_max_kev,
+        output_format=output_format,
+        energy_kev=energy_kev,
+        frequency=frequency,
+        n_h_host=n_h_host,
+        n_h_mw=n_h_mw,
+        n_h_csm=n_h_csm,
+        rho_csm_cgs=rho,
+        radius_cgs=lc.rph,
+        mu=mu,
+        mu_e=mu_e,
+        mu_i=mu_i,
+        electron_temperature_fraction=electron_temperature_fraction,
+        compression_factor=compression_factor,
+        gaunt_factor=gaunt_factor,
+        normalization=normalization,
+        max_xray_efficiency=max_xray_efficiency,
+        absorb=absorb,
+        n_energy=n_energy,
+    )
+    return lc.time / DAY, xray

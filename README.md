@@ -92,6 +92,54 @@ Chevalier (1998) formalism with self-absorption. These take additional parameter
 
 Output is flux density in mJy.
 
+### X-ray thermal bremsstrahlung model variants
+
+Each radio-enabled CSM scenario also has a matching `{name}_xray` function. The
+X-ray layer is a fast post-processor: it uses the CSM shock evolution and
+upstream density, sets the post-shock plasma temperature from the strong-shock
+velocity, estimates the shocked-CSM emission measure, and emits a thermal
+free-free spectrum. The free-free luminosity is capped by the shock power by
+default.
+
+| Parameter | Description |
+|---|---|
+| `logepsx` | log10 scale factor for the emitting free-free emission measure |
+| `e_min_kev`, `e_max_kev` | Observer-frame X-ray band edges in keV; defaults to 0.3--10 keV |
+| `output_format` | `luminosity`, `flux`, `spectral_luminosity`, or `flux_density` |
+| `energy_kev` / `frequency` | Photon energy or frequency for spectral outputs |
+| `n_h_host`, `n_h_mw` | Optional absorbing columns in cm^-2 |
+| `absorb_csm` | Optionally include a local CSM column estimate |
+| `shock_component` | `total`, `forward`, or `reverse` shock power |
+| `normalization` | `emission_measure` by default; `shock_power` for a simple shock-power-fraction approximation |
+| `max_xray_efficiency` | Cap on bolometric free-free luminosity relative to shock power; defaults to 1 |
+
+For dense CSM, soft X-rays can be strongly absorbed, so `n_h_host` and
+`absorb_csm=True` are often more important than the intrinsic free-free bandpass.
+
+The standard physics used is optically thin thermal free-free emission:
+
+```text
+epsilon_nu = 6.8e-38 Z^2 n_e n_i T^{-1/2} exp(-h nu / kT) g_ff
+epsilon_ff = 1.426e-27 T^{1/2} n_e n_i g_ff
+kT_shock = (3/16) mu m_p v_shock^2
+```
+
+The inference approximation is the shocked-shell emission measure:
+
+```text
+EM ~= M_swept,CSM * rho_post / (mu_e * mu_i * m_p^2)
+rho_post = compression_factor * rho_CSM
+```
+
+This is a thin-shell closure, not a resolved X-ray cooling-layer calculation.
+The normalization parameter `logepsx` therefore scales the emitting emission
+measure by default. Set `normalization='shock_power'` to recover a simple
+shock-power-fraction approximation.
+
+References for the underlying physics include Rybicki & Lightman (1979),
+Chevalier & Fransson (1994, ApJ, 420, 268), and Margalit, Quataert & Ho
+(2022, ApJ, 928, 122).
+
 ### Available CSM scenarios (24 total)
 
 **Steady wind CSM**
@@ -264,6 +312,18 @@ flux_mJy = wind_bpl_radio(
     output_format='flux_density',
 )
 
+# Thermal bremsstrahlung X-rays
+from redback_csm.models import wind_bpl_xray
+
+lx = wind_bpl_xray(
+    time=time_obs, redshift=0.02,
+    mdot=1e-3, vwind=100, delta=0.5, nn=12,
+    mexp=5.0, eexp=1.0, eff=0.5,
+    logepsx=-1.0,
+    e_min_kev=0.3, e_max_kev=10.0,
+    output_format='luminosity',
+)
+
 # Get priors for Bayesian fitting
 priors = redback.priors.get_priors('wind_bpl_bolometric')
 
@@ -291,5 +351,6 @@ All model functions use astronomy-friendly input units:
 | Velocity | km/s |
 | Opacity | cm²/g |
 | Radio frequency | Hz |
+| X-ray energy | keV |
 
 Outputs follow redback conventions: flux density in mJy, magnitudes in AB system.

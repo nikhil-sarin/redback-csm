@@ -56,6 +56,25 @@ def test_prior_provider_unknown():
     assert get_prior("not_a_real_model_xyz") is None
 
 
+def test_xray_bremsstrahlung_smoke():
+    import numpy as np
+    from redback_csm.xray import thermal_bremsstrahlung_xray
+
+    out = thermal_bremsstrahlung_xray(
+        time_days=np.array([1.0, 2.0, 3.0]),
+        shock_luminosity_cgs=np.array([1e42, 1e43, 1e44]),
+        vshell_cgs=np.array([1e8, 5e8, 1e9]),
+        redshift=0.01,
+        logepsx=-1.0,
+        luminosity_distance_cm=1e26,
+        rho_csm_cgs=np.array([1e-16, 8e-17, 5e-17]),
+        radius_cgs=np.array([1e14, 2e14, 3e14]),
+    )
+    assert out.shape == (3,)
+    assert np.all(np.isfinite(out))
+    assert np.all(out >= 0.0)
+
+
 def test_csm_nickel_diffuses_through_finite_wind_csm(monkeypatch):
     import numpy as np
     import redback_csm.models as models
