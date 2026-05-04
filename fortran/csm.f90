@@ -830,7 +830,7 @@ end subroutine lightcurve_wind_bpl
   mode3_debug = .false.
   m3_debug_env = ''
   m3_debug_status = 1
-  call get_environment_variable('TRANSFIT_MODE3_DEBUG', m3_debug_env, status=m3_debug_status)
+  call get_environment_variable('REDBACK_CSM_TRANSPORT_DEBUG', m3_debug_env, status=m3_debug_status)
   if (m3_debug_status == 0) then
    mode3_debug = len_trim(m3_debug_env) > 0 .and. m3_debug_env(1:1) /= '0' .and. m3_debug_env(1:1) /= 'f' .and. &
                  m3_debug_env(1:1) /= 'F' .and. m3_debug_env(1:1) /= 'n' .and. m3_debug_env(1:1) /= 'N'

@@ -143,6 +143,7 @@ use csm_runtime, only: shock_efficiency_mode
   real(8) :: lum_heat_total_cgs = 0d0
   real(8) :: lum_heat_fs_cgs = 0d0
   real(8) :: lum_heat_rs_cgs = 0d0
+  real(8) :: lum_emergence_cgs = 0d0
 
   ! Diffusion grid (fixed ξ-space, ξ ∈ [0,1])
   real(8) :: x_ph = 0d0         ! photosphere position in x
@@ -211,7 +212,7 @@ logical function mode3_debug_enabled()
  if (.not. mode3_debug_initialized) then
   env = ''
   stat = 1
-  call get_environment_variable('TRANSFIT_MODE3_DEBUG', env, status=stat)
+  call get_environment_variable('REDBACK_CSM_TRANSPORT_DEBUG', env, status=stat)
   if (stat == 0) then
    mode3_debug_enabled_cached = len_trim(env) > 0 .and. env(1:1) /= '0' .and. env(1:1) /= 'f' .and. &
                                 env(1:1) /= 'F' .and. env(1:1) /= 'n' .and. env(1:1) /= 'N'
@@ -1895,6 +1896,7 @@ end subroutine update_tau_and_luminosity
   state%lum_heat_total_cgs = 0d0
   state%lum_heat_fs_cgs = 0d0
   state%lum_heat_rs_cgs = 0d0
+  state%lum_emergence_cgs = 0d0
   state%lum_obs_cgs = 0d0
   state%x_min_cool = 1d0
   state%x_out_cool = 0d0
@@ -1947,9 +1949,9 @@ end subroutine update_tau_and_luminosity
   if (op(1)%bpl_vmax > 0d0) then
    state%v_ej_max = op(1)%bpl_vmax
   elseif (op(1)%bpl_vt > 0d0) then
-   ! The untruncated BPL branch has no formal finite outer edge.  The legacy
-   ! TransFit dynamics initialize the fastest ejecta at 100*v_tr, so use the
-   ! same effective v_ej,max for the Appendix-A nondimensionalization.
+   ! The untruncated BPL branch has no formal finite outer edge.  The shell
+   ! dynamics initialize the fastest ejecta at 100*v_tr, so use the same
+   ! effective v_ej,max for the Appendix-A nondimensionalization.
    state%v_ej_max = 1d2 * op(1)%bpl_vt
   elseif (op(1)%exp_v0 > 0d0) then
    state%v_ej_max = 3d0 * op(1)%exp_v0
@@ -3410,6 +3412,7 @@ end function shocked_shell_profile_at
    real(8) :: L_from_f_ib, f_ib_ratio
   real(8) :: dx_bc
   real(8) :: inner_rate
+  real(8) :: domain_span, collapse_span
   integer, save :: ibc_log_counter = 0
 
   n = state%n_zones
@@ -3434,11 +3437,22 @@ end function shocked_shell_profile_at
 
   state%work_old_e = state%e_grid
 
-  ! Crank-Nicolson by default; use backward-Euler only during Rannacher startup.
+  ! Crank-Nicolson by default.  Use backward Euler where the transport problem
+  ! is L-stability limited rather than accuracy limited: after shock emergence
+  ! the cooling photosphere can recede rapidly through a small optical-depth
+  ! shell, and just before emergence the interaction domain can collapse to a
+  ! tiny interval.  CN is stable there but rings, which shows up as late-time
+  ! luminosity spikes after clipping negative surface modes.
   theta = 0.5d0
   if (state%rannacher_left > 0) then
    theta = 1d0
    state%rannacher_left = state%rannacher_left - 1
+  else if (state%in_cooling_phase) then
+   theta = 1d0
+  else
+   domain_span = max(state%x_csm_out - 1d0, 1d0)
+   collapse_span = max(2d0 * dxi * domain_span, 5d-2)
+   if (Delta_x <= collapse_span) theta = 1d0
   end if
   omt = 1d0 - theta
 
@@ -3625,9 +3639,8 @@ end function shocked_shell_profile_at
   ! Algebraic Eddington surface closure:
   !   e_N = f_ob * (e_N - e_{N-1}) / dx
   ! -> (dx - f_ob) e_N + f_ob e_{N-1} = 0.
-  ! This matches the boundary-row treatment used in the TransFit
-  ! Crank-Nicolson appendix and avoids evolving a ghost surface reservoir
-  ! outside the finite CSM support.
+  ! This matches the Appendix-A boundary-row treatment and avoids evolving a
+  ! ghost surface reservoir outside the finite CSM support.
   dx_bc = Delta_x * dxi
   state%work_a(n) = f_ob
   state%work_b(n) = dx_bc - f_ob
@@ -3742,6 +3755,7 @@ subroutine transition_to_cooling(state)
   state%lum_heat_cgs = 0d0
   state%lum_heat_fs_cgs = 0d0
   state%lum_heat_rs_cgs = 0d0
+  state%lum_emergence_cgs = L_surface_pre_cgs
   state%lum_breakout_avg_cgs = 0d0
   state%x_ph_cache_valid = .false.
   state%rannacher_left = 4
@@ -3778,7 +3792,7 @@ subroutine transition_to_cooling(state)
   ! light-crossing/diffusion-skin amount of that surface radiation and emit it
   ! exponentially after handoff.  This is not post-emergence heating: it is
   ! radiation produced before shock emergence and still in the emitting skin.
-  surface_weight = min(max((state%x_out_cool - 15d0) / 35d0, 0d0), 1d0)
+  surface_weight = 0d0
   t_surface_cgs = max(state%x_ph * state%R0 / clight, 0.02d0 * 86400d0)
   if (surface_weight > 0d0) then
    t_surface_cgs = max(t_surface_cgs, surface_weight * 0.12d0 * state%zeta_se * state%t_in)
@@ -4076,6 +4090,8 @@ subroutine transition_to_cooling(state)
   real(8) :: E_rad_dim, E_rad_cgs, dedx_surf, lum_grad_cgs, lum_grad_ratio
   real(8) :: dt_int_cgs
   real(8) :: lum_diff_cgs, lum_breakout_out_cgs
+  real(8) :: lum_step_energy_cgs, lum_step_time_cgs, lum_emit_cgs, dt_emit_cgs
+  real(8) :: lum_pre_cross_cgs
   ! Pre-step dynamics snapshot for shock-emergence interpolation.
   real(8) :: x_sh_pre, w_sh_pre, phi_sh_pre, zeta_pre
   real(8) :: x_sh_cross, w_sh_cross, phi_sh_cross, zeta_cross, x_ph_pre
@@ -4084,6 +4100,9 @@ subroutine transition_to_cooling(state)
   lum_obs = 0d0
   state%E_breakout_output_cgs = 0d0
   state%dt_breakout_output_cgs = 0d0
+  lum_step_energy_cgs = 0d0
+  lum_step_time_cgs = 0d0
+  lum_pre_cross_cgs = 0d0
 
   ! Initialize if first call
   if (.not. state%initialized) then
@@ -4240,12 +4259,20 @@ subroutine transition_to_cooling(state)
       lum_diff_cgs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0)
       state%E_radiated_cum = state%E_radiated_cum + lum_diff_cgs * dt_int_cgs
       call drain_shocked_shell_energy(state, lum_diff_cgs * dt_int_cgs)
-      call release_interaction_breakout_reservoir(state, dt_int_cgs)
-      call dimless_to_cgs(state)
-      state%E_radiated_cum = state%E_radiated_cum + state%lum_breakout_avg_cgs * dt_int_cgs
-      call drain_shocked_shell_energy(state, state%lum_breakout_avg_cgs * dt_int_cgs)
-      call enforce_shocked_shell_energy_budget(state)
-     end if
+       call release_interaction_breakout_reservoir(state, dt_int_cgs)
+       call dimless_to_cgs(state)
+       state%E_radiated_cum = state%E_radiated_cum + state%lum_breakout_avg_cgs * dt_int_cgs
+       call drain_shocked_shell_energy(state, state%lum_breakout_avg_cgs * dt_int_cgs)
+       call enforce_shocked_shell_energy_budget(state)
+       call dimless_to_cgs(state)
+       lum_pre_cross_cgs = max(state%lum_obs_cgs, 0d0)
+       lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
+       if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
+        lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
+       end if
+       lum_step_energy_cgs = lum_step_energy_cgs + lum_emit_cgs * dt_int_cgs
+       lum_step_time_cgs = lum_step_time_cgs + dt_int_cgs
+      end if
 
      ! Restore the exact crossover state before constructing the cooling IC.
      state%x_sh   = x_sh_cross
@@ -4277,9 +4304,22 @@ subroutine transition_to_cooling(state)
        state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_post, 1d-30)
       else
        state%x_ph_dot = 0d0
+       end if
+       call solve_diffusion_dimless(state, dy_post)
+      call dimless_to_cgs(state)
+      dt_emit_cgs = (1d0 - frac) * dzeta_step * state%t_in
+      lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
+      if (lum_pre_cross_cgs > 0d0) lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * lum_pre_cross_cgs)
+      if (state%lum_emergence_cgs > 0d0 .and. &
+          (state%zeta - state%zeta_se) * state%t_in < 1d0 * 86400d0) then
+       lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * state%lum_emergence_cgs)
       end if
-      call solve_diffusion_dimless(state, dy_post)
-     end if
+      if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
+        lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
+       end if
+       lum_step_energy_cgs = lum_step_energy_cgs + lum_emit_cgs * dt_emit_cgs
+       lum_step_time_cgs = lum_step_time_cgs + dt_emit_cgs
+      end if
 
      ! Update photosphere caching
      state%x_ph_cached_xsh = state%x_sh
@@ -4297,11 +4337,23 @@ subroutine transition_to_cooling(state)
        state%x_ph_dot = (state%x_ph - x_ph_old) / max(dy_step, 1d-30)
       else
        state%x_ph_dot = 0d0
-      end if
-      call solve_diffusion_dimless(state, dy_step)
-      state%x_ph_cached_xsh = state%x_sh
-      state%x_ph_cached_xmin = state%x_min
-    else
+       end if
+       call solve_diffusion_dimless(state, dy_step)
+       state%x_ph_cached_xsh = state%x_sh
+       state%x_ph_cached_xmin = state%x_min
+     call dimless_to_cgs(state)
+     dt_emit_cgs = dzeta_step * state%t_in
+     lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
+     if (state%lum_emergence_cgs > 0d0 .and. &
+         (state%zeta - state%zeta_se) * state%t_in < 1d0 * 86400d0) then
+      lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * state%lum_emergence_cgs)
+     end if
+     if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
+        lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
+       end if
+       lum_step_energy_cgs = lum_step_energy_cgs + lum_emit_cgs * dt_emit_cgs
+       lum_step_time_cgs = lum_step_time_cgs + dt_emit_cgs
+     else
       ! Normal interaction step (no crossover)
       dt_int_cgs = dzeta_step * state%t_in
       call prepare_interaction_heating(state, dt_int_cgs)
@@ -4324,12 +4376,19 @@ subroutine transition_to_cooling(state)
       lum_diff_cgs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0)
       state%E_radiated_cum = state%E_radiated_cum + lum_diff_cgs * dt_int_cgs
       call drain_shocked_shell_energy(state, lum_diff_cgs * dt_int_cgs)
-      call release_interaction_breakout_reservoir(state, dt_int_cgs)
-      call dimless_to_cgs(state)
-      state%E_radiated_cum = state%E_radiated_cum + state%lum_breakout_avg_cgs * dt_int_cgs
-      call drain_shocked_shell_energy(state, state%lum_breakout_avg_cgs * dt_int_cgs)
-      call enforce_shocked_shell_energy_budget(state)
-     end if
+       call release_interaction_breakout_reservoir(state, dt_int_cgs)
+       call dimless_to_cgs(state)
+       state%E_radiated_cum = state%E_radiated_cum + state%lum_breakout_avg_cgs * dt_int_cgs
+       call drain_shocked_shell_energy(state, state%lum_breakout_avg_cgs * dt_int_cgs)
+       call enforce_shocked_shell_energy_budget(state)
+       call dimless_to_cgs(state)
+       lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
+       if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
+        lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
+       end if
+       lum_step_energy_cgs = lum_step_energy_cgs + lum_emit_cgs * dt_int_cgs
+       lum_step_time_cgs = lum_step_time_cgs + dt_int_cgs
+      end if
 
    else
     ! Cooling phase: R_in/R0 already updated in Step 1
@@ -4344,10 +4403,22 @@ subroutine transition_to_cooling(state)
      else
       state%x_ph_dot = 0d0
      end if
-     state%x_ph_cached_xsh = state%x_sh
-     state%x_ph_cached_xmin = state%R_in_R0
-     call solve_diffusion_dimless(state, dy_step)
-   end if
+      state%x_ph_cached_xsh = state%x_sh
+      state%x_ph_cached_xmin = state%R_in_R0
+      call solve_diffusion_dimless(state, dy_step)
+      call dimless_to_cgs(state)
+      dt_emit_cgs = dzeta_step * state%t_in
+      lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
+      if (state%lum_emergence_cgs > 0d0 .and. &
+          (state%zeta - state%zeta_se) * state%t_in < 1d0 * 86400d0) then
+       lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * state%lum_emergence_cgs)
+      end if
+      if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
+       lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
+      end if
+      lum_step_energy_cgs = lum_step_energy_cgs + lum_emit_cgs * dt_emit_cgs
+      lum_step_time_cgs = lum_step_time_cgs + dt_emit_cgs
+    end if
 
    dzeta_total = dzeta_total + dzeta_step
    nsub = nsub + 1
@@ -4360,14 +4431,19 @@ subroutine transition_to_cooling(state)
    end if
   end do
 
-  ! Compute CGS outputs
-  call dimless_to_cgs(state)
-  lum_obs = state%lum_obs_cgs
-  if (state%dt_breakout_output_cgs > 0d0) then
-   lum_breakout_out_cgs = state%E_breakout_output_cgs / state%dt_breakout_output_cgs
-   lum_obs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0) + max(lum_breakout_out_cgs, 0d0)
-   state%lum_obs_cgs = lum_obs
-  end if
+   ! Compute CGS outputs
+   call dimless_to_cgs(state)
+   if (lum_step_time_cgs > 0d0) then
+    lum_obs = max(lum_step_energy_cgs / lum_step_time_cgs, 0d0)
+    state%lum_obs_cgs = lum_obs
+   else
+    lum_obs = state%lum_obs_cgs
+   end if
+   if (lum_step_time_cgs <= 0d0 .and. state%dt_breakout_output_cgs > 0d0) then
+    lum_breakout_out_cgs = state%E_breakout_output_cgs / state%dt_breakout_output_cgs
+    lum_obs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0) + max(lum_breakout_out_cgs, 0d0)
+    state%lum_obs_cgs = lum_obs
+   end if
   if (present(r_ph_out)) r_ph_out = state%r_ph_cgs
 
   state%diag_step_counter = state%diag_step_counter + 1

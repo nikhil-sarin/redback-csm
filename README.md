@@ -68,7 +68,7 @@ keywords controlling the transport treatment:
 | `mode='transport'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
 | `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In transport mode, defaults to `0.34` if not supplied. |
 | `n_rad_zones` | Number of radiation/transport zones in transport mode. Higher values reduce numerical roughness but increase runtime. |
-| `efficiency_mode` | Optional alternate forward-shock efficiency mode. Default is `0`, which keeps the user-supplied constant `eff`. |
+| `efficiency_mode` | Optional shock-efficiency mode. Default is `0`, which applies the user-supplied constant `eff` to both shocks; `1` applies the free-free-limited time-dependent efficiency to both forward and reverse shocks. |
 
 Current output convention:
 

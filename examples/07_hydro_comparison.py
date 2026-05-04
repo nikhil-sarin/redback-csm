@@ -110,7 +110,7 @@ def main():
             color="teal",
             ls="--",
             lw=1.8,
-            label="Transport (constant FS eff.)",
+            label="Transport (constant shock eff.)",
         )
         ax.plot(
             t_transport_timed,
@@ -118,7 +118,7 @@ def main():
             color="royalblue",
             ls="-",
             lw=2.0,
-            label="Transport (time-dependent FS eff.)",
+            label="Transport (time-dependent shock eff.)",
         )
         ax.plot(
             t_simple,
