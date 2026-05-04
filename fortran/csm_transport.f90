@@ -3330,8 +3330,28 @@ end function shocked_shell_profile_at
            - q_loc * x_in**2 * w_eff**2 * eta_csm_val) / phi_in
   else
    dw_dz = 0d0
-  end if
+ end if
  end subroutine dynamics_rhs
+
+ function dimless_dynamics_timescale_cgs(state) result(dt_cgs)
+  type(dimless_state_type), intent(in) :: state
+  real(8) :: dt_cgs
+  real(8) :: dx_dz, dw_dz, dphi_dz, dt_zeta
+
+  dt_cgs = huge(1d0)
+  if (.not. state%initialized) return
+  if (state%in_cooling_phase) return
+
+  call dynamics_rhs(state%x_sh, state%w_sh, state%phi_sh, state%zeta, &
+                    state, dx_dz, dw_dz, dphi_dz)
+
+  dt_zeta = huge(1d0)
+  if (abs(dx_dz) > 1d-30) dt_zeta = min(dt_zeta, abs(state%x_sh / dx_dz))
+  if (abs(dw_dz) > 1d-30) dt_zeta = min(dt_zeta, abs(state%w_sh / dw_dz))
+  if (abs(dphi_dz) > 1d-30) dt_zeta = min(dt_zeta, abs(state%phi_sh / dphi_dz))
+
+  if (dt_zeta < huge(1d0)) dt_cgs = dt_zeta * state%t_in
+ end function dimless_dynamics_timescale_cgs
 
 ! ------------------------------------------------------------------
 ! RK4 dynamics step (paper Sec. A3)
@@ -3419,6 +3439,10 @@ end function shocked_shell_profile_at
 
   Delta_x = state%x_ph - state%x_min
   if (Delta_x <= 0d0) then
+   return
+  end if
+  if (.not. state%in_cooling_phase .and. .not. state%csm_powerlaw_fast .and. &
+      Delta_x <= 1d-4 * max(state%x_csm_out - state%x_min, 1d0)) then
    return
   end if
   dxi = 1d0 / dble(n - 1)  ! Uniform ξ spacing
@@ -4064,6 +4088,7 @@ subroutine transition_to_cooling(state)
   real(8) :: dzeta_step, dzeta_total, dzeta_target
   real(8) :: dy_step
   real(8) :: dt_dyn_cfl, dt_diff_cfl, advection_cfl
+  real(8) :: advection_floor
   real(8) :: Delta_x, x_sh_old, x_ph_old, frac, dy_pre, dy_post
   real(8) :: E_rad_dim, E_rad_cgs, dedx_surf, lum_grad_cgs, lum_grad_ratio
   real(8) :: dt_int_cgs
@@ -4096,10 +4121,14 @@ subroutine transition_to_cooling(state)
   dzeta_step = dzeta_target  ! Initialize for first iteration
   do while (dzeta_total < dzeta_target - 1d-15)
    ! --- CFL constraints ---
-   ! Velocity CFL: dzeta < C * phi / (q * w^2) to resolve deceleration
+   ! For analytic power-law CSM this additional cap preserves the established
+   ! publication-plot morphology.  For arbitrary wind tables the outer driver
+   ! already limits by the same dynamics timescale; applying this local
+   ! phi/(q*w^2) estimate again can over-resolve dense wind shells by orders of
+   ! magnitude because q is normalized at the moving contact edge.
    dt_dyn_cfl = huge(1d0)
-   if (.not. state%in_cooling_phase .and. state%w_sh > 1d-30 .and. &
-       state%q > 1d-30 .and. state%phi_sh > 1d-30) then
+   if (state%csm_powerlaw_fast .and. .not. state%in_cooling_phase .and. &
+       state%w_sh > 1d-30 .and. state%q > 1d-30 .and. state%phi_sh > 1d-30) then
     dt_dyn_cfl = 0.3d0 * state%phi_sh / (state%q * state%w_sh**2)
    end if
 
@@ -4112,8 +4141,10 @@ subroutine transition_to_cooling(state)
    ! Delta_x -> 0 near breakout; use a floor to avoid excessive subcycling.
    advection_cfl = huge(1d0)
    Delta_x = state%x_ph - state%x_min
-   if (.not. state%in_cooling_phase .and. Delta_x > 0d0 .and. state%x_sh_dot > 1d-30) then
-    advection_cfl = max(0.3d0 * max(Delta_x, 5d-2) / state%x_sh_dot, 1d-6)
+   if (state%csm_powerlaw_fast .and. .not. state%in_cooling_phase .and. &
+       Delta_x > 0d0 .and. state%x_sh_dot > 1d-30) then
+    advection_floor = 1d-6
+    advection_cfl = max(0.3d0 * max(Delta_x, 5d-2) / state%x_sh_dot, advection_floor)
    end if
 
    dzeta_step = dzeta_target - dzeta_total

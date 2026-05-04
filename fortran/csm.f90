@@ -16,7 +16,8 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
                                    forward_shock_radius, shell_leakage_timescale, &
                                    total_radiation_energy, &
                                    dimless_state_type, dimless_comoving_transport_step, &
-                                   reset_dimless_state, initialize_dimless_state, dimless_to_cgs
+                                   reset_dimless_state, initialize_dimless_state, dimless_to_cgs, &
+                                   dimless_dynamics_timescale_cgs, update_dimless_shock_luminosities
 
  implicit none
 
@@ -873,6 +874,15 @@ end subroutine lightcurve_wind_bpl
   do while (t<=t_end_run)
 
 ! Evolve shell properties
+   if (run_mode == 3) then
+    call update_dimless_shock_luminosities(dl_state_global)
+    ku = 0d0
+    kr = max(dl_state_global%v_sh_cgs, 0d0)
+    km = 0d0
+    lum_fs = dl_state_global%lum_heat_fs_cgs
+    lum_rs = dl_state_global%lum_heat_rs_cgs
+    lum_heat = dl_state_global%lum_heat_total_cgs
+   else
 	   ku = dudt(u,r,m,t,op)
 	   kr = drdt(u,r,m,t,op)
 	   km = dmdt(u,r,m,t,op)
@@ -889,6 +899,7 @@ end subroutine lightcurve_wind_bpl
 	    lum_rs = eff_global*lum_rs
 	   end select
 	   lum_heat = lum_fs + lum_rs
+   end if
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
    if(run_mode == 3)then
@@ -896,10 +907,7 @@ end subroutine lightcurve_wind_bpl
     ! The transport solver subcycles internally, but if this outer step is too
     ! coarse (e.g. fixed 1 day) fast dark-phase/rise features are lost by
     ! interpolation onto user times.
-    dt = huge(1d0)
-    if(abs(ku)>1d-30)dt = min(dt,abs(u/ku))
-    if(abs(kr)>1d-30)dt = min(dt,abs(r/kr))
-    if(abs(km)>1d-30)dt = min(dt,abs(m/km))
+    dt = dimless_dynamics_timescale_cgs(dl_state_global)
     dt = 0.02d0*dt
 
     ! Keep the compact-CSM peak finely sampled, but avoid writing thousands of
@@ -908,9 +916,9 @@ end subroutine lightcurve_wind_bpl
     if (t < 4d0*86400d0) then
      dt = min(dt, 0.05d0*86400d0)
     else if (t < 10d0*86400d0) then
-     dt = min(dt, 0.01d0*86400d0)
+     dt = min(dt, 0.02d0*86400d0)
     else if (t < 30d0*86400d0) then
-     dt = min(dt, 0.05d0*86400d0)
+     dt = min(dt, 0.10d0*86400d0)
     else if (t < 120d0*86400d0) then
      dt = min(dt, 0.25d0*86400d0)
     else
@@ -1216,8 +1224,8 @@ end subroutine lightcurve_wind_bpl
        rfs_array(n) = r_store
        rph_array(n) = r_ph
        etrap_array(n) = 0d0
-       tleak_array(n) = shell_leakage_timescale(tr_state, r_store, t, m)
-       tauhyb_array(n) = shell_optical_depth(r_store, t)
+       tleak_array(n) = 0d0
+       tauhyb_array(n) = dl_state_global%tau_ahead_csm
       else
        rfs_array(n) = forward_shock_radius(tr_state, r, t, m)
        rph_array(n) = r_ph
