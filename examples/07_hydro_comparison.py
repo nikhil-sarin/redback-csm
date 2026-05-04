@@ -82,16 +82,16 @@ def main():
             m_csm_msun=1.0,
         )
 
-        lc_hybrid_const = _get_lc_boxwind_bpl(
+        lc_transport_const = _get_lc_boxwind_bpl(
             **sp, vwind=100.0, delta=0.5, nn=7.0,
             mexp=5.0, eexp=1.0, eff=args.eff, kappa=args.kappa,
-            mode="hybrid", efficiency_mode=0, n_rad_zones=32,
+            mode="transport", efficiency_mode=0, n_rad_zones=32,
         )
 
-        lc_hybrid_timed = _get_lc_boxwind_bpl(
+        lc_transport_timed = _get_lc_boxwind_bpl(
             **sp, vwind=100.0, delta=0.5, nn=7.0,
             mexp=5.0, eexp=1.0, eff=args.eff, kappa=args.kappa,
-            mode="hybrid", efficiency_mode=1, n_rad_zones=32,
+            mode="transport", efficiency_mode=1, n_rad_zones=32,
         )
 
         lc_simple = _get_lc_boxwind_bpl(
@@ -100,25 +100,25 @@ def main():
             mode="simple",
         )
 
-        t_hybrid_const = lc_hybrid_const.time / 86400.0
-        t_hybrid_timed = lc_hybrid_timed.time / 86400.0
+        t_transport_const = lc_transport_const.time / 86400.0
+        t_transport_timed = lc_transport_timed.time / 86400.0
         t_simple = lc_simple.time / 86400.0
 
         ax.plot(
-            t_hybrid_const,
-            lc_hybrid_const.lbol,
+            t_transport_const,
+            lc_transport_const.lbol,
             color="teal",
             ls="--",
             lw=1.8,
-            label="Hybrid (constant FS eff.)",
+            label="Transport (constant FS eff.)",
         )
         ax.plot(
-            t_hybrid_timed,
-            lc_hybrid_timed.lbol,
+            t_transport_timed,
+            lc_transport_timed.lbol,
             color="royalblue",
             ls="-",
             lw=2.0,
-            label="Hybrid (time-dependent FS eff.)",
+            label="Transport (time-dependent FS eff.)",
         )
         ax.plot(
             t_simple,

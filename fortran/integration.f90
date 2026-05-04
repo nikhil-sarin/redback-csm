@@ -10,10 +10,10 @@ module integration
 
 contains
 
-function dmdt(u,r,m,t,op)
+function dmdt(u,r,t,op)
   ! Continuity equation
   type(outflow_parameters),intent(inout):: op(1:2)
-  real(8),intent(in):: u,r,m,t
+  real(8),intent(in):: u,r,t
   real(8):: dmdt, rel_in, rel_out
   rel_in = max(v_in(r,t,op(1)) - u, 0d0)
   rel_out = max(u - v_out(r,t,op(2)), 0d0)
@@ -33,14 +33,6 @@ function dudt(u,r,m,t,op) result(du_dt)
          - rho4pir2_out(r,t,op(2))*rel_out**2 ) / m
   du_dt = aram
  end function dudt
-
- function drdt(u,r,m,t,op)
-  ! Velocity
-  type(outflow_parameters),intent(in):: op(1:2)
-  real(8),intent(in):: u,r,m,t
-  real(8):: drdt
-  drdt = u
- end function drdt
 
 function forward_shock_luminosity(r,t,u,op) result(lum)
   ! Forward-shock contribution to the dissipated luminosity

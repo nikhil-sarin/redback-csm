@@ -5,7 +5,7 @@ module csm_transport
 use get_vals, only: op, query_csm_density, query_csm_inner_edge, query_csm_outer_edge, &
                      query_tau_to_edge, query_csm_photosphere_radius, query_csm_velocity, &
                      query_ejecta_density, query_ejecta_velocity
-use integration, only: dudt, drdt, dmdt, forward_shock_luminosity, reverse_shock_luminosity, &
+use integration, only: dudt, forward_shock_luminosity, reverse_shock_luminosity, &
                        forward_shock_radiative_efficiency, reverse_shock_radiative_efficiency
 use csm_runtime, only: shock_efficiency_mode
 
@@ -426,9 +426,9 @@ subroutine deposit_scalar_energy_to_reference(cut_l, cut_r, ref_r, ref_inner, re
   deallocate(ref_face_l, ref_face_r, ref_face_vol)
 end subroutine deposit_scalar_energy_to_reference
 
-subroutine initialize_interaction_grid(state, r_shell, t_shell, m_shell, kappa, n_zones)
+subroutine initialize_interaction_grid(state, r_shell, t_shell, kappa, n_zones)
   type(transport_state_type), intent(inout) :: state
-  real(8), intent(in) :: r_shell, t_shell, m_shell, kappa
+  real(8), intent(in) :: r_shell, t_shell, kappa
   integer, intent(in) :: n_zones
 
   call reset_transport_state(state)
@@ -535,20 +535,18 @@ integer function first_active_zone_at_arr(radius_ref, r_inner, r_outer, n, r_she
   end do
 end function first_active_zone_at_arr
 
-subroutine interaction_zone_geometry_at(state, i, r_shell, r_face_l, r_face_r, vol_i)
+subroutine interaction_zone_geometry_at(state, i, r_face_l, r_face_r, vol_i)
   type(transport_state_type), intent(in) :: state
   integer, intent(in) :: i
-  real(8), intent(in) :: r_shell
   real(8), intent(out) :: r_face_l, r_face_r, vol_i
 
   ! Full-grid interaction: cell geometry is fixed over the complete CSM.
-  ! r_shell is retained in the interface for compatibility with older callers.
   call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
 end subroutine interaction_zone_geometry_at
 
-subroutine update_interaction_geometry(state, r_shell, t_shell, m_shell)
+subroutine update_interaction_geometry(state, r_shell, t_shell)
   type(transport_state_type), intent(inout) :: state
-  real(8), intent(in) :: r_shell, t_shell, m_shell
+  real(8), intent(in) :: r_shell, t_shell
 
   state%t_shell = t_shell
   state%r_shell_prev = state%r_shell_current
@@ -637,12 +635,12 @@ subroutine remap_y_conservative(old_r, old_inner, old_outer, old_y, n_old, &
   deallocate(e_new)
 end subroutine remap_y_conservative
 
-subroutine update_interaction_grid(state, r_shell, t_shell, m_shell)
+subroutine update_interaction_grid(state, r_shell, t_shell)
   type(transport_state_type), intent(inout) :: state
-  real(8), intent(in) :: r_shell, t_shell, m_shell
+  real(8), intent(in) :: r_shell, t_shell
 
   if (.not. state%initialized) return
-  call update_interaction_geometry(state, r_shell, t_shell, m_shell)
+  call update_interaction_geometry(state, r_shell, t_shell)
   call update_tau_and_luminosity(state)
  end subroutine update_interaction_grid
 
@@ -693,9 +691,9 @@ subroutine shell_structure_estimate(state, r_shell, t_shell, m_shell, delta_r, t
   tleak = max(delta_r/clight, tau_sh*delta_r/clight)
 end subroutine shell_structure_estimate
 
-real(8) function forward_shock_radius(state, r_shell, t_shell, m_shell) result(r_fs)
+real(8) function forward_shock_radius(state, r_shell) result(r_fs)
   type(transport_state_type), intent(in) :: state
-  real(8), intent(in) :: r_shell, t_shell, m_shell
+  real(8), intent(in) :: r_shell
   integer :: i
   real(8) :: target_mass, cum_mass, cell_mass
   real(8) :: r_face_l, r_face_r, vol_i, rho_i, r3
@@ -767,24 +765,18 @@ real(8) function interaction_shell_leakage_timescale(state, r_shell, t_shell, m_
   end if
  end function interaction_shell_leakage_timescale
 
-subroutine interaction_transport_step(state, dt, r_shell, u_shell, t_shell, m_shell, lum_heat, lum_obs, r_ph)
+subroutine interaction_transport_step(state, dt, r_shell, u_shell, t_shell, lum_heat, lum_obs, r_ph)
   type(transport_state_type), intent(inout) :: state
-  real(8), intent(in) :: dt, r_shell, u_shell, t_shell, m_shell, lum_heat
+  real(8), intent(in) :: dt, r_shell, u_shell, t_shell, lum_heat
   real(8), intent(out) :: lum_obs, r_ph
   real(8) :: lum_input
-  real(8) :: u_grid, r_face_l, r_face_r, vol_i
-  real(8) :: e_tot_before, e_tot_after_target, e_res_before
-  integer :: i
 
-  e_res_before = max(state%e_residual, 0d0)
-  e_tot_before = e_res_before
-  if (state%initialized) e_tot_before = e_tot_before + total_radiation_energy(state)
   state%u_shell_current = u_shell
   state%lum_heat_last = lum_heat
   if (.not. state%initialized) then
-   call initialize_interaction_grid(state, max(r_shell, 1d0), t_shell, m_shell, max(state%kappa, 1d-30), max(state%n_zones,48))
+   call initialize_interaction_grid(state, max(r_shell, 1d0), t_shell, max(state%kappa, 1d-30), max(state%n_zones,48))
   else
-   call update_interaction_grid(state, max(r_shell, 1d0), t_shell, m_shell)
+   call update_interaction_grid(state, max(r_shell, 1d0), t_shell)
   end if
 
   lum_input = max(lum_heat, 0d0)
@@ -802,12 +794,10 @@ subroutine interaction_transport_step(state, dt, r_shell, u_shell, t_shell, m_sh
   state%e_residual = 0d0
  end subroutine interaction_transport_step
 
-subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_shell, t_shell, lum_target, lum_heat, u_reservoir, &
+subroutine initialize_cooling_state_from_interaction(state, r_shell, u_shell, m_shell, t_shell, &
      pre_y_in, pre_radius_in, pre_r_inner_in, pre_r_outer_in)
   type(transport_state_type), intent(inout) :: state
   real(8), intent(in) :: r_shell, u_shell, m_shell, t_shell
-  real(8), intent(in), optional :: lum_target, lum_heat
-  real(8), intent(in), optional :: u_reservoir
   ! Optional: pre-collapse radiation field from before interaction_transport_step.
   ! When provided, these are used as the IC source rather than the (collapsed) state%y.
   real(8), intent(in), optional :: pre_y_in(:), pre_radius_in(:)
@@ -1006,8 +996,7 @@ subroutine cooling_transport_step(state, dt, t_shell, lum_obs, r_ph, lum_heat)
   end if
   if (.not. state%cooling_initialized) then
    call initialize_cooling_state_from_interaction(state, state%r_shell_current, &
-        max(state%u_shell_current, 1d-30), max(state%m_shocked_csm + state%m_shocked_ej, 1d-30), t_shell, &
-        lum_heat=state%lum_heat_last)
+        max(state%u_shell_current, 1d-30), max(state%m_shocked_csm + state%m_shocked_ej, 1d-30), t_shell)
   end if
 
   lum_heat_local = 0d0
@@ -1035,7 +1024,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
   real(8) :: t_loc, t_next, dt_step, dt_move, dt_rad, subratio
   real(8) :: r_loc, u_loc, m_loc
   real(8) :: m_csm_loc, m_ej_loc, dm_csm_dt, dm_ej_dt
-  real(8) :: ku, kr, km
+  real(8) :: ku, kr
   real(8) :: ku_mid, kr_mid, t_mid
   real(8) :: u_mid, r_mid, m_mid, m_ej_mid, m_csm_mid
   real(8) :: dm_ej_mid, dm_csm_mid
@@ -1074,8 +1063,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
    state%t_shell = t_shell
    ! Initialize transport geometry before timestep selection so the very first
    ! step respects the diffusion timescale (critical for the early dark phase).
-   call initialize_interaction_grid(state, r_init, t_shell, &
-        m_loc, kappa_init, nz_init)
+   call initialize_interaction_grid(state, r_init, t_shell, kappa_init, nz_init)
    state%u_shell_current = max(v_sh, 1d5)
    state%m_shocked_csm = m_loc
    state%m_shocked_ej = 0d0
@@ -1145,7 +1133,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
     state%m_shocked_ej = max(m_ej_loc, 0d0)
     r_fs_prev = r_loc  ! emergence criterion: shell reaches r_csm,out (paper §3.1)
     ku = dudt(u_loc, r_loc, m_loc, t_loc, op)
-    kr = drdt(u_loc, r_loc, m_loc, t_loc, op)
+    kr = u_loc
     dm_ej_dt = 4d0*pi*r_loc*r_loc*query_ejecta_density(r_loc, t_loc, op(1)) * &
                (query_ejecta_velocity(r_loc, t_loc, op(1)) - u_loc)
     dm_csm_dt = 4d0*pi*r_loc*r_loc*query_csm_density(r_loc, t_loc, op(2)) * &
@@ -1163,7 +1151,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
     m_mid = max(m_ej_mid + m_csm_mid, 1d-30)
 
     ku_mid = dudt(u_mid, r_mid, m_mid, t_mid, op)
-    kr_mid = drdt(u_mid, r_mid, m_mid, t_mid, op)
+    kr_mid = u_mid
     dm_ej_mid = 4d0*pi*r_mid*r_mid*query_ejecta_density(r_mid, t_mid, op(1)) * &
                 (query_ejecta_velocity(r_mid, t_mid, op(1)) - u_mid)
     dm_csm_mid = 4d0*pi*r_mid*r_mid*query_csm_density(r_mid, t_mid, op(2)) * &
@@ -1195,7 +1183,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
     pre_radius = state%radius
     pre_r_inner = state%r_inner
     pre_r_outer = state%r_outer
-    call interaction_transport_step(state, dt_step, r_loc, u_loc, t_loc + dt_step, m_loc, heat_sub, lum_tmp, r_ph)
+    call interaction_transport_step(state, dt_step, r_loc, u_loc, t_loc + dt_step, heat_sub, lum_tmp, r_ph)
     e_rad = total_radiation_energy(state)
     du_res = state%e_residual - e_res_prev
     ebal = (heat_sub - max(lum_tmp, 0d0)) * dt_step - ((e_rad + state%e_residual) - (e_prev + e_res_prev))
@@ -1220,7 +1208,7 @@ subroutine comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, lum_hea
       write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
            'M3_PRE_GEOM rin=', pre_r_inner, 'rout=', pre_r_outer, 'state_rin=', state%r_inner, 'state_rout=', state%r_outer
      end if
-      call initialize_cooling_state_from_interaction(state, r_loc, u_loc, m_loc, t_loc + dt_step, lum_tmp, heat_sub, &
+      call initialize_cooling_state_from_interaction(state, r_loc, u_loc, m_loc, t_loc + dt_step, &
            pre_y_in=pre_y, pre_radius_in=pre_radius, &
            pre_r_inner_in=pre_r_inner, pre_r_outer_in=pre_r_outer)
       stop_after_sub = .true.
@@ -1343,7 +1331,6 @@ real(8) function outer_escape_conductance(state, iph, r_ph) result(k_escape)
   integer, intent(in) :: iph
   real(8), intent(in) :: r_ph
   real(8) :: r_face_l, r_face_r, vol_i, area_ph, stream_factor
-  real(8) :: dr_half, dtau_edge, escape_factor
 
   if (iph < 1 .or. iph > state%n_zones) then
    k_escape = 0d0
@@ -1366,9 +1353,8 @@ subroutine find_transport_photosphere(state, r_ph, lum_obs)
   type(transport_state_type), intent(in) :: state
   real(8), intent(out) :: r_ph, lum_obs
   integer :: iph, ihi
-  real(8) :: y_ph, tau_lo, tau_hi, frac, y_obs, r_obs
-  real(8) :: t_relax, ramp
-  real(8) :: r_face_l, r_face_r, vol_i, dr, rho_face, dcoef, e_n, e_nm1, flux_out
+  real(8) :: tau_lo, tau_hi, frac, y_obs, r_obs
+  real(8) :: r_face_l, r_face_r, vol_i, e_n, flux_out
 
   ihi = 1
   call photosphere_boundary_from_tau(state, ihi, iph, r_ph)
@@ -1421,7 +1407,7 @@ real(8) function transport_timestep_limit(state)
 
   do i = ilo, iph
    if (.not. state%in_cooling_phase) then
-    call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
+    call interaction_zone_geometry_at(state, i, r_face_l, r_face_r, vol_i)
    else
     call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
    end if
@@ -1462,7 +1448,7 @@ real(8) function transport_timestep_limit(state)
 real(8) function shock_motion_timestep_limit(state, u_shell)
   type(transport_state_type), intent(in) :: state
   real(8), intent(in) :: u_shell
-  integer :: ihi, i
+  integer :: ihi
   real(8) :: dr_nom, r_face_l, r_face_r, vol_i
 
   shock_motion_timestep_limit = huge(1d0)
@@ -1542,7 +1528,7 @@ subroutine solve_transport_step(state, dt, lum_heat, theta_in)
     cycle
    end if
    if (.not. state%in_cooling_phase) then
-    call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
+    call interaction_zone_geometry_at(state, i, r_face_l, r_face_r, vol_i)
    else
     call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
    end if
@@ -1607,7 +1593,7 @@ subroutine solve_transport_step(state, dt, lum_heat, theta_in)
     cycle
    end if
    if (.not. state%in_cooling_phase) then
-    call interaction_zone_geometry_at(state, i, state%r_shell_current, r_face_l, r_face_r, vol_i)
+    call interaction_zone_geometry_at(state, i, r_face_l, r_face_r, vol_i)
    else
     call zone_geometry(state, i, r_face_l, r_face_r, vol_i)
    end if
@@ -2008,7 +1994,7 @@ end subroutine update_tau_and_luminosity
   rho_inside = query_csm_density(state%R_csm_in * (1d0 + 1d-8), t_dim, op(2))
   state%rho_csm_in = max(max(rho_edge, rho_inside), 1d-30)
   state%rho_ej_in = max(query_ejecta_density(state%R_csm_in, t_dim, op(1)), 1d-30)
-  state%csm_powerlaw_fast = static_powerlaw_csm_slope(state, state%csm_eta_pow)
+  state%csm_powerlaw_fast = static_powerlaw_csm_slope(state%csm_eta_pow)
 
   ! q = rho_csm_in / rho_ej_in (paper Eq. 751)
   state%q = state%rho_csm_in / state%rho_ej_in
@@ -2356,8 +2342,7 @@ end subroutine update_tau_and_luminosity
 ! Interaction: x = r/R_csm_in, integrate τ from x_sh to x_csm_out
 ! Cooling: x = r/R_in(t), integrate τ from x_min to x_csm_out_cool
 ! ------------------------------------------------------------------
- logical function static_powerlaw_csm_slope(state, eta_pow) result(ok)
-  type(dimless_state_type), intent(in) :: state
+ logical function static_powerlaw_csm_slope(eta_pow) result(ok)
   real(8), intent(out) :: eta_pow
 
   integer :: n, im
@@ -2403,7 +2388,7 @@ end subroutine update_tau_and_luminosity
    ok = .true.
    eta_pow = state%csm_eta_pow
   else
-   ok = static_powerlaw_csm_slope(state, eta_pow)
+   ok = static_powerlaw_csm_slope(eta_pow)
   end if
   if (.not. ok) return
 
@@ -2441,7 +2426,7 @@ end subroutine update_tau_and_luminosity
    found = .true.
    eta_pow = state%csm_eta_pow
   else
-   found = static_powerlaw_csm_slope(state, eta_pow)
+   found = static_powerlaw_csm_slope(eta_pow)
   end if
   if (.not. found) return
 
@@ -2511,26 +2496,26 @@ end subroutine update_tau_and_luminosity
   real(8), parameter :: tau_ph = 2d0 / 3d0
 
   ! Determine integration bounds and length scale
-	  if (state%in_cooling_phase) then
-	   x_inner = max(state%x_min_cool, 1d-12)
-	   ! Cooling uses a comoving coordinate tied to the expanding shell support.
-	   ! x_min_cool and x_out_cool are frozen at handoff and remain fixed in x.
-	   x_outer = max(state%x_out_cool, x_inner)
-	   ! τ = κ·ρ_csm_in·(R0/R_in)³·R_in·∫ η_csm dx = κ·ρ_csm_in·R0³/R_in²·∫ η_csm dx
-	   length_scale = state%R0**3 / (state%R0 * state%R_in_R0)**2
-	   ! Keep the cooling diffusion solve on the full homologous shell support.
-	   ! The previous moving-photosphere boundary shrank the computational
-	   ! domain without conservatively remapping the radiation field, which
-	   ! numerically removed the post-breakout reservoir.  The photosphere
-	   ! recession should be handled as an emission/diagnostic surface, not by
-	   ! deleting the outer shell from the diffusion state.
-	   state%x_ph = x_outer
-	   state%x_ph_cache_valid = .true.
-	   state%x_ph_cache_start = x_inner
-	   state%x_ph_cache_outer = x_outer
-	   state%x_ph_cache_scale = length_scale
-	   return
-	  else
+   if (state%in_cooling_phase) then
+    x_inner = max(state%x_min_cool, 1d-12)
+    ! Cooling uses a comoving coordinate tied to the expanding shell support.
+    ! x_min_cool and x_out_cool are frozen at handoff and remain fixed in x.
+    x_outer = max(state%x_out_cool, x_inner)
+    ! τ = κ·ρ_csm_in·(R0/R_in)³·R_in·∫ η_csm dx = κ·ρ_csm_in·R0³/R_in²·∫ η_csm dx
+    length_scale = state%R0**3 / (state%R0 * state%R_in_R0)**2
+    ! Keep the cooling diffusion solve on the full homologous shell support.
+    ! The previous moving-photosphere boundary shrank the computational
+    ! domain without conservatively remapping the radiation field, which
+    ! numerically removed the post-breakout reservoir.  The photosphere
+    ! recession should be handled as an emission/diagnostic surface, not by
+    ! deleting the outer shell from the diffusion state.
+    state%x_ph = x_outer
+    state%x_ph_cache_valid = .true.
+    state%x_ph_cache_start = x_inner
+    state%x_ph_cache_outer = x_outer
+    state%x_ph_cache_scale = length_scale
+    return
+   else
    x_inner = max(x_start, 1d0)
    x_outer = max(state%x_csm_out, x_inner)
    length_scale = state%R_csm_in
@@ -4077,10 +4062,9 @@ subroutine transition_to_cooling(state)
 ! Replaces old comoving_transport_step for run_mode 3
 ! Paper Sec. A3: operator splitting (dynamics first, then diffusion)
 ! ------------------------------------------------------------------
- subroutine dimless_comoving_transport_step(state, dt, t_shell, r_sh, v_sh, m_sh, &
-                                             lum_heat, lum_obs, r_ph_out)
+ subroutine dimless_comoving_transport_step(state, dt, lum_heat, lum_obs, r_ph_out)
   type(dimless_state_type), intent(inout) :: state
-  real(8), intent(in) :: dt, t_shell, r_sh, v_sh, m_sh, lum_heat
+  real(8), intent(in) :: dt, lum_heat
   real(8), intent(out) :: lum_obs
   real(8), intent(out), optional :: r_ph_out
 
@@ -4088,7 +4072,6 @@ subroutine transition_to_cooling(state)
   real(8) :: dzeta_step, dzeta_total, dzeta_target
   real(8) :: dy_step
   real(8) :: dt_dyn_cfl, dt_diff_cfl, advection_cfl
-  real(8) :: advection_floor
   real(8) :: Delta_x, x_sh_old, x_ph_old, frac, dy_pre, dy_post
   real(8) :: E_rad_dim, E_rad_cgs, dedx_surf, lum_grad_cgs, lum_grad_ratio
   real(8) :: dt_int_cgs
@@ -4143,8 +4126,7 @@ subroutine transition_to_cooling(state)
    Delta_x = state%x_ph - state%x_min
    if (state%csm_powerlaw_fast .and. .not. state%in_cooling_phase .and. &
        Delta_x > 0d0 .and. state%x_sh_dot > 1d-30) then
-    advection_floor = 1d-6
-    advection_cfl = max(0.3d0 * max(Delta_x, 5d-2) / state%x_sh_dot, advection_floor)
+    advection_cfl = max(0.3d0 * max(Delta_x, 5d-2) / state%x_sh_dot, 1d-6)
    end if
 
    dzeta_step = dzeta_target - dzeta_total

@@ -54,7 +54,7 @@ def main():
                 esn=1.0,
                 eff=1.0,
                 m_csm=1.0,
-                mode="hybrid",
+                mode="transport",
                 efficiency_mode=args.efficiency_mode,
                 kappa=0.2,
                 n_rad_zones=panel["n_rad_zones"],

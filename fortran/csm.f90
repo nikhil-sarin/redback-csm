@@ -22,7 +22,7 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
  implicit none
 
  real(8),allocatable,dimension(:),public:: tarray, Larray, temparray, rarray, varray, marray, ldiff, lfs, lrs
- real(8),allocatable,dimension(:),public:: rfsarray, rpharray, etraparray, tleakarray, tauarray_hybrid
+ real(8),allocatable,dimension(:),public:: rfsarray, rpharray, etraparray, tleakarray, tauarray_transport
  public:: lightcurve_wind_exponential, lightcurve_wind_bpl, &
           lightcurve_bpl_wind, lightcurve_exponential_wind, &
           lightcurve_wind_explosion, lightcurve_explosion_wind, &
@@ -31,7 +31,7 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
           lightcurve_explosion_bpl, lightcurve_bpl_exponential, &
           lightcurve_exponential_explosion, lightcurve_explosion_exponential, &
           lightcurve_static_bpl, lightcurve_static_exponential, &
-          set_model_mode, set_efficiency_mode, set_run_mode, set_hybrid_parameters, &
+          set_efficiency_mode, set_run_mode, set_transport_parameters, &
           set_bpl_cutoff_ratio, get_dimless_state_debug
 
  private:: finalize_outputs, do_main_loop
@@ -39,15 +39,15 @@ use csm_transport, only: transport_state_type, reset_transport_state, &
  private
 integer,parameter:: ll=200000
  real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array, fs_array, rs_array
- real(8),dimension(ll):: rfs_array, rph_array, etrap_array, tleak_array, tauhyb_array
+ real(8),dimension(ll):: rfs_array, rph_array, etrap_array, tleak_array, tau_array_transport
  integer,dimension(ll):: i_array
  real(8):: t_start=1d1, t_end=10d0*year
  real(8):: u,r,m,t
 
- ! Run mode: 1=simple, 2=hybrid
+ ! Run mode: 1=simple, 2=legacy post-processed diffusion, 3=transport
  integer :: run_mode = 1
 
- ! Hybrid mode parameters
+ ! Transport mode parameters
  integer :: n_rad_zones_global = 20
  real(8) :: opacity_const_global = 0.34d0
 
@@ -55,16 +55,6 @@ integer,parameter:: ll=200000
  type(dimless_state_type) :: dl_state_global
 
 contains
-
- subroutine set_model_mode(mode)
-  integer,intent(in):: mode
-
-  if(mode==1)then
-   run_mode = 1
-  else
-   run_mode = 2
-  end if
- end subroutine set_model_mode
 
  subroutine set_efficiency_mode(mode)
   integer,intent(in):: mode
@@ -81,13 +71,13 @@ contains
   endif
  end subroutine set_run_mode
 
- subroutine set_hybrid_parameters(n_zones, kappa_val)
+ subroutine set_transport_parameters(n_zones, kappa_val)
   integer, intent(in), optional :: n_zones
   real(8), intent(in), optional :: kappa_val
   
   if (present(n_zones)) n_rad_zones_global = n_zones
   if (present(kappa_val)) opacity_const_global = kappa_val
- end subroutine set_hybrid_parameters
+ end subroutine set_transport_parameters
 
  subroutine set_bpl_cutoff_ratio(ratio)
   use get_vals, only: set_global_bpl_vmax_ratio
@@ -95,9 +85,9 @@ contains
   call set_global_bpl_vmax_ratio(ratio)
  end subroutine set_bpl_cutoff_ratio
 
- subroutine finalize_outputs(csm_type, eff, kappa)
+ subroutine finalize_outputs(csm_type, kappa)
   integer,intent(in):: csm_type
-  real(8),intent(in),optional:: eff, kappa
+  real(8),intent(in),optional:: kappa
 
   if(run_mode == 1)then
    if(present(kappa))then
@@ -147,7 +137,7 @@ contains
   call configure_runtime(2,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(2,eff,kappa)
+  call finalize_outputs(2,kappa)
 
  end subroutine lightcurve_wind_exponential
 
@@ -188,7 +178,7 @@ contains
   call configure_runtime(2,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(2,eff,kappa)
+  call finalize_outputs(2,kappa)
 
  end subroutine lightcurve_wind_explosion
 
@@ -232,7 +222,7 @@ contains
   call configure_runtime(2,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(2,eff,kappa)
+  call finalize_outputs(2,kappa)
 
 end subroutine lightcurve_wind_bpl
 
@@ -277,7 +267,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(3,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(3,eff,kappa)
+  call finalize_outputs(3,kappa)
 
  end subroutine lightcurve_bpl_wind
 
@@ -319,7 +309,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(4,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(4,eff,kappa)
+  call finalize_outputs(4,kappa)
 
  end subroutine lightcurve_exponential_wind
 
@@ -360,7 +350,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(5,eff,kappa)
+  call finalize_outputs(5,kappa)
 
  end subroutine lightcurve_explosion_wind
 
@@ -400,7 +390,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(2,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(2,eff,kappa)
+  call finalize_outputs(2,kappa)
 
  end subroutine lightcurve_wind_wind
 
@@ -445,7 +435,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(3,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(3,eff,kappa)
+  call finalize_outputs(3,kappa)
 
  end subroutine lightcurve_bpl_bpl
 
@@ -484,7 +474,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(4,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(4,eff,kappa)
+  call finalize_outputs(4,kappa)
 
  end subroutine lightcurve_exponential_exponential
 
@@ -526,7 +516,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(5,eff,kappa)
+  call finalize_outputs(5,kappa)
 
  end subroutine lightcurve_explosion_explosion
 
@@ -575,7 +565,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(5,eff,kappa)
+  call finalize_outputs(5,kappa)
 
  end subroutine lightcurve_explosion_bpl
 
@@ -618,7 +608,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(5,eff,kappa)
+  call finalize_outputs(5,kappa)
 
  end subroutine lightcurve_static_bpl
 
@@ -664,7 +654,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(3,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(3,eff,kappa)
+  call finalize_outputs(3,kappa)
 
  end subroutine lightcurve_bpl_exponential
 
@@ -712,7 +702,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(4,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(4,eff,kappa)
+  call finalize_outputs(4,kappa)
 
  end subroutine lightcurve_exponential_explosion
 
@@ -760,7 +750,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(1,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(1,eff,kappa)
+  call finalize_outputs(1,kappa)
 
  end subroutine lightcurve_explosion_exponential
 
@@ -801,7 +791,7 @@ end subroutine lightcurve_wind_bpl
   call configure_runtime(1,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(1,eff,kappa)
+  call finalize_outputs(1,kappa)
 
  end subroutine lightcurve_static_exponential
 
@@ -812,28 +802,27 @@ end subroutine lightcurve_wind_bpl
   use integration
   use get_vals
 
-	  integer:: n, nsub, isub, nsub_cool, jsub, m3_log_counter
-	  real(8):: dt,ku,kr,km, t_end_run
-	  real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs, lum_heat_sub
-	  real(8) :: r_ph, L_ph, dt_rad, dt_sub, dt_remain, dt_cool, dt_cool_cap, dt_int_cap, dt_move
-	  real(8) :: t_old, r_old, u_old, m_old, lum_heat_old, r_sub, m_sub, t_sub
-	  real(8) :: t_sub_prev, r_sub_prev, m_sub_prev, r_out_prev, r_out_sub, f_emerge
-	  real(8) :: r_in_sub, shell_span_sub, gap_to_edge, u_sub, u_emerge, lum_heat_emerge
-	  real(8) :: r_fs_prev, r_fs_sub, r_face_l, dr_nom
-	  real(8) :: lum_heat_cool, gap_denom, gap_frac
-   real(8) :: rho_seed, dr_seed, r_out_seed, v_ej_init
+   integer:: n, nsub, isub, nsub_cool, jsub, m3_log_counter
+   real(8):: dt,ku,kr,km, t_end_run
+   real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs, lum_heat_sub
+   real(8) :: r_ph, L_ph, dt_rad, dt_sub, dt_remain, dt_cool, dt_cool_cap, dt_int_cap, dt_move
+   real(8) :: t_old, r_old, u_old, m_old, lum_heat_old, r_sub, m_sub, t_sub
+   real(8) :: t_sub_prev, r_sub_prev, m_sub_prev, r_out_prev, r_out_sub, f_emerge
+   real(8) :: r_in_sub, shell_span_sub, gap_to_edge, u_sub, u_emerge, lum_heat_emerge
+   real(8) :: r_fs_prev, r_fs_sub, r_face_l, dr_nom
+   real(8) :: lum_heat_cool, gap_denom, gap_frac
    character(len=32) :: m3_debug_env
    integer :: m3_debug_status
    logical :: mode3_debug
    type(transport_state_type) :: tr_state
 
-	  call reset_transport_state(tr_state)
+   call reset_transport_state(tr_state)
   call reset_dimless_state(dl_state_global)
-	  if(run_mode == 2 .or. run_mode == 3)then
-	   t_end_run = min(t_end, 300d0*86400d0)
-	  else
-	   t_end_run = t_end
-	  end if
+   if(run_mode == 2 .or. run_mode == 3)then
+    t_end_run = min(t_end, 300d0*86400d0)
+   else
+    t_end_run = t_end
+   end if
   
   L_ph = 0.0d0
   r_ph = 0.0d0
@@ -868,7 +857,7 @@ end subroutine lightcurve_wind_bpl
   rph_array = 0d0
   etrap_array = 0d0
   tleak_array = 0d0
-  tauhyb_array = 0d0
+  tau_array_transport = 0d0
   i_array = 0
   n = 0
   do while (t<=t_end_run)
@@ -883,22 +872,22 @@ end subroutine lightcurve_wind_bpl
     lum_rs = dl_state_global%lum_heat_rs_cgs
     lum_heat = dl_state_global%lum_heat_total_cgs
    else
-	   ku = dudt(u,r,m,t,op)
-	   kr = drdt(u,r,m,t,op)
-	   km = dmdt(u,r,m,t,op)
-	   lum_fs = forward_shock_luminosity(r,t,u,op)
-	   lum_rs = reverse_shock_luminosity(r,t,u,op)
-	   select case (shock_efficiency_mode)
-	   case (1)
-	    eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
-	    eta_rs = reverse_shock_radiative_efficiency(r,t,u,op,eff_global)
-	    lum_fs = eta_fs*lum_fs
-	    lum_rs = eta_rs*lum_rs
-	   case default
-	    lum_fs = eff_global*lum_fs
-	    lum_rs = eff_global*lum_rs
-	   end select
-	   lum_heat = lum_fs + lum_rs
+    ku = dudt(u,r,m,t,op)
+    kr = u
+    km = dmdt(u,r,t,op)
+    lum_fs = forward_shock_luminosity(r,t,u,op)
+    lum_rs = reverse_shock_luminosity(r,t,u,op)
+    select case (shock_efficiency_mode)
+    case (1)
+     eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
+     eta_rs = reverse_shock_radiative_efficiency(r,t,u,op,eff_global)
+     lum_fs = eta_fs*lum_fs
+     lum_rs = eta_rs*lum_rs
+    case default
+     lum_fs = eff_global*lum_fs
+     lum_rs = eff_global*lum_rs
+    end select
+    lum_heat = lum_fs + lum_rs
    end if
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
@@ -939,11 +928,11 @@ end subroutine lightcurve_wind_bpl
     if(.not.(dt>0d0.and.dt<huge(1d0)))exit
    end if
 
-	   t_old = t
-	   r_old = r
-	   u_old = u
-	   m_old = m
-	   lum_heat_old = lum_heat
+    t_old = t
+    r_old = r
+    u_old = u
+    m_old = m
+    lum_heat_old = lum_heat
 
    if (run_mode /= 3) then
     u = u + dt*ku
@@ -955,9 +944,9 @@ end subroutine lightcurve_wind_bpl
     end if
    end if
 
-	   if(run_mode == 1 .or. .not.diffusion_enabled)then
-	    erad = 0d0
-	   end if
+    if(run_mode == 1 .or. .not.diffusion_enabled)then
+     erad = 0d0
+    end if
 
    if (run_mode /= 3) t = t + dt
 
@@ -1033,8 +1022,8 @@ end subroutine lightcurve_wind_bpl
          r_in_sub = query_csm_inner_edge(t_sub, op(2))
          dr_nom = max((r_out_sub - r_in_sub) / dble(max(n_rad_zones_global,1)), 1d-30)
         end if
-        r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
-        r_fs_sub = forward_shock_radius(tr_state, r_sub, t_sub, m_sub)
+        r_fs_prev = forward_shock_radius(tr_state, r_sub_prev)
+        r_fs_sub = forward_shock_radius(tr_state, r_sub)
         if (r_fs_sub >= r_out_sub) then
          if (r_fs_prev < r_out_prev) then
           f_emerge = (r_out_prev - r_fs_prev) / &
@@ -1044,25 +1033,24 @@ end subroutine lightcurve_wind_bpl
           lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * &
                (dble(isub-1) + f_emerge) / dble(max(nsub,1))
           lum_heat_emerge = max(lum_heat_emerge, 0d0)
-	          if (f_emerge > 0d0) then
-	           call interaction_transport_step(tr_state, f_emerge*dt_sub, &
-	                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
-	                t_sub_prev + f_emerge*(t_sub-t_sub_prev), &
-	                m_sub_prev + f_emerge*(m_sub-m_sub_prev), lum_heat_emerge, L_ph, r_ph)
-		          end if
-	          call initialize_cooling_state_from_interaction(tr_state, &
-	               r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
-	               m_sub_prev + f_emerge*(m_sub-m_sub_prev), &
-	               t_sub_prev + f_emerge*(t_sub-t_sub_prev), L_ph, lum_heat_emerge)
+           if (f_emerge > 0d0) then
+            call interaction_transport_step(tr_state, f_emerge*dt_sub, &
+                 r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
+                 t_sub_prev + f_emerge*(t_sub-t_sub_prev), lum_heat_emerge, L_ph, r_ph)
+            end if
+           call initialize_cooling_state_from_interaction(tr_state, &
+                r_sub_prev + f_emerge*(r_sub-r_sub_prev), u_emerge, &
+                m_sub_prev + f_emerge*(m_sub-m_sub_prev), &
+                t_sub_prev + f_emerge*(t_sub-t_sub_prev))
          else
           f_emerge = 0d0
           u_emerge = u_old + (u - u_old) * dble(isub-1) / dble(max(nsub,1))
           lum_heat_emerge = lum_heat_old + (lum_heat - lum_heat_old) * dble(isub-1) / dble(max(nsub,1))
           lum_heat_emerge = max(lum_heat_emerge, 0d0)
-	          call initialize_cooling_state_from_interaction(tr_state, &
-	               r_sub_prev, u_emerge, m_sub_prev, t_sub_prev, L_ph, lum_heat_emerge)
-	         end if
-	         dt_remain = (1d0 - f_emerge) * dt_sub
+           call initialize_cooling_state_from_interaction(tr_state, &
+                r_sub_prev, u_emerge, m_sub_prev, t_sub_prev)
+          end if
+          dt_remain = (1d0 - f_emerge) * dt_sub
          if (dt_remain > 0d0) then
           dt_rad = transport_timestep_limit(tr_state)
           if (dt_rad > 0d0 .and. dt_rad < huge(1d0)) then
@@ -1091,14 +1079,14 @@ end subroutine lightcurve_wind_bpl
            end if
            call cooling_transport_step(tr_state, dt_cool, &
                 t_sub_prev + f_emerge*(t_sub-t_sub_prev) + dble(jsub)*dt_cool, L_ph, r_ph, lum_heat_cool)
-	         end do
+          end do
          else
           call find_transport_photosphere(tr_state, r_ph, L_ph)
          end if
         else
-         r_fs_prev = forward_shock_radius(tr_state, r_sub_prev, t_sub_prev, m_sub_prev)
-	         call interaction_transport_step(tr_state, dt_sub, r_sub, u_sub, t_sub, m_sub, lum_heat_sub, L_ph, r_ph)
-	        end if
+         r_fs_prev = forward_shock_radius(tr_state, r_sub_prev)
+          call interaction_transport_step(tr_state, dt_sub, r_sub, u_sub, t_sub, lum_heat_sub, L_ph, r_ph)
+         end if
        else
         dt_cool_cap = huge(1d0)
         if (tr_state%t_emerge > 0d0) then
@@ -1119,7 +1107,7 @@ end subroutine lightcurve_wind_bpl
            if (gap_frac < 1d0) lum_heat_cool = max(lum_heat_cool, tr_state%lum_heat_gap * max(1d0 - gap_frac, 0d0))
           end if
           call cooling_transport_step(tr_state, dt_cool, t_sub_prev + dble(jsub)*dt_cool, L_ph, r_ph, lum_heat_cool)
-	        end do
+         end do
         else
          gap_denom = max(tr_state%t_gap_end - tr_state%t_emerge, 0d0)
          lum_heat_cool = 0d0   ! no heating after shock exits CSM
@@ -1128,8 +1116,8 @@ end subroutine lightcurve_wind_bpl
           if (gap_frac < 1d0) lum_heat_cool = max(lum_heat_cool, tr_state%lum_heat_gap * max(1d0 - gap_frac, 0d0))
          end if
          call cooling_transport_step(tr_state, dt_sub, t_sub, L_ph, r_ph, lum_heat_cool)
-	        end if
-	       end if
+         end if
+        end if
 
        if(t_sub > t_start)then
         if (n < 1) then
@@ -1147,7 +1135,7 @@ end subroutine lightcurve_wind_bpl
          rph_array(n) = r_ph
          etrap_array(n) = total_radiation_energy(tr_state)
          tleak_array(n) = shell_leakage_timescale(tr_state, r_sub, t_sub, m_sub)
-         tauhyb_array(n) = shell_optical_depth(r_sub, t_sub)
+         tau_array_transport(n) = shell_optical_depth(r_sub, t_sub)
         else if (t_sub > t_array(n) * (1.0d0 + 1.0d-3)) then
          if (n >= ll) exit
          n = n + 1
@@ -1163,7 +1151,7 @@ end subroutine lightcurve_wind_bpl
          rph_array(n) = r_ph
          etrap_array(n) = total_radiation_energy(tr_state)
          tleak_array(n) = shell_leakage_timescale(tr_state, r_sub, t_sub, m_sub)
-         tauhyb_array(n) = shell_optical_depth(r_sub, t_sub)
+         tau_array_transport(n) = shell_optical_depth(r_sub, t_sub)
         end if
        end if
       end do
@@ -1180,7 +1168,7 @@ end subroutine lightcurve_wind_bpl
      write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5)') &
           'M3_LOOP_PRE t=', t, 'dt=', dt, 'r=', r, 'u=', u, 'Lheat=', lum_heat
     end if
-    call dimless_comoving_transport_step(dl_state_global, dt, t, r, u, m, lum_heat, L_ph, r_ph)
+    call dimless_comoving_transport_step(dl_state_global, dt, lum_heat, L_ph, r_ph)
     r = dl_state_global%r_sh_cgs
     u = dl_state_global%v_sh_cgs
     m = max(dl_state_global%m_sh_cgs, 1d-30)
@@ -1225,20 +1213,20 @@ end subroutine lightcurve_wind_bpl
        rph_array(n) = r_ph
        etrap_array(n) = 0d0
        tleak_array(n) = 0d0
-       tauhyb_array(n) = dl_state_global%tau_ahead_csm
+      tau_array_transport(n) = dl_state_global%tau_ahead_csm
       else
-       rfs_array(n) = forward_shock_radius(tr_state, r, t, m)
+       rfs_array(n) = forward_shock_radius(tr_state, r)
        rph_array(n) = r_ph
        etrap_array(n) = total_radiation_energy(tr_state)
        tleak_array(n) = shell_leakage_timescale(tr_state, r, t, m)
-       tauhyb_array(n) = shell_optical_depth(r, t)
+       tau_array_transport(n) = shell_optical_depth(r, t)
       end if
      else
       rfs_array(n) = r
       rph_array(n) = r_ph
       etrap_array(n) = erad
       tleak_array(n) = 0d0
-      tauhyb_array(n) = 0d0
+      tau_array_transport(n) = 0d0
      end if
     else
      ! SIMPLE MODE: store shock luminosity; diffusion is applied later in finalize_outputs
@@ -1249,7 +1237,7 @@ end subroutine lightcurve_wind_bpl
      rph_array(n) = r
      etrap_array(n) = 0d0
      tleak_array(n) = 0d0
-     tauhyb_array(n) = 0d0
+      tau_array_transport(n) = 0d0
     end if
     
     t_array(n) = t
@@ -1263,7 +1251,6 @@ end subroutine lightcurve_wind_bpl
 
   end do
 
-9000 continue
   if(allocated(tarray))deallocate(tarray)
   if(allocated(larray))deallocate(larray)
   if(allocated(temparray))deallocate(temparray)
@@ -1277,9 +1264,9 @@ end subroutine lightcurve_wind_bpl
   if(allocated(rpharray))deallocate(rpharray)
   if(allocated(etraparray))deallocate(etraparray)
   if(allocated(tleakarray))deallocate(tleakarray)
-  if(allocated(tauarray_hybrid))deallocate(tauarray_hybrid)
+  if(allocated(tauarray_transport))deallocate(tauarray_transport)
   allocate(tarray(n))
-  allocate(larray,temparray,rarray,varray,marray,ldiff,lfs,lrs,rfsarray,rpharray,etraparray,tleakarray,tauarray_hybrid,mold=tarray)
+  allocate(larray,temparray,rarray,varray,marray,ldiff,lfs,lrs,rfsarray,rpharray,etraparray,tleakarray,tauarray_transport,mold=tarray)
 
   tarray(1:n) = t_array(1:n)
   larray(1:n) = l_array(1:n)
@@ -1293,7 +1280,7 @@ end subroutine lightcurve_wind_bpl
   rpharray(1:n) = rph_array(1:n)
   etraparray(1:n) = etrap_array(1:n)
   tleakarray(1:n) = tleak_array(1:n)
-  tauarray_hybrid(1:n) = tauhyb_array(1:n)
+  tauarray_transport(1:n) = tau_array_transport(1:n)
   temparray(1:n) = temperature(larray(1:n),rarray(1:n))
 
 !!$  do n = 1, size(tarray)

@@ -197,28 +197,28 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     Configure the shared Fortran runtime state for one wrapper call.
 
     All Python wrappers support the same runtime kwargs:
-    - mode: 'simple' or 'hybrid'
+    - mode: 'simple' or 'transport'
     - kappa: opacity
-    - n_rad_zones: hybrid transport resolution
+    - n_rad_zones: transport solver resolution
     - efficiency_mode: optional alternate FS efficiency mode
     """
-    mode = kwargs.get("mode", "simple")
+    mode = str(kwargs.get("mode", "simple")).lower()
     kappa = kwargs.get("kappa", None)
     efficiency_mode = int(kwargs.get("efficiency_mode", 0))
 
     if mode == "simple":
         _get_csm().lc_mod.set_run_mode(1)
-    elif mode == "hybrid":
+    elif mode == "transport":
         _get_csm().lc_mod.set_run_mode(3)
         if kappa is None:
             kappa = 0.34
         n_rad_zones = int(kwargs.get("n_rad_zones", default_n_rad_zones))
-        _get_csm().lc_mod.set_hybrid_parameters(
+        _get_csm().lc_mod.set_transport_parameters(
             n_zones=n_rad_zones,
             kappa_val=float(kappa),
         )
     else:
-        raise ValueError(f"mode must be 'simple' or 'hybrid', got {mode}")
+        raise ValueError(f"mode must be 'simple' or 'transport', got {mode}")
 
     _get_csm().lc_mod.set_efficiency_mode(efficiency_mode)
     _get_csm().lc_mod.set_bpl_cutoff_ratio(
@@ -227,11 +227,11 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     return mode, kappa
 
 
-def _get_last_hybrid_transport_diagnostics():
+def _get_last_transport_diagnostics():
     """
     Return diagnostic arrays captured during the most recent Fortran CSM run.
 
-    These arrays are populated by the hybrid transport branch and are intended
+    These arrays are populated by the transport branch and are intended
     for debugging/validation rather than the public model API.
     """
     diag = _output_builder(
@@ -242,7 +242,7 @@ def _get_last_hybrid_transport_diagnostics():
     diag.r_photosphere = _get_csm().lc_mod.rpharray.copy()
     diag.e_trapped = _get_csm().lc_mod.etraparray.copy()
     diag.t_leak = _get_csm().lc_mod.tleakarray.copy()
-    diag.tau_shell = _get_csm().lc_mod.tauarray_hybrid.copy()
+    diag.tau_shell = _get_csm().lc_mod.tauarray_transport.copy()
     return _freeze_output(diag)
 
 
@@ -258,16 +258,16 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     :param eexp: Explosion energy in foe
     :param eff: Efficiency factor (0-1).
                 For simple mode: fraction of kinetic energy that radiates.
-                For hybrid mode: still passed through to the Fortran interaction model.
-    :param mode: 'simple' (thin shell only) or 'hybrid' (thin shell + transport solver)
-    :param n_rad_zones: Number of radiation grid zones (for hybrid mode only, default 40)
+                For transport mode: still passed through to the Fortran interaction model.
+    :param mode: 'simple' (thin shell only) or 'transport' (thin shell + transport solver)
+    :param n_rad_zones: Number of radiation grid zones (for transport mode only, default 40)
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation.
                   Common values: 0.34 (electron scattering), 0.1 (lower bound)
     :return: Named tuple with fields:
              - time: Time array in seconds
-             - lbol: Bolometric luminosity (transport/diffuse for hybrid, shock×eff for simple)
+             - lbol: Bolometric luminosity (transport for transport, shock×eff for simple)
              - lbol_shock: Shock luminosity (instantaneous kinetic energy deposition)
-             - lbol_diffuse: Diffuse luminosity (transport/diffuse for hybrid, None otherwise)
+             - lbol_diffuse: Diffuse luminosity (transport for transport, None otherwise)
              - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
@@ -279,11 +279,11 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
         lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0, eff=0.5)
         plt.plot(lc.time, lc.lbol)  # Plots eff × shock luminosity
 
-        # Hybrid mode - uses the transport solver for the observed luminosity
+        # Transport mode - uses the transport solver for the observed luminosity
         # while still taking the supplied efficiency parameter
         lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0,
-                                      eff=0.3, mode='hybrid', kappa=0.34, n_rad_zones=40)
-        plt.plot(lc.time, lc.lbol)         # Plots transport/diffuse luminosity
+                                      eff=0.3, mode='transport', kappa=0.34, n_rad_zones=40)
+        plt.plot(lc.time, lc.lbol)         # Plots transport luminosity
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity (always higher early on)
     """
     kwargs = dict(kwargs)
@@ -322,17 +322,17 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     
     # larray contains different things depending on mode:
     # - Simple mode: larray = eff * (lfs + lrs)
-    # - Hybrid mode: larray = shock luminosity; ldiff stores transport luminosity
+    # - Transport mode: larray = shock luminosity; ldiff stores transport luminosity
     larray_raw = _get_csm().lc_mod.larray.copy()
     
     # Shock luminosity is always lfs + lrs (total kinetic luminosity deposited)
     lbol_shock_total = lbol_fs + lbol_rs
 
     # Get diffuse/observed luminosity
-    if mode == 'hybrid':
-        # Hybrid: observed luminosity comes from the transport solver
+    if mode == 'transport':
+        # Transport: observed luminosity comes from the transport solver
         lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
-        lbol = lbol_diffuse  # Main output is transport/diffuse luminosity
+        lbol = lbol_diffuse  # Main output is transport luminosity
         lbol_shock = lbol_shock_total  # Store actual shock luminosity for comparison
     elif kappa is not None:
         # Simple with kappa: post-processed diffusion
@@ -1248,7 +1248,7 @@ def _get_lc_boxwind_bpl(
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
 
-    if mode == "hybrid":
+    if mode == "transport":
         lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
         lbol = lbol_diffuse
     elif kappa is not None:
