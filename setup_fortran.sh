@@ -23,8 +23,8 @@ python -m numpy.f2py -c \
     "$FORTRAN_DIR/physical_constants.f90" \
     "$FORTRAN_DIR/get_vals.f90" \
     "$FORTRAN_DIR/integration.f90" \
-    "$FORTRAN_DIR/csm_transport.f90" \
     "$FORTRAN_DIR/csm_runtime.f90" \
+    "$FORTRAN_DIR/csm_transport.f90" \
     "$FORTRAN_DIR/csm.f90" \
     -m csm
 

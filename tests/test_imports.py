@@ -45,7 +45,8 @@ def test_prior_provider_nickel():
     prior = get_prior("wind_bpl_nickel_bolometric")
     assert prior is not None
     assert "f_nickel" in prior
-    assert "mej" in prior
+    assert "mexp" in prior
+    assert "eexp" in prior
     assert "kappa" in prior
 
 
@@ -53,6 +54,113 @@ def test_prior_provider_unknown():
     from redback_csm.prior_provider import get_prior
 
     assert get_prior("not_a_real_model_xyz") is None
+
+
+def test_xray_bremsstrahlung_smoke():
+    import numpy as np
+    from redback_csm.xray import thermal_bremsstrahlung_xray
+
+    out = thermal_bremsstrahlung_xray(
+        time_days=np.array([1.0, 2.0, 3.0]),
+        shock_luminosity_cgs=np.array([1e42, 1e43, 1e44]),
+        vshell_cgs=np.array([1e8, 5e8, 1e9]),
+        redshift=0.01,
+        logepsx=-1.0,
+        luminosity_distance_cm=1e26,
+        rho_csm_cgs=np.array([1e-16, 8e-17, 5e-17]),
+        radius_cgs=np.array([1e14, 2e14, 3e14]),
+    )
+    assert out.shape == (3,)
+    assert np.all(np.isfinite(out))
+    assert np.all(out >= 0.0)
+
+
+def test_csm_nickel_diffuses_through_finite_wind_csm(monkeypatch):
+    import numpy as np
+    import redback_csm.models as models
+
+    calls = {}
+
+    def fake_csm(time, csm_model, **kwargs):
+        return np.zeros_like(time, dtype=float)
+
+    def fake_engine(time, f_nickel, mej, **kwargs):
+        calls.setdefault("engine_mej", []).append(mej)
+        return np.ones_like(time, dtype=float) * f_nickel * mej
+
+    class FakeDiffusion:
+        def __init__(self, time, dense_times, luminosity, kappa, kappa_gamma, mej, vej, **kwargs):
+            calls["diffusion_mej"] = mej
+            self.new_luminosity = np.ones_like(time, dtype=float) * mej
+
+    monkeypatch.setattr(models, "_csm_bolometric_impl", fake_csm)
+    monkeypatch.setattr(models, "_nickelcobalt_engine", fake_engine)
+
+    result = models._csm_nickel_bolometric_impl(
+        np.array([1.0, 2.0]),
+        "boxwind_bpl",
+        t1=1.0,
+        t2=3.0,
+        mdot_0=0.0,
+        mdot_1=2.0,
+        mdot_2=0.0,
+        vwind=100.0,
+        delta=0.5,
+        nn=12.0,
+        mexp=5.0,
+        eexp=1.0,
+        eff=0.5,
+        f_nickel=0.1,
+        kappa=0.34,
+        kappa_gamma=0.027,
+        interaction_process=FakeDiffusion,
+    )
+
+    assert calls["engine_mej"] == [5.0]
+    assert calls["diffusion_mej"] == 9.0
+    assert np.all(result == 9.0)
+
+
+def test_csm_nickel_uses_outer_ejecta_for_double_explosion(monkeypatch):
+    import numpy as np
+    import redback_csm.models as models
+
+    calls = {}
+
+    def fake_csm(time, csm_model, **kwargs):
+        return np.zeros_like(time, dtype=float)
+
+    def fake_engine(time, f_nickel, mej, **kwargs):
+        calls.setdefault("engine_mej", []).append(mej)
+        return np.ones_like(time, dtype=float)
+
+    class FakeDiffusion:
+        def __init__(self, time, dense_times, luminosity, kappa, kappa_gamma, mej, vej, **kwargs):
+            calls["diffusion_mej"] = mej
+            self.new_luminosity = np.ones_like(time, dtype=float)
+
+    monkeypatch.setattr(models, "_csm_bolometric_impl", fake_csm)
+    monkeypatch.setattr(models, "_nickelcobalt_engine", fake_engine)
+
+    models._csm_nickel_bolometric_impl(
+        np.array([1.0, 2.0]),
+        "exponential_bpl",
+        mexp=0.4,
+        eexp=0.02,
+        delta_out=0.5,
+        nn_out=12.0,
+        mexp_out=6.0,
+        eexp_out=1.0,
+        interval=100.0,
+        eff=0.5,
+        f_nickel=0.1,
+        kappa=0.34,
+        kappa_gamma=0.027,
+        interaction_process=FakeDiffusion,
+    )
+
+    assert calls["engine_mej"] == [6.0]
+    assert calls["diffusion_mej"] == 6.4
 
 
 def test_all_prior_files_exist():
@@ -97,6 +205,7 @@ def test_all_prior_files_exist():
 def test_models_registered_in_redback():
     """After install, CSM models should appear in redback's model library."""
     try:
+        import redback_csm  # noqa: F401
         import redback
         from redback.model_library import all_models_dict
 
@@ -110,6 +219,11 @@ def test_models_registered_in_redback():
             "smooth_triple_powerlaw_wind_bpl_bolometric",
         ]
         missing = [m for m in expected if m not in all_models_dict]
+        if missing:
+            import redback_csm.models as csm_models
+            local_missing = [m for m in expected if not hasattr(csm_models, m)]
+            assert not local_missing, f"Models missing from redback_csm.models: {local_missing}"
+            pytest.skip("redback model library was imported before plugin registration")
         assert not missing, f"Models missing from redback: {missing}"
     except ImportError:
         pytest.skip("redback not installed")

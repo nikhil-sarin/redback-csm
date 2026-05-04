@@ -26,12 +26,6 @@ module csm_runtime
 
 contains
 
- subroutine set_runtime_mode(mode)
-  integer, intent(in) :: mode
-
-  ! Legacy no-op retained for Python/Fortran interface compatibility.
- end subroutine set_runtime_mode
-
  subroutine set_shock_efficiency_mode(mode)
   integer, intent(in) :: mode
 

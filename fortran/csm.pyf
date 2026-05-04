@@ -18,7 +18,7 @@ python module csm ! in
             real(kind=8), public,allocatable,dimension(:) :: rpharray
             real(kind=8), public,allocatable,dimension(:) :: etraparray
             real(kind=8), public,allocatable,dimension(:) :: tleakarray
-            real(kind=8), public,allocatable,dimension(:) :: tauarray_hybrid
+            real(kind=8), public,allocatable,dimension(:) :: tauarray_transport
             integer, private,parameter,optional :: ll=10000
             real(kind=8), private,dimension(10000) :: t_array
             real(kind=8), private,dimension(10000) :: l_array
@@ -35,19 +35,16 @@ python module csm ! in
             real(kind=8), private :: t
             real(kind=8), private :: lum
             real(kind=8), private :: dt
-            subroutine set_model_mode(mode) ! in :csm:csm.f90:lc_mod
-                integer intent(in) :: mode
-            end subroutine set_model_mode
             subroutine set_efficiency_mode(mode) ! in :csm:csm.f90:lc_mod
                 integer intent(in) :: mode
             end subroutine set_efficiency_mode
             subroutine set_run_mode(mode) ! in :csm:csm.f90:lc_mod
                 integer intent(in) :: mode
             end subroutine set_run_mode
-            subroutine set_hybrid_parameters(n_zones,kappa_val) ! in :csm:csm.f90:lc_mod
+            subroutine set_transport_parameters(n_zones,kappa_val) ! in :csm:csm.f90:lc_mod
                 integer, optional,intent(in) :: n_zones
                 real(kind=8), optional,intent(in) :: kappa_val
-            end subroutine set_hybrid_parameters
+            end subroutine set_transport_parameters
             subroutine set_bpl_cutoff_ratio(ratio) ! in :csm:csm.f90:lc_mod
                 real(kind=8) intent(in) :: ratio
             end subroutine set_bpl_cutoff_ratio
@@ -232,6 +229,12 @@ python module csm ! in
                 real(kind=8), optional,intent(in) :: eff
                 real(kind=8), optional,intent(in) :: kappa
             end subroutine lightcurve_static_exponential
+            subroutine get_dimless_state_debug(x_sh_out, x_csm_out_val, in_cooling, nsub_val) ! in :csm:csm.f90:lc_mod
+                real(kind=8) intent(out) :: x_sh_out
+                real(kind=8) intent(out) :: x_csm_out_val
+                integer intent(out) :: in_cooling
+                integer intent(out) :: nsub_val
+            end subroutine get_dimless_state_debug
         end module lc_mod
     end interface
 end python module csm

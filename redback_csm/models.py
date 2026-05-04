@@ -15,6 +15,7 @@ Citation: Sarin & Hirai (in prep); Sarin et al. 2024 (redback)
 """
 
 import numpy as _np
+import inspect as _inspect
 from collections import namedtuple as _namedtuple
 from scipy.interpolate import interp1d as _interp1d
 import astropy.units as _uu
@@ -25,15 +26,17 @@ from redback.utils import calc_kcorrected_properties as _calc_kcorrected_propert
 from redback.utils import lambda_to_nu as _lambda_to_nu
 import redback.sed as _sed
 import redback.photosphere as _photosphere
+import redback.interaction_processes as _interaction_processes
 from redback.transient_models.supernova_models import (
-    arnett_bolometric as _arnett_bolometric,
+    _nickelcobalt_engine as _nickelcobalt_engine,
 )
 
-from redback_csm.core import _call_csm, _call_csm_radio
+from redback_csm.core import _call_csm, _call_csm_radio, _call_csm_xray
 
 DAY = 86400.0    # seconds per day
 _AU = 1.496e13   # cm per AU
 _SOLAR_MASS = 1.989e33
+_TRAPEZOID = getattr(_np, "trapezoid", _np.trapz)
 
 __all__ = [
     "wind_exponential_bolometric",
@@ -153,6 +156,8 @@ __all__ = [
     "generic_csm_bpl_radio",
     "generic_4shell_csm_bpl_radio",
     "generic_8shell_csm_bpl_radio",
+    # Generic X-ray helper
+    "csm_xray",
 ]
 
 CITATION = "Sarin & Hirai (in prep); Sarin et al. 2024"
@@ -179,21 +184,186 @@ def _csm_rph_temp_impl(time, csm_model, **kwargs):
     return lbol, rph, temp
 
 
+def _nickel_ejecta_mass_energy(kwargs):
+    """Return the SN ejecta mass/energy used for nickel production."""
+    if "mej_sn" in kwargs and "esn" in kwargs:
+        return float(kwargs["mej_sn"]), float(kwargs["esn"])
+    if "mexp_out" in kwargs and "eexp_out" in kwargs:
+        return float(kwargs["mexp_out"]), float(kwargs["eexp_out"])
+    if "mexp" in kwargs and "eexp" in kwargs:
+        return float(kwargs["mexp"]), float(kwargs["eexp"])
+    raise ValueError("Nickel CSM models require ejecta mass/energy parameters")
+
+
+def _finite_wind_mass_from_grid(tgrid, mdot):
+    """Integrate a finite mass-loss history in Msun/yr over years."""
+    tgrid = _np.asarray(tgrid, dtype=float)
+    mdot = _np.asarray(mdot, dtype=float)
+    if tgrid.size < 2:
+        return 0.0
+    order = _np.argsort(tgrid)
+    return max(float(_TRAPEZOID(_np.maximum(mdot[order], 0.0), tgrid[order])), 0.0)
+
+
+def _generic_density_csm_mass(kwargs, n_shells):
+    """Estimate CSM mass for generic density-profile constructors."""
+    r_inner = float(kwargs.get("r_inner", 1e10))
+    r_outer = float(kwargs.get("r_outer", 1e20))
+    if not (r_outer > r_inner > 0.0):
+        return 0.0
+
+    r_grid = _np.logspace(_np.log10(r_inner), _np.log10(r_outer), 1000)
+    base_density = float(kwargs.get("base_density", 0.0))
+    base_index = float(kwargs.get("base_index", -2.0))
+    rho = base_density * (r_grid / 1e14) ** base_index
+
+    for shell_idx in range(1, n_shells + 1):
+        density = float(kwargs.get(f"shell{shell_idx}_density", 0.0))
+        if density <= 0.0:
+            continue
+        radius = float(kwargs.get(f"shell{shell_idx}_radius", 0.0))
+        width = float(kwargs.get(f"shell{shell_idx}_width", 0.0))
+        if radius <= 0.0 or width <= 0.0:
+            continue
+        sigma = width / 2.355
+        rho = rho + density * _np.exp(-0.5 * ((r_grid - radius) / sigma) ** 2)
+
+    mass_cgs = _TRAPEZOID(4.0 * _np.pi * r_grid**2 * _np.maximum(rho, 0.0), r_grid)
+    return max(float(mass_cgs / _SOLAR_MASS), 0.0)
+
+
+def _csm_mass_for_nickel_diffusion(csm_model, kwargs):
+    """Return CSM mass to add to the nickel diffusion mass, in Msun."""
+    if "mej_arnett" in kwargs:
+        mej_ejecta, _ = _nickel_ejecta_mass_energy(kwargs)
+        return max(float(kwargs["mej_arnett"]) - mej_ejecta, 0.0)
+
+    if "m_csm" in kwargs:
+        return max(float(kwargs["m_csm"]), 0.0)
+    if "csm_mass" in kwargs:
+        return max(float(kwargs["csm_mass"]), 0.0)
+
+    if "mexp_out" in kwargs and "mexp" in kwargs:
+        return max(float(kwargs["mexp"]), 0.0)
+
+    if csm_model.startswith("boxwind_"):
+        return max(float(kwargs.get("mdot_1", 0.0)), 0.0) * max(
+            float(kwargs.get("t2", 0.0)) - float(kwargs.get("t1", 0.0)), 0.0
+        )
+
+    if csm_model.startswith("gausswind_"):
+        t_peak = float(kwargs.get("t_peak", 0.0))
+        t_width = float(kwargs.get("t_width", 0.0))
+        if t_width <= 0.0:
+            return 0.0
+        tgrid = _np.linspace(t_peak - 4.0 * t_width, t_peak + 4.0 * t_width, 200)
+        profile = _np.exp(-0.5 * ((tgrid - t_peak) / t_width) ** 2)
+        mdot = float(kwargs.get("mdot_baseline", 0.0)) + (
+            float(kwargs.get("mdot_peak", 0.0)) - float(kwargs.get("mdot_baseline", 0.0))
+        ) * profile
+        return _finite_wind_mass_from_grid(tgrid, mdot)
+
+    if "triple_powerlaw_wind" in csm_model:
+        t_break1 = float(kwargs.get("t_break1", 0.0))
+        t_break2 = float(kwargs.get("t_break2", 0.0))
+        if t_break1 <= 0.0 or t_break2 <= t_break1:
+            return 0.0
+        n_points = int(kwargs.get("n_points", 50))
+        tgrid = _np.logspace(_np.log10(0.1), _np.log10(max(t_break2 * 2.0, 10.0)), n_points)
+        mdot_0 = float(kwargs.get("mdot_0", 0.0))
+        alpha1 = float(kwargs.get("alpha1", 0.0))
+        alpha2 = float(kwargs.get("alpha2", 0.0))
+        alpha3 = float(kwargs.get("alpha3", 0.0))
+        mdot_break1 = mdot_0 * t_break1**alpha1
+        mdot_break2 = mdot_break1 * (t_break2 / t_break1) ** alpha2
+        if csm_model.startswith("smooth_triple_powerlaw_wind_"):
+            smooth_factor = float(kwargs.get("smooth_factor", 0.2))
+            smooth_width1 = smooth_factor * _np.log10(t_break1) if t_break1 > 1.0 else smooth_factor
+            smooth_width2 = smooth_factor * _np.log10(t_break2) if t_break2 > 1.0 else smooth_factor
+            transition1 = 0.5 * (1.0 + _np.tanh((_np.log10(tgrid) - _np.log10(t_break1)) / smooth_width1))
+            transition2 = 0.5 * (1.0 + _np.tanh((_np.log10(tgrid) - _np.log10(t_break2)) / smooth_width2))
+            mdot = (
+                (1.0 - transition1) * mdot_0 * tgrid**alpha1
+                + transition1 * (1.0 - transition2) * mdot_break1 * (tgrid / t_break1) ** alpha2
+                + transition2 * mdot_break2 * (tgrid / t_break2) ** alpha3
+            )
+        else:
+            mdot = _np.zeros_like(tgrid)
+            mask1 = tgrid < t_break1
+            mask2 = (tgrid >= t_break1) & (tgrid < t_break2)
+            mask3 = tgrid >= t_break2
+            mdot[mask1] = mdot_0 * tgrid[mask1] ** alpha1
+            mdot[mask2] = mdot_break1 * (tgrid[mask2] / t_break1) ** alpha2
+            mdot[mask3] = mdot_break2 * (tgrid[mask3] / t_break2) ** alpha3
+        return _finite_wind_mass_from_grid(tgrid, mdot)
+
+    if csm_model.startswith("generic_8shell_csm_"):
+        return _generic_density_csm_mass(kwargs, 8)
+    if csm_model.startswith("generic_4shell_csm_"):
+        return _generic_density_csm_mass(kwargs, 4)
+    if csm_model.startswith("generic_csm_"):
+        return _generic_density_csm_mass(kwargs, 3)
+
+    return 0.0
+
+
+def _clean_nickel_diffusion_kwargs(kwargs):
+    """Strip CSM and nickel bookkeeping keys before calling redback Diffusion."""
+    cleaned = dict(kwargs)
+    for key in (
+        "f_nickel",
+        "mej",
+        "vej",
+        "mexp",
+        "eexp",
+        "mexp_out",
+        "eexp_out",
+        "mej_sn",
+        "esn",
+        "mej_arnett",
+    ):
+        cleaned.pop(key, None)
+    return cleaned
+
+
 def _csm_nickel_bolometric_impl(time, csm_model, **kwargs):
     """Combined CSM shock + radioactive nickel bolometric luminosity."""
-    # mej and vej for Arnett diffusion are derived from the CSM explosion parameters.
-    # Supports two naming conventions:
-    #   wind models:        mexp / eexp
-    #   generic CSM models: mej_sn / esn
     import redback.constants as _rc
-    arnett_kwargs = dict(kwargs)
-    mexp = kwargs.get("mexp", kwargs.get("mej_sn"))
-    eexp = kwargs.get("eexp", kwargs.get("esn"))
-    arnett_kwargs["mej"] = mexp
-    arnett_kwargs["vej"] = _np.sqrt(2.0 * eexp * 1e51 / (mexp * _rc.solar_mass)) / 1e5
-    return _csm_bolometric_impl(time, csm_model, **kwargs) + _arnett_bolometric(
-        time=time, **arnett_kwargs
-    )
+
+    time = _np.asarray(time, dtype=float)
+    mej_ejecta, eexp = _nickel_ejecta_mass_energy(kwargs)
+    mej_arnett = float(kwargs.get(
+        "mej_arnett",
+        mej_ejecta + _csm_mass_for_nickel_diffusion(csm_model, kwargs),
+    ))
+    vej = float(kwargs.get(
+        "vej",
+        _np.sqrt(2.0 * eexp * 1e51 / (mej_ejecta * _rc.solar_mass)) / 1e5,
+    ))
+
+    interaction_process = kwargs.get("interaction_process", _interaction_processes.Diffusion)
+    if interaction_process is None:
+        nickel_lbol = _nickelcobalt_engine(
+            time=time, f_nickel=kwargs["f_nickel"], mej=mej_ejecta
+        )
+    else:
+        dense_resolution = int(kwargs.get("dense_resolution", 1000))
+        dense_times = _np.linspace(0.0, float(time[-1]) + 100.0, dense_resolution)
+        dense_lbol = _nickelcobalt_engine(
+            time=dense_times, f_nickel=kwargs["f_nickel"], mej=mej_ejecta
+        )
+        diffusion_kwargs = _clean_nickel_diffusion_kwargs(kwargs)
+        diffusion_kwargs.pop("interaction_process", None)
+        nickel_lbol = interaction_process(
+            time=time,
+            dense_times=dense_times,
+            luminosity=dense_lbol,
+            mej=mej_arnett,
+            vej=vej,
+            **diffusion_kwargs,
+        ).new_luminosity
+
+    return _csm_bolometric_impl(time, csm_model, **kwargs) + nickel_lbol
 
 
 def _multiband_csm_flux_density(time, redshift, csm_model, csm_kwargs, dl):
@@ -4564,6 +4734,95 @@ def _csm_radio_impl(time, redshift, csm_model, csm_kwargs):
     return _interp1d(t_grid, flux_grid, bounds_error=False, fill_value=0.0)(time)
 
 
+def _pop_xray_kwarg(kwargs, *names, default=None):
+    for name in names:
+        if name in kwargs:
+            return kwargs.pop(name)
+    return default
+
+
+def _csm_xray_impl(time, redshift, csm_model, csm_kwargs):
+    """
+    Interpolate thermal bremsstrahlung X-ray output onto the requested
+    observer-frame time array.
+    """
+    dl = csm_kwargs.pop("luminosity_distance_cm", None)
+    if dl is None:
+        dl = csm_kwargs.pop("luminosity_distance", None)
+    if dl is None:
+        dl = csm_kwargs.get("cosmology", _cosmo).luminosity_distance(redshift).cgs.value
+
+    logepsx = csm_kwargs.pop("logepsx")
+    e_min_kev = _pop_xray_kwarg(csm_kwargs, "e_min_kev", "e_min_keV", default=0.3)
+    e_max_kev = _pop_xray_kwarg(csm_kwargs, "e_max_kev", "e_max_keV", default=10.0)
+    output_format = _pop_xray_kwarg(
+        csm_kwargs, "xray_output_format", "output_format", default="luminosity"
+    )
+    energy_kev = _pop_xray_kwarg(csm_kwargs, "energy_kev", "energy_keV", default=None)
+    n_h_host = _pop_xray_kwarg(csm_kwargs, "n_h_host", "nh_host", default=0.0)
+    n_h_mw = _pop_xray_kwarg(csm_kwargs, "n_h_mw", "nh_mw", default=0.0)
+    absorb = csm_kwargs.pop("absorb", csm_kwargs.pop("xray_absorb", True))
+    absorb_csm = csm_kwargs.pop("absorb_csm", False)
+    csm_column_factor = csm_kwargs.pop("csm_column_factor", 1.0)
+    shock_component = csm_kwargs.pop("shock_component", "total")
+    mu = csm_kwargs.pop("mu", 0.62)
+    mu_e = csm_kwargs.pop("mu_e", 1.18)
+    mu_i = csm_kwargs.pop("mu_i", 1.30)
+    electron_temperature_fraction = csm_kwargs.pop("electron_temperature_fraction", 1.0)
+    compression_factor = csm_kwargs.pop("compression_factor", 4.0)
+    gaunt_factor = csm_kwargs.pop("gaunt_factor", 1.2)
+    normalization = csm_kwargs.pop("normalization", "emission_measure")
+    max_xray_efficiency = csm_kwargs.pop("max_xray_efficiency", 1.0)
+    n_energy = csm_kwargs.pop("n_energy", 128)
+    frequency = csm_kwargs.pop("frequency", None)
+
+    t_grid, xray_grid = _call_csm_xray(
+        csm_model,
+        redshift=redshift,
+        logepsx=logepsx,
+        luminosity_distance_cm=dl,
+        e_min_kev=e_min_kev,
+        e_max_kev=e_max_kev,
+        output_format=output_format,
+        energy_kev=energy_kev,
+        frequency=frequency,
+        n_h_host=n_h_host,
+        n_h_mw=n_h_mw,
+        absorb=absorb,
+        absorb_csm=absorb_csm,
+        csm_column_factor=csm_column_factor,
+        shock_component=shock_component,
+        mu=mu,
+        mu_e=mu_e,
+        mu_i=mu_i,
+        electron_temperature_fraction=electron_temperature_fraction,
+        compression_factor=compression_factor,
+        gaunt_factor=gaunt_factor,
+        normalization=normalization,
+        max_xray_efficiency=max_xray_efficiency,
+        n_energy=n_energy,
+        **csm_kwargs,
+    )
+    return _interp1d(t_grid, xray_grid, bounds_error=False, fill_value=0.0)(time)
+
+
+@_citation_wrapper(CITATION)
+def csm_xray(time, redshift, csm_model, logepsx, **kwargs):
+    """
+    Generic thermal-bremsstrahlung X-ray wrapper for any supported CSM model.
+
+    Pass the usual parameters for ``csm_model`` as keyword arguments. Additional
+    X-ray keywords include ``e_min_kev``, ``e_max_kev``, ``output_format``
+    ('luminosity', 'flux', 'spectral_luminosity', or 'flux_density'),
+    ``energy_kev``/``frequency``, ``n_h_host``, ``n_h_mw``, ``absorb_csm``, and
+    ``shock_component`` ('total', 'forward', or 'reverse'). By default,
+    ``logepsx`` scales the free-free emission measure; set
+    ``normalization='shock_power'`` for the older shock-power-fraction model.
+    """
+    csm_kwargs = dict(logepsx=logepsx, **kwargs)
+    return _csm_xray_impl(time, redshift, csm_model, csm_kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Wind + exponential ejecta
 # ---------------------------------------------------------------------------
@@ -5383,3 +5642,70 @@ def generic_8shell_csm_bpl_radio(time, redshift,
              mej_sn=mej_sn, esn=esn, eff=eff,
              logepsb=logepsb, logepse=logepse, p=p, **kwargs),
     )
+
+
+def _make_xray_wrapper(base_name, radio_func):
+    """Create a radio-signature-matched X-ray wrapper for a base CSM model."""
+    csm_model = {
+        "generic_powerlaw_csm_exponential": "static_powerlaw_csm_exponential",
+        "generic_powerlaw_csm_bpl": "static_powerlaw_csm_bpl",
+    }.get(base_name, base_name)
+    radio_sig = _inspect.signature(radio_func)
+    new_params = []
+    inserted = False
+    for param in radio_sig.parameters.values():
+        if param.name in ("logepsb", "logepse", "p"):
+            if not inserted:
+                new_params.append(
+                    _inspect.Parameter(
+                        "logepsx",
+                        kind=param.kind,
+                        default=_inspect.Parameter.empty,
+                    )
+                )
+                inserted = True
+            continue
+        new_params.append(param)
+    new_sig = radio_sig.replace(parameters=new_params)
+
+    def wrapper(*args, **kwargs):
+        bound = new_sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        values = dict(bound.arguments)
+        extra_kwargs = values.pop("kwargs", {})
+        values.update(extra_kwargs)
+        time = values.pop("time")
+        redshift = values.pop("redshift")
+        logepsx = values.pop("logepsx")
+        values["logepsx"] = logepsx
+        return _csm_xray_impl(time, redshift, csm_model, values)
+
+    wrapper.__name__ = f"{base_name}_xray"
+    wrapper.__qualname__ = wrapper.__name__
+    wrapper.__signature__ = new_sig
+    wrapper.__doc__ = (
+        f"Thermal bremsstrahlung X-ray emission for ``{base_name}``.\n\n"
+        "Uses the same physical CSM parameters as the corresponding radio "
+        "wrapper, replacing ``logepsb, logepse, p`` with ``logepsx``. "
+        "X-ray controls are supplied through kwargs: ``e_min_kev``, "
+        "``e_max_kev``, ``output_format``, ``energy_kev``/``frequency``, "
+        "``n_h_host``, ``n_h_mw``, ``absorb_csm``, ``shock_component``, "
+        "``normalization``, and ``max_xray_efficiency``."
+    )
+    wrapper = _citation_wrapper(CITATION)(wrapper)
+    wrapper.__signature__ = new_sig
+    return wrapper
+
+
+_XRAY_MODEL_NAMES = []
+for _radio_name, _radio_func in list(globals().items()):
+    if not (_radio_name.endswith("_radio") and callable(_radio_func)):
+        continue
+    _base_name = _radio_name[:-6]
+    _xray_name = f"{_base_name}_xray"
+    if _xray_name in globals():
+        continue
+    globals()[_xray_name] = _make_xray_wrapper(_base_name, _radio_func)
+    _XRAY_MODEL_NAMES.append(_xray_name)
+
+__all__.extend(name for name in _XRAY_MODEL_NAMES if name not in __all__)
