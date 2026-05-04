@@ -158,6 +158,13 @@ use csm_runtime, only: shock_efficiency_mode
   real(8) :: x_ph_cache_scale = -1d0
   logical :: csm_powerlaw_fast = .false.
   real(8) :: csm_eta_pow = 0d0
+  logical :: csm_cache_valid = .false.
+  logical :: csm_cache_cooling = .false.
+  real(8) :: csm_cache_time = -1d0
+  real(8) :: csm_cache_x_inner = -1d0
+  real(8) :: csm_cache_x_outer = -1d0
+  integer :: csm_cache_n = 0
+  real(8), allocatable :: csm_cache_x(:), csm_cache_eta(:), csm_cache_int(:)
   real(8), allocatable :: xi_grid(:)   ! fixed uniform ξ = (i-1)/(n-1)
   real(8), allocatable :: e_grid(:)    ! dimensionless energy density e(ξ)
   ! Frozen η_csm on the cooling ξ-grid (set at handoff, used throughout cooling)
@@ -1867,6 +1874,9 @@ end subroutine update_tau_and_luminosity
   if (allocated(state%work_gam)) deallocate(state%work_gam)
   if (allocated(state%work_old_e)) deallocate(state%work_old_e)
   if (allocated(state%eta_cool_grid)) deallocate(state%eta_cool_grid)
+  if (allocated(state%csm_cache_x)) deallocate(state%csm_cache_x)
+  if (allocated(state%csm_cache_eta)) deallocate(state%csm_cache_eta)
+  if (allocated(state%csm_cache_int)) deallocate(state%csm_cache_int)
   if (allocated(state%shell_x)) deallocate(state%shell_x)
   if (allocated(state%shell_e)) deallocate(state%shell_e)
   state%initialized = .false.
@@ -1889,6 +1899,12 @@ end subroutine update_tau_and_luminosity
   state%x_ph_cache_scale = -1d0
   state%csm_powerlaw_fast = .false.
   state%csm_eta_pow = 0d0
+  state%csm_cache_valid = .false.
+  state%csm_cache_cooling = .false.
+  state%csm_cache_time = -1d0
+  state%csm_cache_x_inner = -1d0
+  state%csm_cache_x_outer = -1d0
+  state%csm_cache_n = 0
   state%lum_heat_cgs = 0d0
   state%lum_heat_total_cgs = 0d0
   state%lum_heat_fs_cgs = 0d0
@@ -1931,16 +1947,15 @@ end subroutine update_tau_and_luminosity
   real(8), intent(in) :: kappa_in, eff_in
   integer, intent(in) :: n_zones_in
 
-  real(8) :: t_dim
+  real(8) :: t_dim, rho_edge, rho_inside
+  real(8) :: t_lo, t_hi, t_mid, f_hi, f_mid
+  integer :: iter_contact
 
   call reset_dimless_state(state)
 
   state%kappa = max(kappa_in, 1d-30)
   state%eff = eff_in
   state%n_zones = max(n_zones_in, 3)
-
-  ! R_csm_in: inner edge of CSM (paper uses t_in = R_csm_in / v_ej_max)
-  state%R_csm_in = max(query_csm_inner_edge(1d1, op(2)), 1d0)
 
   ! v_ej_max: maximum ejecta velocity
   if (op(1)%bpl_vmax > 0d0) then
@@ -1958,12 +1973,40 @@ end subroutine update_tau_and_luminosity
    state%v_ej_max = 1d9
   end if
 
-  ! t_in = R_csm_in / v_ej_max (paper Eq. 728)
-  state%t_in = state%R_csm_in / state%v_ej_max
+  ! First contact with the CSM.  For static CSM this reduces to
+  ! t_in=R_csm_in/v_ej,max (paper Eq. 728).  For wind-like arbitrary CSM the
+  ! inner support moves outward, so solve v_ej,max*t = R_csm,in(t) instead of
+  ! sampling the edge at an arbitrary early time.
+  t_lo = 0d0
+  t_hi = max(query_csm_inner_edge(1d1, op(2)) / max(state%v_ej_max, 1d-30), 1d-6)
+  f_hi = state%v_ej_max * t_hi - query_csm_inner_edge(t_hi, op(2))
+  do while (f_hi < 0d0 .and. t_hi < 1d12)
+   t_hi = 2d0 * t_hi
+   f_hi = state%v_ej_max * t_hi - query_csm_inner_edge(t_hi, op(2))
+  end do
+  if (f_hi < 0d0) then
+   state%t_in = max(query_csm_inner_edge(1d1, op(2)) / max(state%v_ej_max, 1d-30), 1d-6)
+  else
+   do iter_contact = 1, 80
+    t_mid = 0.5d0 * (t_lo + t_hi)
+    f_mid = state%v_ej_max * t_mid - query_csm_inner_edge(t_mid, op(2))
+    if (f_mid >= 0d0) then
+     t_hi = t_mid
+    else
+     t_lo = t_mid
+    end if
+   end do
+   state%t_in = max(t_hi, 1d-6)
+  end if
+
+  ! R_csm_in at first contact.
+  state%R_csm_in = max(state%v_ej_max * state%t_in, query_csm_inner_edge(state%t_in, op(2)), 1d0)
 
   ! Reference densities at t = t_in, r = R_csm_in
   t_dim = state%t_in
-  state%rho_csm_in = max(query_csm_density(state%R_csm_in, t_dim, op(2)), 1d-30)
+  rho_edge = query_csm_density(state%R_csm_in, t_dim, op(2))
+  rho_inside = query_csm_density(state%R_csm_in * (1d0 + 1d-8), t_dim, op(2))
+  state%rho_csm_in = max(max(rho_edge, rho_inside), 1d-30)
   state%rho_ej_in = max(query_ejecta_density(state%R_csm_in, t_dim, op(1)), 1d-30)
   state%csm_powerlaw_fast = static_powerlaw_csm_slope(state, state%csm_eta_pow)
 
@@ -2035,6 +2078,44 @@ end subroutine update_tau_and_luminosity
  end subroutine setup_xi_grid
 
 ! ------------------------------------------------------------------
+ function raw_wind_density_cgs(r_dim, t_dim) result(rho_csm)
+  real(8), intent(in) :: r_dim, t_dim
+  real(8) :: rho_csm, t_wind, mdot_wind, frac
+  integer :: lo, hi, mid, n
+
+  rho_csm = -1d0
+  if (.not. associated(op(2)%t_grid) .or. .not. associated(op(2)%mdot)) return
+  if (op(2)%vwind <= 0d0) return
+
+  n = size(op(2)%t_grid)
+  if (n <= 0) return
+  t_wind = abs(r_dim / op(2)%vwind - t_dim)
+
+  if (n == 1 .or. t_wind <= op(2)%t_grid(1)) then
+   mdot_wind = op(2)%mdot(1)
+  else if (t_wind >= op(2)%t_grid(n)) then
+   mdot_wind = op(2)%mdot(n)
+  else
+   lo = 1
+   hi = n
+   do while (hi - lo > 1)
+    mid = (lo + hi) / 2
+    if (op(2)%t_grid(mid) <= t_wind) then
+     lo = mid
+    else
+     hi = mid
+    end if
+   end do
+   frac = (t_wind - op(2)%t_grid(lo)) / &
+          max(op(2)%t_grid(lo+1) - op(2)%t_grid(lo), 1d-30)
+   frac = min(max(frac, 0d0), 1d0)
+   mdot_wind = (1d0 - frac) * op(2)%mdot(lo) + frac * op(2)%mdot(lo+1)
+  end if
+
+  rho_csm = mdot_wind / (4d0 * pi * op(2)%vwind * max(r_dim, 1d0)**2)
+ end function raw_wind_density_cgs
+
+! ------------------------------------------------------------------
 ! Compute eta_csm(x):
 !   Interaction: η_csm(x) = ρ_csm(x·R_csm_in) / ρ_csm_in  [paper Eq. 738]
 !   Cooling: η_csm(x) is time-independent (frozen at t_se)
@@ -2043,10 +2124,10 @@ end subroutine update_tau_and_luminosity
 !            The (R0/R_in)³ factor is handled in the PDE/D scaling,
 !            not here. This function returns the comoving profile only.
 ! ------------------------------------------------------------------
- function compute_eta_csm(x, state) result(eta)
+ function raw_eta_csm(x, state) result(eta)
   type(dimless_state_type), intent(in) :: state
   real(8), intent(in) :: x
-  real(8) :: eta, r_dim, t_dim, x_pre
+  real(8) :: eta, r_dim, t_dim, x_pre, rho_fast
 
   if (state%in_cooling_phase) then
    ! Cooling phase uses the frozen density profile in the homologous
@@ -2065,7 +2146,12 @@ end subroutine update_tau_and_luminosity
    else
     r_dim = x_pre * state%R_csm_in
     t_dim = state%zeta_se * state%t_in
-    eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+    rho_fast = raw_wind_density_cgs(r_dim, t_dim)
+    if (rho_fast >= 0d0) then
+     eta = rho_fast / max(state%rho_csm_in, 1d-30)
+    else
+     eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+    end if
    end if
    eta = max(eta, 1d-30)
   else
@@ -2075,8 +2161,141 @@ end subroutine update_tau_and_luminosity
    else
     r_dim = x * state%R_csm_in
     t_dim = state%zeta * state%t_in
-    eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+    rho_fast = raw_wind_density_cgs(r_dim, t_dim)
+    if (rho_fast >= 0d0) then
+     eta = rho_fast / max(state%rho_csm_in, 1d-30)
+    else
+     eta = query_csm_density(r_dim, t_dim, op(2)) / max(state%rho_csm_in, 1d-30)
+    end if
    end if
+  end if
+ end function raw_eta_csm
+
+ subroutine ensure_csm_cache(state, x_inner_in, x_outer_in)
+  type(dimless_state_type), intent(inout) :: state
+  real(8), intent(in) :: x_inner_in, x_outer_in
+
+  integer :: i, n_cache
+  real(8) :: x_inner, x_outer, t_cache, rel_t, rel_x0, rel_x1, dx, x_eval
+
+  if (state%csm_powerlaw_fast) return
+
+  x_inner = max(min(x_inner_in, x_outer_in), 1d-12)
+  x_outer = max(x_outer_in, x_inner * (1d0 + 1d-12))
+  if (state%in_cooling_phase) then
+   t_cache = state%zeta_se * state%t_in
+  else
+   t_cache = state%zeta * state%t_in
+  end if
+
+  if (state%csm_cache_valid) then
+   rel_t = abs(t_cache - state%csm_cache_time) / max(abs(state%csm_cache_time), 1d0)
+   rel_x0 = abs(x_inner - state%csm_cache_x_inner) / max(abs(state%csm_cache_x_inner), 1d0)
+   rel_x1 = abs(x_outer - state%csm_cache_x_outer) / max(abs(state%csm_cache_x_outer), 1d0)
+   if (state%csm_cache_cooling .eqv. state%in_cooling_phase) then
+    if (rel_t < 1d-10 .and. rel_x0 < 1d-10 .and. rel_x1 < 1d-10) return
+   end if
+  end if
+
+  n_cache = max(96, min(512, 4 * max(state%n_zones, 24)))
+  if (allocated(state%csm_cache_x)) then
+   if (size(state%csm_cache_x) /= n_cache) then
+    deallocate(state%csm_cache_x, state%csm_cache_eta, state%csm_cache_int)
+   end if
+  end if
+  if (.not. allocated(state%csm_cache_x)) then
+   allocate(state%csm_cache_x(n_cache), state%csm_cache_eta(n_cache), state%csm_cache_int(n_cache))
+  end if
+
+  do i = 1, n_cache
+   state%csm_cache_x(i) = x_inner + (x_outer - x_inner) * dble(i - 1) / dble(max(n_cache - 1, 1))
+  end do
+
+  dx = (x_outer - x_inner) / dble(max(n_cache - 1, 1))
+  do i = 1, n_cache
+   ! Sample one-sided at the support edges.  Tabulated winds can intentionally
+   ! jump at the inner/outer edge; transport needs the cell value just ahead of
+   ! the shock, not the constructor's exact-boundary convention.
+   x_eval = state%csm_cache_x(i)
+   if (i == 1) x_eval = min(x_outer, x_inner + 0.5d0 * dx)
+   if (i == n_cache) x_eval = max(x_inner, x_outer - 0.5d0 * dx)
+   state%csm_cache_eta(i) = max(raw_eta_csm(x_eval, state), 0d0)
+  end do
+
+  state%csm_cache_int(n_cache) = 0d0
+  do i = n_cache - 1, 1, -1
+   dx = state%csm_cache_x(i+1) - state%csm_cache_x(i)
+   state%csm_cache_int(i) = state%csm_cache_int(i+1) + &
+       0.5d0 * (state%csm_cache_eta(i) + state%csm_cache_eta(i+1)) * dx
+  end do
+
+  state%csm_cache_valid = .true.
+  state%csm_cache_cooling = state%in_cooling_phase
+  state%csm_cache_time = t_cache
+  state%csm_cache_x_inner = x_inner
+  state%csm_cache_x_outer = x_outer
+  state%csm_cache_n = n_cache
+ end subroutine ensure_csm_cache
+
+ function interp_csm_cache_eta(x, state) result(eta)
+  type(dimless_state_type), intent(in) :: state
+  real(8), intent(in) :: x
+  real(8) :: eta, pos, frac
+  integer :: i, n
+
+  eta = 0d0
+  if (.not. state%csm_cache_valid) return
+  n = state%csm_cache_n
+  if (n < 2) return
+  if (x <= state%csm_cache_x(1)) then
+   eta = state%csm_cache_eta(1)
+   return
+  end if
+  if (x >= state%csm_cache_x(n)) then
+   eta = state%csm_cache_eta(n)
+   return
+  end if
+  pos = (x - state%csm_cache_x(1)) / max(state%csm_cache_x(n) - state%csm_cache_x(1), 1d-30) * dble(n - 1)
+  i = min(max(int(pos) + 1, 1), n - 1)
+  frac = min(max(pos - dble(i - 1), 0d0), 1d0)
+  eta = (1d0 - frac) * state%csm_cache_eta(i) + frac * state%csm_cache_eta(i+1)
+ end function interp_csm_cache_eta
+
+ function interp_csm_cache_int(x, state) result(integ)
+  type(dimless_state_type), intent(in) :: state
+  real(8), intent(in) :: x
+  real(8) :: integ, pos, frac
+  integer :: i, n
+
+  integ = 0d0
+  if (.not. state%csm_cache_valid) return
+  n = state%csm_cache_n
+  if (n < 2) return
+  if (x <= state%csm_cache_x(1)) then
+   integ = state%csm_cache_int(1)
+   return
+  end if
+  if (x >= state%csm_cache_x(n)) then
+   integ = 0d0
+   return
+  end if
+  pos = (x - state%csm_cache_x(1)) / max(state%csm_cache_x(n) - state%csm_cache_x(1), 1d-30) * dble(n - 1)
+  i = min(max(int(pos) + 1, 1), n - 1)
+  frac = min(max(pos - dble(i - 1), 0d0), 1d0)
+  integ = (1d0 - frac) * state%csm_cache_int(i) + frac * state%csm_cache_int(i+1)
+ end function interp_csm_cache_int
+
+ function compute_eta_csm(x, state) result(eta)
+  type(dimless_state_type), intent(in) :: state
+  real(8), intent(in) :: x
+  real(8) :: eta
+
+  if (state%csm_cache_valid .and. x >= state%csm_cache_x_inner - 1d-12 .and. &
+      x <= state%csm_cache_x_outer + 1d-12 .and. &
+      (state%csm_cache_cooling .eqv. state%in_cooling_phase)) then
+   eta = interp_csm_cache_eta(x, state)
+  else
+   eta = raw_eta_csm(x, state)
   end if
  end function compute_eta_csm
 
@@ -2405,12 +2624,12 @@ end subroutine update_tau_and_luminosity
 
  subroutine integrate_tau_from_x(x_from, state, tau_out)
   real(8), intent(in) :: x_from
-  type(dimless_state_type), intent(in) :: state
+  type(dimless_state_type), intent(inout) :: state
   real(8), intent(out) :: tau_out
 
  integer, parameter :: n_int = 32
   integer :: i
-  real(8) :: x_end, dx, x_mid, eta_val, length_scale
+  real(8) :: x_end, dx, x_mid, eta_val, length_scale, x_cache_start
   logical :: analytic_ok
 
   call analytic_powerlaw_tau_from_x(x_from, state, tau_out, analytic_ok)
@@ -2433,6 +2652,17 @@ end subroutine update_tau_and_luminosity
   end if
   if (x_end <= x_from + 1d-12) then
    tau_out = 0d0
+   return
+  end if
+  if (state%in_cooling_phase) then
+   x_cache_start = min(x_from, state%x_min_cool)
+  else
+   x_cache_start = min(x_from, max(state%x_sh, 1d-12))
+  end if
+  call ensure_csm_cache(state, x_cache_start, x_end)
+  if (state%csm_cache_valid) then
+   tau_out = max(state%kappa * state%rho_csm_in * length_scale * &
+                 interp_csm_cache_int(x_from, state), 0d0)
    return
   end if
   dx = (x_end - x_from) / dble(n_int)
@@ -3067,7 +3297,7 @@ end function shocked_shell_profile_at
   type(dimless_state_type), intent(in) :: state
   real(8), intent(in) :: x_in, w_in, phi_in, zeta_in
   real(8), intent(out) :: dx_dz, dw_dz, dphi_dz
-  real(8) :: eta_ej_val, eta_csm_val, v_rel_ej, q_loc
+  real(8) :: eta_ej_val, eta_csm_val, v_rel_ej, q_loc, w_eff
 
   ! Save current zeta for eta evaluation
   ! (compute_eta_ej uses state%zeta, but we want the passed zeta_in)
@@ -3075,23 +3305,29 @@ end function shocked_shell_profile_at
   eta_csm_val = compute_eta_csm(x_in, state)
   eta_ej_val = compute_eta_ej(x_in, zeta_in, state)
 
+  ! The thin-shell equations assume an outward-moving shock.  RK stage
+  ! extrapolations can briefly try w<0 in dense finite CSM; clamp the stage
+  ! velocity to the physical branch instead of feeding an invalid negative
+  ! shock speed into the ram-pressure terms.
+  w_eff = max(w_in, 0d0)
+
   ! v_ej at shell = R_sh/t = (x*R_csm_in)/(zeta*t_in) = x/zeta * v_ej_max
   ! Relative velocity: (v_ej - v_sh)/v_ej_max = x/zeta - w
-  v_rel_ej = x_in / max(zeta_in, 1d-30) - w_in
+  v_rel_ej = x_in / max(zeta_in, 1d-30) - w_eff
 
   q_loc = state%q
 
   ! Paper Eq. 746
-  dx_dz = w_in
+  dx_dz = w_eff
 
   ! Paper Eq. 748: dphi/dz = x^2 * zeta^{-3} * (x/zeta - w) * eta_ej + q * x^2 * w * eta_csm
   dphi_dz = x_in**2 * max(zeta_in, 1d-30)**(-3) * max(v_rel_ej, 0d0) * eta_ej_val &
-           + q_loc * x_in**2 * max(w_in, 0d0) * eta_csm_val
+           + q_loc * x_in**2 * w_eff * eta_csm_val
 
   ! Paper Eq. 749: dw/dz = (1/phi)[x^2*zeta^{-3}*(x/zeta-w)^2*eta_ej - q*x^2*w^2*eta_csm]
   if (phi_in > 1d-30) then
    dw_dz = (x_in**2 * max(zeta_in, 1d-30)**(-3) * max(v_rel_ej, 0d0)**2 * eta_ej_val &
-           - q_loc * x_in**2 * w_in**2 * eta_csm_val) / phi_in
+           - q_loc * x_in**2 * w_eff**2 * eta_csm_val) / phi_in
   else
    dw_dz = 0d0
   end if
@@ -3134,9 +3370,15 @@ end function shocked_shell_profile_at
                      state, k4_x, k4_w, k4_phi)
 
   ! Update
-  state%x_sh = x + dzeta * (k1_x + 2d0*k2_x + 2d0*k3_x + k4_x) / 6d0
-  state%w_sh = w + dzeta * (k1_w + 2d0*k2_w + 2d0*k3_w + k4_w) / 6d0
+  state%x_sh = max(x + dzeta * (k1_x + 2d0*k2_x + 2d0*k3_x + k4_x) / 6d0, 1d0)
+  state%w_sh = max(w + dzeta * (k1_w + 2d0*k2_w + 2d0*k3_w + k4_w) / 6d0, 1d-10)
   state%phi_sh = max(phi + dzeta * (k1_phi + 2d0*k2_phi + 2d0*k3_phi + k4_phi) / 6d0, 1d-30)
+  if (.not.(state%x_sh == state%x_sh) .or. .not.(state%w_sh == state%w_sh) .or. &
+      .not.(state%phi_sh == state%phi_sh)) then
+   state%x_sh = max(x, 1d0)
+   state%w_sh = max(w, 1d-10)
+   state%phi_sh = max(phi, 1d-30)
+  end if
   state%zeta = zeta + dzeta
   state%y_diff = state%y_ratio * state%zeta
  end subroutine rk4_step_dynamics
@@ -3856,21 +4098,21 @@ subroutine transition_to_cooling(state)
    ! --- CFL constraints ---
    ! Velocity CFL: dzeta < C * phi / (q * w^2) to resolve deceleration
    dt_dyn_cfl = huge(1d0)
-   if (state%w_sh > 1d-30 .and. state%q > 1d-30 .and. state%phi_sh > 1d-30) then
+   if (.not. state%in_cooling_phase .and. state%w_sh > 1d-30 .and. &
+       state%q > 1d-30 .and. state%phi_sh > 1d-30) then
     dt_dyn_cfl = 0.3d0 * state%phi_sh / (state%q * state%w_sh**2)
    end if
 
-   ! Diffusion CFL: dy < 0.5 * t_diff (generous for implicit)
+   ! No diffusion CFL is required: the radiation solve is implicit.  Runtime for
+   ! dense arbitrary winds is otherwise dominated by thousands of unnecessary
+   ! substeps when the local normalization makes t_diff short.
    dt_diff_cfl = huge(1d0)
-   if (state%t_diff > 0d0) then
-    dt_diff_cfl = 0.5d0 * state%t_diff
-   end if
 
    ! Advection CFL in interaction can become pathologically small as
    ! Delta_x -> 0 near breakout; use a floor to avoid excessive subcycling.
    advection_cfl = huge(1d0)
    Delta_x = state%x_ph - state%x_min
-   if (Delta_x > 0d0 .and. state%x_sh_dot > 1d-30) then
+   if (.not. state%in_cooling_phase .and. Delta_x > 0d0 .and. state%x_sh_dot > 1d-30) then
     advection_cfl = max(0.3d0 * max(Delta_x, 5d-2) / state%x_sh_dot, 1d-6)
    end if
 

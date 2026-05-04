@@ -85,13 +85,13 @@ def main():
         lc_hybrid_const = _get_lc_boxwind_bpl(
             **sp, vwind=100.0, delta=0.5, nn=7.0,
             mexp=5.0, eexp=1.0, eff=args.eff, kappa=args.kappa,
-            mode="hybrid", efficiency_mode=0, n_rad_zones=120,
+            mode="hybrid", efficiency_mode=0, n_rad_zones=32,
         )
 
         lc_hybrid_timed = _get_lc_boxwind_bpl(
             **sp, vwind=100.0, delta=0.5, nn=7.0,
             mexp=5.0, eexp=1.0, eff=args.eff, kappa=args.kappa,
-            mode="hybrid", efficiency_mode=1, n_rad_zones=120,
+            mode="hybrid", efficiency_mode=1, n_rad_zones=32,
         )
 
         lc_simple = _get_lc_boxwind_bpl(
