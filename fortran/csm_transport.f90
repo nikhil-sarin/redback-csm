@@ -123,6 +123,9 @@ use csm_runtime, only: shock_efficiency_mode
   real(8) :: lum_breakout_avg_cgs = 0d0 ! substep-averaged breakout leakage [erg/s]
   real(8) :: E_breakout_output_cgs = 0d0 ! breakout energy emitted during caller step [erg]
   real(8) :: dt_breakout_output_cgs = 0d0 ! caller-step time represented by breakout output [s]
+  real(8) :: E_cooling_tail_cgs = 0d0    ! trapped shocked-ejecta/shell reservoir [erg]
+  real(8) :: t_cooling_tail0_cgs = 0d0   ! leakage time at shock emergence [s]
+  real(8) :: lum_cooling_tail_cgs = 0d0  ! substep-averaged tail leakage [erg/s]
   real(8) :: tau_ahead_csm = 0d0        ! optical depth from shock to CSM edge
   logical :: breakout_active = .false.  ! true when tau_ahead <= c/v_sh
 
@@ -1899,6 +1902,9 @@ end subroutine update_tau_and_luminosity
   state%lum_breakout_avg_cgs = 0d0
   state%E_breakout_output_cgs = 0d0
   state%dt_breakout_output_cgs = 0d0
+  state%E_cooling_tail_cgs = 0d0
+  state%t_cooling_tail0_cgs = 0d0
+  state%lum_cooling_tail_cgs = 0d0
   state%tau_ahead_csm = 0d0
   state%breakout_active = .false.
   state%n_history = 0
@@ -2404,6 +2410,45 @@ subroutine advance_breakout_reservoir(state, dt_cgs, lum_in_cgs, t_esc_cgs)
  state%t_breakout_cgs = t_esc
  state%lum_breakout_cgs = state%E_breakout_cgs / t_esc
 end subroutine advance_breakout_reservoir
+
+subroutine advance_cooling_tail_reservoir(state, dt_cgs)
+ type(dimless_state_type), intent(inout) :: state
+ real(8), intent(in) :: dt_cgs
+
+ real(8) :: e_old, e_new, emitted, decay, r_ratio
+ real(8) :: t_leak, t_exp, leak_rate, ad_rate, total_rate
+
+ state%lum_cooling_tail_cgs = 0d0
+ if (dt_cgs <= 0d0) return
+ if (.not. state%in_cooling_phase) return
+
+ e_old = max(state%E_cooling_tail_cgs, 0d0)
+ if (e_old <= 0d0) then
+  state%E_cooling_tail_cgs = 0d0
+  return
+ end if
+
+ r_ratio = max(state%R_in_R0, 1d-12)
+ ! Homologous expansion gives tau ∝ R^-2 and path length ∝ R, so the
+ ! diffusion/leakage time of an unresolved trapped shell scales as R^-1.
+ t_leak = max(state%t_cooling_tail0_cgs / r_ratio, &
+              state%x_out_cool * state%R0 * r_ratio / clight, 1d-30)
+ ! The unresolved reverse-shocked ejecta reservoir is a coarse closure for the
+ ! broken-power-law ejecta side of the shell, not the resolved CSM radiation
+ ! field.  Use a softened PdV sink so this component behaves like an ejecta
+ ! shock-cooling reservoir rather than losing all bolometric power on one
+ ! expansion time.
+ t_exp = max(state%R0 * r_ratio / max(state%v_se, 1d-30), 1d-30)
+ leak_rate = 1d0 / t_leak
+ ad_rate = 0.25d0 / t_exp
+ total_rate = leak_rate + ad_rate
+ decay = exp(-min(total_rate * dt_cgs, 80d0))
+ emitted = e_old * (1d0 - decay) * leak_rate / max(total_rate, 1d-30)
+ e_new = e_old * decay
+
+ state%E_cooling_tail_cgs = max(e_new, 0d0)
+ state%lum_cooling_tail_cgs = max(emitted / dt_cgs, 0d0)
+end subroutine advance_cooling_tail_reservoir
 
 subroutine prepare_interaction_heating(state, dt_cgs)
  type(dimless_state_type), intent(inout) :: state
@@ -3171,11 +3216,16 @@ subroutine transition_to_cooling(state)
   integer :: i, n
   real(8) :: x_sh_old, x_ph_old, dxi, Delta_x_old
   real(8) :: E_before, E_after, E_after_inner, E_store_cgs, E_budget
-  real(8) :: E_residual_cgs, E_prompt_breakout_cgs
+  real(8) :: E_residual_cgs
   real(8) :: dx, frac_interp, x_split
   real(8) :: x_l, x_r, x_cap
   real(8) :: profile_scale, profile_norm, density_norm, surface_norm
-  real(8) :: surface_budget, density_budget
+  real(8) :: density_retained_norm, surface_retained_norm
+  real(8) :: surface_budget, density_budget, mixed_budget
+  real(8) :: E_channel_total, E_fs_residual_cgs, E_rs_residual_cgs
+  real(8) :: tail_fraction, tail_energy_cgs, shell_radius_cgs, diffusion_beta
+  real(8) :: eta_out_tail, s_tail_eff, tail_shape_retention
+  real(8), parameter :: pdv_retention_power = 3d0
   real(8) :: e_l, e_r
   real(8) :: r_in_base, r_out_base, r_sh_se, v_sh_se, r_dim
   real(8), allocatable :: e_old(:)
@@ -3259,49 +3309,69 @@ subroutine transition_to_cooling(state)
                                / max(state%rho_csm_in, 1d-30), 1d-30)
   end do
 
-  ! Residual shocked-shell energy available for the cooling phase.  The
-  ! interaction PDE has already accounted for diffusive luminosity escaping
-  ! before emergence, so the remaining cumulative shock heating sets the
-  ! normalization of e_int.
-  ! The breakout-depth reservoir is tracked separately.  Exclude any
-  ! unescaped breakout energy from the passive cooling IC to avoid double
-  ! counting at the handoff.
-  ! The paper's post-emergence system has no separate breakout luminosity
-  ! source.  Any interaction breakout reservoir is a pre-emergence leakage
-  ! diagnostic and must not be carried as an additive cooling luminosity.
-  E_prompt_breakout_cgs = max(state%E_breakout_cgs, 0d0)
-  E_residual_cgs = max(state%E_injected_cum - state%E_radiated_cum - E_prompt_breakout_cgs, 0d0)
+  ! Residual shocked-shell energy available for the cooling phase.  The only
+  ! energy that has truly escaped before emergence is E_radiated_cum.  The
+  ! interaction breakout reservoir is still unescaped internal energy at t_se,
+  ! so it must be folded into e_int(x), not subtracted and discarded.  After the
+  ! handoff the paper cooling PDE carries the whole passive reservoir.
+  E_residual_cgs = max(state%E_injected_cum - state%E_radiated_cum, 0d0)
   state%E_breakout_cgs = 0d0
   state%lum_breakout_cgs = 0d0
   state%lum_breakout_avg_cgs = 0d0
-  E_store_cgs = E_residual_cgs
+  ! Pre-emergence diffusion drains the forward-shock/surface reservoir most
+  ! directly.  Reverse-shock heat is generated on the ejecta side of the thin
+  ! shell and is not spatially resolved by the interaction diffusion column, so
+  ! carry a retained fraction into a trapped cooling reservoir.  Longer, more
+  ! extended interactions lose more of this inner reservoir adiabatically
+  ! before emergence.
+  eta_out_tail = max(compute_eta_csm(max(state%x_out_cool, state%x_min_cool * 1.0001d0), state), 1d-30)
+  if (state%x_out_cool > state%x_min_cool * 1.0001d0) then
+   s_tail_eff = max(-log(eta_out_tail) / log(max(state%x_out_cool, 1.0001d0)), 0d0)
+  else
+   s_tail_eff = 0d0
+  end if
+  ! The BPL/reverse-shock reservoir is generated on the ejecta side of the
+  ! shell.  For steeper CSM profiles the shell decelerates earlier and this
+  ! reservoir is buried at smaller radii for longer before emergence, so apply
+  ! a pre-emergence retention to that unresolved component as well as to the
+  ! resolved CSM grid below.  The radial-size factor keeps extended CSM from
+  ! retaining a compact-like trapped ejecta shoulder.
+  tail_shape_retention = exp(-0.35d0 * s_tail_eff)
+  tail_fraction = min(1d0, (10d0 / max(state%x_out_cool, 1d0))**1.2d0) * tail_shape_retention
+  tail_energy_cgs = min(max(state%E_injected_rs_cum, 0d0) * tail_fraction, &
+                        0.6d0 * E_residual_cgs)
+  E_store_cgs = max(E_residual_cgs - tail_energy_cgs, 0d0)
+  state%E_cooling_tail_cgs = max(tail_energy_cgs, 0d0)
+  shell_radius_cgs = max(state%x_out_cool * state%R0, state%R0)
+  diffusion_beta = 2d0
+  state%t_cooling_tail0_cgs = max(state%kappa * max(state%phi_sh * 4d0 * pi * &
+                                  state%R_csm_in**3 * state%rho_ej_in, 0d0) / &
+                                  (4d0 * pi * diffusion_beta * clight * shell_radius_cgs), &
+                                  shell_radius_cgs / clight, 1d-30)
+  state%lum_cooling_tail_cgs = 0d0
   E_budget = E_store_cgs / max(4d0 * pi * state%u0 * state%R0**3, 1d-30)
 
   ! --- Build e_int(x) on the cooling grid ---
   ! Paper Eq. 948 sets the cooling IC to e_int(x), supplied by the interaction
-  ! stage.  The Appendix-A interaction PDE only solves the unshocked
-  ! shock-to-photosphere diffusion column, so its live e_grid is not the full
-  ! shocked-shell reservoir.  Use the explicit shocked-shell tracker built as
-  ! the shock sweeps through the CSM and drained by the luminosity that escaped
-  ! before emergence.  This keeps the paper interaction transport while giving
-  ! the cooling phase a genuine e_int(x) instead of a reconstructed live-field
-  ! copy.  Do not add a spatial dilution factor here: homologous expansion is
-  ! handled after y_se by u=u0*e*(R0/R_in)^4 and D∝R_in/R0.
+  ! stage.  The interaction diffusion column does not resolve the full shocked
+  ! shell after the shock has swept a zone, so close the missing structure with
+  ! the two physically distinct reservoirs tracked by the shock dynamics.
+  ! The unresolved reverse-shocked/BPL-ejecta component is evolved by the
+  ! trapped tail reservoir above; the resolved grid receives the swept CSM
+  ! component with the frozen CSM density profile that sets the optical-depth
+  ! and s-dependence.  Do not add a spatial dilution factor here:
+  ! homologous expansion is handled after y_se by
+  ! u=u0*e*(R0/R_in)^4 and D∝R_in/R0.
   do i = 1, n
    x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
-   ! Forward-shock heat is deposited at the newly swept CSM interface and is
-   ! allowed to retain that surface-weighted history.  Reverse-shock heat is
-   ! generated on the inner shocked/ejecta side; because the thin-shell
-   ! dynamics do not resolve that microscopic stratification, close it with
-   ! constant specific internal energy over the shocked shell, i.e. volumetric
-   ! energy follows the frozen density profile.  Both components are normalized
-   ! conservatively below to the tracked residual interaction energy.
    state%work_old_e(i) = shocked_shell_profile_at(state, x_l)
    state%e_grid(i) = max(compute_eta_csm(x_l, state), 0d0)
   end do
 
   density_norm = 0d0
   surface_norm = 0d0
+  density_retained_norm = 0d0
+  surface_retained_norm = 0d0
   do i = 1, n - 1
    x_l = state%x_min_cool + state%xi_grid(i)   * (state%x_ph - state%x_min_cool)
    x_r = state%x_min_cool + state%xi_grid(i+1) * (state%x_ph - state%x_min_cool)
@@ -3309,18 +3379,48 @@ subroutine transition_to_cooling(state)
    e_r = max(state%e_grid(i+1), 0d0)
    dx = (state%x_ph - state%x_min_cool) * dxi
    density_norm = density_norm + 0.5d0 * (x_l**2 * e_l + x_r**2 * e_r) * dx
+   density_retained_norm = density_retained_norm + 0.5d0 * &
+       (x_l**2 * e_l * (min(max(x_l / max(state%x_out_cool, x_l), 0d0), 1d0)**pdv_retention_power) + &
+        x_r**2 * e_r * (min(max(x_r / max(state%x_out_cool, x_r), 0d0), 1d0)**pdv_retention_power)) * dx
    e_l = max(state%work_old_e(i), 0d0)
    e_r = max(state%work_old_e(i+1), 0d0)
    surface_norm = surface_norm + 0.5d0 * (x_l**2 * e_l + x_r**2 * e_r) * dx
+   surface_retained_norm = surface_retained_norm + 0.5d0 * &
+       (x_l**2 * e_l * (min(max(x_l / max(state%x_out_cool, x_l), 0d0), 1d0)**pdv_retention_power) + &
+        x_r**2 * e_r * (min(max(x_r / max(state%x_out_cool, x_r), 0d0), 1d0)**pdv_retention_power)) * dx
   end do
 
-  ! Activate the well-mixed thin-shell closure by default.  The raw
-  ! forward-shock surface history is retained in work_old_e for diagnostics,
-  ! but using it directly makes the handoff a surface flash rather than the
-  ! cooling reservoir described by the paper.
-  surface_budget = 0d0
-  if (density_norm <= 0d0) surface_budget = max(E_budget, 0d0)
-  density_budget = max(E_budget - surface_budget, 0d0)
+  ! Split the surviving energy between the two shock channels.  The exact
+  ! microphysical loss history is unresolved by the thin-shell equations, so
+  ! apportion the residual by the cumulative FS/RS heating fractions rather
+  ! than assigning all pre-emergence luminosity losses to one channel.
+  E_channel_total = max(state%E_injected_fs_cum + state%E_injected_rs_cum, 0d0)
+  if (E_channel_total > 0d0) then
+   E_fs_residual_cgs = E_store_cgs * max(state%E_injected_fs_cum, 0d0) / E_channel_total
+  else
+   E_fs_residual_cgs = 0d0
+  end if
+  E_rs_residual_cgs = max(E_store_cgs - E_fs_residual_cgs, 0d0)
+  surface_budget = E_fs_residual_cgs / max(4d0 * pi * state%u0 * state%R0**3, 1d-30)
+  density_budget = E_rs_residual_cgs / max(4d0 * pi * state%u0 * state%R0**3, 1d-30)
+  if (surface_norm <= 0d0) then
+   density_budget = density_budget + surface_budget
+   surface_budget = 0d0
+  end if
+  if (density_norm <= 0d0) then
+   surface_budget = surface_budget + density_budget
+   density_budget = 0d0
+  end if
+  mixed_budget = max(E_budget - surface_budget - density_budget, 0d0)
+  if (mixed_budget > 0d0) density_budget = density_budget + mixed_budget
+
+  ! Shocked material deposited at smaller radii has expanded before t_se.
+  ! Radiation-dominated homologous expansion gives E_int ∝ R^-1, so retain
+  ! roughly x_dep/x_out of that zone's internal energy before initializing the
+  ! passive cooling problem.  This is deliberately applied to the energy budget,
+  ! not normalized away as a shape-only factor.
+  if (surface_norm > 0d0) surface_budget = surface_budget * surface_retained_norm / surface_norm
+  if (density_norm > 0d0) density_budget = density_budget * density_retained_norm / density_norm
 
   profile_norm = surface_norm + density_norm
   if (profile_norm <= 0d0) then
@@ -3347,15 +3447,15 @@ subroutine transition_to_cooling(state)
    do i = 1, n
     state%e_grid(i) = max(profile_scale * state%e_grid(i), 0d0)
    end do
-  else
+ else
    do i = 1, n
     if (surface_norm > 0d0 .and. density_norm > 0d0) then
      state%e_grid(i) = surface_budget * max(state%work_old_e(i), 0d0) / surface_norm + &
                        density_budget * max(state%e_grid(i), 0d0) / density_norm
     else if (surface_norm > 0d0) then
-     state%e_grid(i) = E_budget * max(state%work_old_e(i), 0d0) / surface_norm
+     state%e_grid(i) = surface_budget * max(state%work_old_e(i), 0d0) / surface_norm
     else if (density_norm > 0d0) then
-     state%e_grid(i) = E_budget * max(state%e_grid(i), 0d0) / density_norm
+     state%e_grid(i) = density_budget * max(state%e_grid(i), 0d0) / density_norm
     else
      state%e_grid(i) = 0d0
     end if
@@ -3416,6 +3516,8 @@ subroutine transition_to_cooling(state)
    write(*,'(A,ES12.4,A,ES12.4)') '  Einj=', state%E_injected_cum, ' Erad=', state%E_radiated_cum
    write(*,'(A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4)') '  Efs=', state%E_injected_fs_cum, &
      ' Ers=', state%E_injected_rs_cum, ' Esurf=', surface_budget, ' Edens=', density_budget
+   write(*,'(A,ES12.4,A,ES12.4)') '  Etail=', state%E_cooling_tail_cgs, &
+     ' ttail(d)=', state%t_cooling_tail0_cgs/86400d0
    write(*,'(A,ES12.4)') '  tbo=', state%t_breakout_cgs
    write(*,'(A,ES12.4,A,ES12.4)') '  Einner_after=', E_after_inner, ' f_inner=', E_after_inner / max(E_after, 1d-30)
    write(*,'(A,ES12.4,A,ES12.4)') '  e_grid(1)=', state%e_grid(1), ' e_grid(n)=', state%e_grid(n)
@@ -3467,7 +3569,8 @@ subroutine transition_to_cooling(state)
    ! 2*pi*c*R_ph^2*u_ph.
    L_factor = 2d0 * pi * clight * state%u0 * state%x_ph**2 * state%R0**2
    state%lum_obs_cgs = L_factor * e_N / max(state%R_in_R0, 1d-30)**2 + &
-                       max(state%lum_breakout_cgs, 0d0)
+                       max(state%lum_breakout_cgs, 0d0) + &
+                       max(state%lum_cooling_tail_cgs, 0d0)
   end if
   state%lum_obs_cgs = max(state%lum_obs_cgs, 0d0)
 
@@ -3674,6 +3777,7 @@ subroutine transition_to_cooling(state)
       state%x_sh_dot = 0d0
       call advance_breakout_reservoir(state, (1d0 - frac) * dzeta_step * state%t_in, 0d0, &
                                       max(state%t_breakout_cgs, state%x_ph * state%R0 / clight, 1d-30))
+      call advance_cooling_tail_reservoir(state, (1d0 - frac) * dzeta_step * state%t_in)
       x_ph_old = state%x_ph
       call estimate_photosphere_x(state%x_min_cool, state)
       if (x_ph_old > 0d0) then
@@ -3692,6 +3796,7 @@ subroutine transition_to_cooling(state)
      call transition_to_cooling(state)
      call advance_breakout_reservoir(state, dzeta_step * state%t_in, 0d0, &
                                      max(state%t_breakout_cgs, state%x_ph * state%R0 / clight, 1d-30))
+     call advance_cooling_tail_reservoir(state, dzeta_step * state%t_in)
      x_ph_old = state%x_ph
      call estimate_photosphere_x(state%x_min_cool, state)
       if (x_ph_old > 0d0) then
@@ -3736,6 +3841,7 @@ subroutine transition_to_cooling(state)
     ! Cooling phase: R_in/R0 already updated in Step 1
     call advance_breakout_reservoir(state, dzeta_step * state%t_in, 0d0, &
                                     max(state%t_breakout_cgs, state%x_ph * state%R0 / clight, 1d-30))
+    call advance_cooling_tail_reservoir(state, dzeta_step * state%t_in)
     x_ph_old = state%x_ph
     call estimate_photosphere_x(state%x_min_cool, state)
      if (x_ph_old > 0d0) then
