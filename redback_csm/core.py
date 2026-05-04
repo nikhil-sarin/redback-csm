@@ -156,6 +156,10 @@ def _get_bpl_cutoff_ratio_from_kwargs(kwargs):
 
     vej_max = kwargs.get("vej_max", None)
     if vej_max is None:
+        if all(name in kwargs for name in ("delta", "nn", "mexp", "eexp")):
+            return 3.0
+        if all(name in kwargs for name in ("delta_sn", "nn_sn", "mej_sn", "esn")):
+            return 3.0
         return 0.0
 
     # External velocity inputs are conventionally in km/s on the Python side.
@@ -193,28 +197,28 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     Configure the shared Fortran runtime state for one wrapper call.
 
     All Python wrappers support the same runtime kwargs:
-    - mode: 'simple' or 'hybrid'
+    - mode: 'simple' or 'transport'
     - kappa: opacity
-    - n_rad_zones: hybrid transport resolution
+    - n_rad_zones: transport solver resolution
     - efficiency_mode: optional alternate FS efficiency mode
     """
-    mode = kwargs.get("mode", "simple")
+    mode = str(kwargs.get("mode", "simple")).lower()
     kappa = kwargs.get("kappa", None)
     efficiency_mode = int(kwargs.get("efficiency_mode", 0))
 
     if mode == "simple":
         _get_csm().lc_mod.set_run_mode(1)
-    elif mode == "hybrid":
-        _get_csm().lc_mod.set_run_mode(2)
+    elif mode == "transport":
+        _get_csm().lc_mod.set_run_mode(3)
         if kappa is None:
             kappa = 0.34
         n_rad_zones = int(kwargs.get("n_rad_zones", default_n_rad_zones))
-        _get_csm().lc_mod.set_hybrid_parameters(
+        _get_csm().lc_mod.set_transport_parameters(
             n_zones=n_rad_zones,
             kappa_val=float(kappa),
         )
     else:
-        raise ValueError(f"mode must be 'simple' or 'hybrid', got {mode}")
+        raise ValueError(f"mode must be 'simple' or 'transport', got {mode}")
 
     _get_csm().lc_mod.set_efficiency_mode(efficiency_mode)
     _get_csm().lc_mod.set_bpl_cutoff_ratio(
@@ -223,11 +227,11 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     return mode, kappa
 
 
-def _get_last_hybrid_transport_diagnostics():
+def _get_last_transport_diagnostics():
     """
     Return diagnostic arrays captured during the most recent Fortran CSM run.
 
-    These arrays are populated by the hybrid transport branch and are intended
+    These arrays are populated by the transport branch and are intended
     for debugging/validation rather than the public model API.
     """
     diag = _output_builder(
@@ -238,7 +242,7 @@ def _get_last_hybrid_transport_diagnostics():
     diag.r_photosphere = _get_csm().lc_mod.rpharray.copy()
     diag.e_trapped = _get_csm().lc_mod.etraparray.copy()
     diag.t_leak = _get_csm().lc_mod.tleakarray.copy()
-    diag.tau_shell = _get_csm().lc_mod.tauarray_hybrid.copy()
+    diag.tau_shell = _get_csm().lc_mod.tauarray_transport.copy()
     return _freeze_output(diag)
 
 
@@ -254,16 +258,16 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     :param eexp: Explosion energy in foe
     :param eff: Efficiency factor (0-1).
                 For simple mode: fraction of kinetic energy that radiates.
-                For hybrid mode: still passed through to the Fortran interaction model.
-    :param mode: 'simple' (thin shell only) or 'hybrid' (thin shell + transport solver)
-    :param n_rad_zones: Number of radiation grid zones (for hybrid mode only, default 40)
+                For transport mode: still passed through to the Fortran interaction model.
+    :param mode: 'simple' (thin shell only) or 'transport' (thin shell + transport solver)
+    :param n_rad_zones: Number of radiation grid zones (for transport mode only, default 40)
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation.
                   Common values: 0.34 (electron scattering), 0.1 (lower bound)
     :return: Named tuple with fields:
              - time: Time array in seconds
-             - lbol: Bolometric luminosity (transport/diffuse for hybrid, shock×eff for simple)
+             - lbol: Bolometric luminosity (transport for transport, shock×eff for simple)
              - lbol_shock: Shock luminosity (instantaneous kinetic energy deposition)
-             - lbol_diffuse: Diffuse luminosity (transport/diffuse for hybrid, None otherwise)
+             - lbol_diffuse: Diffuse luminosity (transport for transport, None otherwise)
              - rph: Shell radius (historical field name)
              - temperature: Temperature
              - vshell: Shell velocity
@@ -275,11 +279,11 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
         lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0, eff=0.5)
         plt.plot(lc.time, lc.lbol)  # Plots eff × shock luminosity
 
-        # Hybrid mode - uses the transport solver for the observed luminosity
+        # Transport mode - uses the transport solver for the observed luminosity
         # while still taking the supplied efficiency parameter
         lc = _get_lc_wind_exponential(mdot=1e-3, vwind=100, mexp=10.0, eexp=1.0,
-                                      eff=0.3, mode='hybrid', kappa=0.34, n_rad_zones=40)
-        plt.plot(lc.time, lc.lbol)         # Plots transport/diffuse luminosity
+                                      eff=0.3, mode='transport', kappa=0.34, n_rad_zones=40)
+        plt.plot(lc.time, lc.lbol)         # Plots transport luminosity
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity (always higher early on)
     """
     kwargs = dict(kwargs)
@@ -311,24 +315,24 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
     
     # larray contains different things depending on mode:
     # - Simple mode: larray = eff * (lfs + lrs)
-    # - Hybrid mode: larray = shock luminosity; ldiff stores transport luminosity
+    # - Transport mode: larray = shock luminosity; ldiff stores transport luminosity
     larray_raw = _get_csm().lc_mod.larray.copy()
     
     # Shock luminosity is always lfs + lrs (total kinetic luminosity deposited)
     lbol_shock_total = lbol_fs + lbol_rs
 
     # Get diffuse/observed luminosity
-    if mode == 'hybrid':
-        # Hybrid: observed luminosity comes from the transport solver
+    if mode == 'transport':
+        # Transport: observed luminosity comes from the transport solver
         lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
-        lbol = lbol_diffuse  # Main output is transport/diffuse luminosity
+        lbol = lbol_diffuse  # Main output is transport luminosity
         lbol_shock = lbol_shock_total  # Store actual shock luminosity for comparison
     elif kappa is not None:
         # Simple with kappa: post-processed diffusion
@@ -429,7 +433,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     lbol_shock = _get_csm().lc_mod.larray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -527,7 +531,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     lbol_shock = _get_csm().lc_mod.larray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -625,7 +629,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -720,7 +724,7 @@ def _get_lc_exponential_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -840,7 +844,7 @@ def _get_lc_exponential_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -971,7 +975,7 @@ def _get_lc_bpl_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1085,7 +1089,7 @@ def _get_lc_bpl_exponential(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1161,7 +1165,7 @@ def _get_lc_boxwind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1239,12 +1243,12 @@ def _get_lc_boxwind_bpl(
     lbol_shock = _get_csm().lc_mod.larray.copy()
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
 
-    if mode == "hybrid":
+    if mode == "transport":
         lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
         lbol = lbol_diffuse
     elif kappa is not None:
@@ -1337,7 +1341,7 @@ def _get_lc_gausswind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1434,7 +1438,7 @@ def _get_lc_gausswind_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1555,7 +1559,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1662,7 +1666,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1766,7 +1770,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1884,7 +1888,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2023,7 +2027,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2148,7 +2152,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2295,7 +2299,7 @@ def _get_lc_multi_eruption_bpl_sn(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2407,7 +2411,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2531,7 +2535,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2950,7 +2954,7 @@ def _get_lc_generic_csm_exponential(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3108,7 +3112,7 @@ def _get_lc_generic_csm_bpl(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3177,7 +3181,7 @@ def _get_lc_static_powerlaw_csm_exponential(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3226,6 +3230,11 @@ def _get_lc_static_powerlaw_csm_bpl(
     **kwargs,
 ):
     """Static finite-support power-law CSM shell interacting with a BPL SN."""
+    kwargs = dict(kwargs)
+    kwargs.setdefault("delta_sn", delta_sn)
+    kwargs.setdefault("nn_sn", nn_sn)
+    kwargs.setdefault("mej_sn", mej_sn)
+    kwargs.setdefault("esn", esn)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     n_points = kwargs.get("n_points", 1000)
 
@@ -3254,7 +3263,7 @@ def _get_lc_static_powerlaw_csm_bpl(
 
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3420,7 +3429,7 @@ def _get_lc_generic_4shell_csm_bpl(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3660,7 +3669,7 @@ def _get_lc_generic_8shell_csm_bpl(
     # Extract results
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
-    rph = _get_csm().lc_mod.rarray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()

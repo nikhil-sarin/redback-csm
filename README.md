@@ -62,9 +62,9 @@ keywords controlling the transport treatment:
 | Keyword | Meaning |
 |---|---|
 | `mode='simple'` | Default thin-shell calculation. If `kappa` is provided, this uses the legacy post-processed diffusion light curve. |
-| `mode='hybrid'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
-| `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In hybrid mode, defaults to `0.34` if not supplied. |
-| `n_rad_zones` | Number of radiation/transport zones in hybrid mode. Higher values reduce numerical roughness but increase runtime. |
+| `mode='transport'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
+| `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In transport mode, defaults to `0.34` if not supplied. |
+| `n_rad_zones` | Number of radiation/transport zones in transport mode. Higher values reduce numerical roughness but increase runtime. |
 | `efficiency_mode` | Optional alternate forward-shock efficiency mode. Default is `0`, which keeps the user-supplied constant `eff`. |
 
 Current output convention:
@@ -221,8 +221,8 @@ lbol = wind_bpl_bolometric(
     kappa=0.34,   # cm^2/g — enables photon diffusion (optional)
 )
 
-# Hybrid transport mode
-lbol_hybrid = wind_bpl_bolometric(
+# Transport mode
+lbol_transport = wind_bpl_bolometric(
     time=time,
     mdot=1e-3,
     vwind=100,
@@ -231,7 +231,7 @@ lbol_hybrid = wind_bpl_bolometric(
     mexp=10.0,
     eexp=1.0,
     eff=0.5,
-    mode='hybrid',
+    mode='transport',
     kappa=0.34,
     n_rad_zones=120,
 )

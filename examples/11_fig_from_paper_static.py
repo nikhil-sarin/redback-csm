@@ -12,7 +12,7 @@ R_SUN = 6.957e10
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--output", default="fig_from_paper_static.png")
-    p.add_argument("--efficiency-mode", type=int, default=1)
+    p.add_argument("--efficiency-mode", type=int, default=0)
     return p.parse_args()
 
 
@@ -27,13 +27,15 @@ def main():
             "title": r"Compact CSM: $R_{\rm csm,out}=5\times10^3\,R_\odot$",
             "r_outer": 5.0e3 * R_SUN,
             "xlim": (1.0, 300.0),
-            "n_rad_zones": 20,
+            "ylim": (1e42, 6e45),
+            "n_rad_zones": 40,
         },
         {
             "title": r"Extended CSM: $R_{\rm csm,out}=5\times10^4\,R_\odot$",
             "r_outer": 5.0e4 * R_SUN,
             "xlim": (1.0, 300.0),
-            "n_rad_zones": 20,
+            "ylim": (1e41, 1.3e45),
+            "n_rad_zones": 40,
         },
     ]
 
@@ -52,7 +54,7 @@ def main():
                 esn=1.0,
                 eff=1.0,
                 m_csm=1.0,
-                mode="hybrid",
+                mode="transport",
                 efficiency_mode=args.efficiency_mode,
                 kappa=0.2,
                 n_rad_zones=panel["n_rad_zones"],
@@ -62,7 +64,7 @@ def main():
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(panel["xlim"])
-        ax.set_ylim(1e41, 1.3e45 if panel["r_outer"] > 1e4 * R_SUN else 6e45)
+        ax.set_ylim(panel["ylim"])
         ax.set_xlabel("Time (days)", fontsize=18)
         ax.set_title(panel["title"], fontsize=16)
         ax.tick_params(axis="both", which="both", direction="in", top=True, right=True)

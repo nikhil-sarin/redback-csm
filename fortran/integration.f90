@@ -10,48 +10,46 @@ module integration
 
 contains
 
- function dmdt(u,r,m,t,op)
+function dmdt(u,r,t,op)
   ! Continuity equation
   type(outflow_parameters),intent(inout):: op(1:2)
-  real(8),intent(in):: u,r,m,t
-  real(8):: dmdt
-  dmdt = rho4pir2_in (r,t,op(1))*(v_in (r,t,op(1))-u) &
-       + rho4pir2_out(r,t,op(2))*(u-v_out(r,t,op(2)))
+  real(8),intent(in):: u,r,t
+  real(8):: dmdt, rel_in, rel_out
+  rel_in = max(v_in(r,t,op(1)) - u, 0d0)
+  rel_out = max(u - v_out(r,t,op(2)), 0d0)
+  dmdt = rho4pir2_in (r,t,op(1))*rel_in &
+       + rho4pir2_out(r,t,op(2))*rel_out
  end function dmdt
 
- function dudt(u,r,m,t,op) result(du_dt)
+function dudt(u,r,m,t,op) result(du_dt)
   ! Equation of motion
   type(outflow_parameters),intent(inout):: op(1:2)
   real(8),intent(in):: u,r,m,t
-  real(8):: du_dt, aram
+  real(8):: du_dt, aram, rel_in, rel_out
 
-  aram = ( rho4pir2_in (r,t,op(1))*(v_in (r,t,op(1))-u)**2 &
-         - rho4pir2_out(r,t,op(2))*(u-v_out(r,t,op(2)))**2 ) / m
+  rel_in = max(v_in(r,t,op(1)) - u, 0d0)
+  rel_out = max(u - v_out(r,t,op(2)), 0d0)
+  aram = ( rho4pir2_in (r,t,op(1))*rel_in**2 &
+         - rho4pir2_out(r,t,op(2))*rel_out**2 ) / m
   du_dt = aram
  end function dudt
 
- function drdt(u,r,m,t,op)
-  ! Velocity
-  type(outflow_parameters),intent(in):: op(1:2)
-  real(8),intent(in):: u,r,m,t
-  real(8):: drdt
-  drdt = u
- end function drdt
-
- function forward_shock_luminosity(r,t,u,op) result(lum)
+function forward_shock_luminosity(r,t,u,op) result(lum)
   ! Forward-shock contribution to the dissipated luminosity
   type(outflow_parameters),intent(inout):: op(1:2)
   real(8),intent(in):: r,t,u
-  real(8):: lum
-  lum = 0.5d0*rho4pir2_out(r,t,op(2))*(u-v_out(r,t,op(2)))**3
+  real(8):: lum, rel_out
+  rel_out = max(u - v_out(r,t,op(2)), 0d0)
+  lum = 0.5d0*rho4pir2_out(r,t,op(2))*rel_out**3
  end function forward_shock_luminosity
 
- function reverse_shock_luminosity(r,t,u,op) result(lum)
+function reverse_shock_luminosity(r,t,u,op) result(lum)
   ! Reverse-shock contribution to the dissipated luminosity
   type(outflow_parameters),intent(inout):: op(1:2)
   real(8),intent(in):: r,t,u
-  real(8):: lum
-  lum = 0.5d0*rho4pir2_in(r,t,op(1))*(v_in(r,t,op(1))-u)**3
+  real(8):: lum, rel_in
+  rel_in = max(v_in(r,t,op(1)) - u, 0d0)
+  lum = 0.5d0*rho4pir2_in(r,t,op(1))*rel_in**3
  end function reverse_shock_luminosity
 
  function shock_luminosity(r,t,u,op) result(lum)
