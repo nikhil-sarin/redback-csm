@@ -2747,6 +2747,7 @@ subroutine current_dimless_shock_components(state, lum_fs, lum_rs)
   real(8), intent(out) :: lum_fs, lum_rs
   real(8) :: r_dim, t_dim, u_dim
   real(8) :: eta_fs, eta_rs
+  real(8) :: tau_ahead, tau_therm, therm_floor, therm_factor, escape_factor
 
   lum_fs = 0d0
   lum_rs = 0d0
@@ -2762,6 +2763,22 @@ subroutine current_dimless_shock_components(state, lum_fs, lum_rs)
   case (1)
    eta_fs = forward_shock_radiative_efficiency(r_dim, t_dim, u_dim, op, state%eff)
    eta_rs = reverse_shock_radiative_efficiency(r_dim, t_dim, u_dim, op, state%eff)
+   tau_ahead = state%tau_ahead_csm
+   if (tau_ahead <= 0d0) tau_ahead = 1d99
+   ! A radiative shock can cool locally (handled by the free-free t_cool/t_flow
+   ! limiter above) but still fail to build a trapped optical radiation field
+   ! once the unshocked CSM column ahead of it is small.  Use the remaining
+   ! optical depth as a smooth thermalisation factor, with a low partially
+   ! radiative floor while tau_ahead is of order a few and a final shutoff
+   ! once the upstream column is optically thin.
+   tau_therm = 7d0
+   therm_floor = 0.25d0
+   therm_factor = therm_floor + (1d0 - therm_floor) / &
+                 (1d0 + (tau_therm / max(tau_ahead, 1d-30))**12)
+   escape_factor = 1d0 - exp(-min((tau_ahead / 0.10d0)**2, 80d0))
+   therm_factor = therm_factor * escape_factor
+   eta_fs = eta_fs * therm_factor
+   eta_rs = eta_rs * therm_factor
    lum_fs = eta_fs * lum_fs
    lum_rs = eta_rs * lum_rs
   case default

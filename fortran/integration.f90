@@ -89,7 +89,10 @@ function forward_shock_radiative_efficiency(r,t,u,op,eff_max) result(eta_fs)
   end if
 
   epsilon_ff = ff_emissivity_norm * sqrt(p_down) * rho_down**1.5d0
-  thermal_factor = epsilon_ff * r / (3d0 * p_down * clight)
+  ! Radiative-shock condition: compare the post-shock cooling time
+  ! t_cool ~= 3p/q_ff to the flow time r/v_rel, not to the light-crossing
+  ! time.  Photon escape is handled separately by the transport solver.
+  thermal_factor = epsilon_ff * r / (3d0 * p_down * max(v_rel, 1d5))
   eta_fs = eff_max * min(1d0, max(0d0, thermal_factor))
  end function forward_shock_radiative_efficiency
 
@@ -120,7 +123,10 @@ function forward_shock_radiative_efficiency(r,t,u,op,eff_max) result(eta_fs)
   end if
 
   epsilon_ff = ff_emissivity_norm * sqrt(p_down) * rho_down**1.5d0
-  thermal_factor = epsilon_ff * r / (3d0 * p_down * clight)
+  ! Radiative-shock condition: compare the post-shock cooling time
+  ! t_cool ~= 3p/q_ff to the flow time r/v_rel, not to the light-crossing
+  ! time.  Photon escape is handled separately by the transport solver.
+  thermal_factor = epsilon_ff * r / (3d0 * p_down * max(v_rel, 1d5))
   eta_rs = eff_max * min(1d0, max(0d0, thermal_factor))
  end function reverse_shock_radiative_efficiency
 
