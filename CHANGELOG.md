@@ -7,6 +7,8 @@
 - Documented the legacy `simple` + `kappa` diffusion kernel separately from the
   radiation-transport solver.
 - Added public static finite power-law transport and X-ray example scripts.
+- Added transport validation scripts for Fig. 11-style light curves,
+  resolution checks, JAX-vs-Fortran comparisons, and runtime summaries.
 - Added a JAX static finite power-law CSM backend for fast inference
   experiments, scoped to the static power-law/BPL model family.
 - Added thermal bremsstrahlung X-ray wrappers and an example plot script.

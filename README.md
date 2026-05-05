@@ -301,6 +301,31 @@ MPLBACKEND=Agg python examples/06_xray.py
 These regenerate the static finite power-law CSM transport example and the
 thermal bremsstrahlung X-ray example.
 
+Optional development extras:
+
+```bash
+pip install -e ".[dev]"
+pip install -e ".[jax]"   # optional static-CSM JAX backend
+```
+
+## Validation and smoke tests
+
+Run the fast smoke tests with:
+
+```bash
+python -m pytest tests/test_smoke.py -q
+```
+
+Useful release-validation scripts are:
+
+```bash
+MPLBACKEND=Agg python examples/08_static_power_law_transport.py
+MPLBACKEND=Agg python examples/06_xray.py
+```
+
+These regenerate the static finite power-law CSM transport example and the
+thermal bremsstrahlung X-ray example.
+
 ## Quick start
 
 ```python
