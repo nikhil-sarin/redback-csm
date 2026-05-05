@@ -29,7 +29,7 @@ use csm_transport, only: dimless_state_type, dimless_comoving_transport_step, &
  private:: finalize_outputs, do_main_loop
  private:: get_diffuse_lc
  private
-integer,parameter:: ll=200000
+integer,parameter:: ll=200000, n_skip_initial_outputs=10
  real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array, fs_array, rs_array
  real(8),dimension(ll):: rfs_array, rph_array, etrap_array, tleak_array, tau_array_transport
  integer,dimension(ll):: i_array
@@ -85,11 +85,38 @@ contains
    if(present(kappa))then
     call get_diffuse_lc(csm_type,kappa)
     temparray = temperature(ldiff,rarray)
+    call drop_initial_output_rows(n_skip_initial_outputs)
    elseif(allocated(ldiff))then
     deallocate(ldiff)
    end if
   end if
  end subroutine finalize_outputs
+
+ subroutine drop_initial_output_rows(n_drop)
+  integer,intent(in):: n_drop
+  integer:: n_old, n_new
+  real(8),allocatable,dimension(:):: tmp
+
+  if(.not.allocated(tarray))return
+  n_old = size(tarray)
+  if(n_drop <= 0 .or. n_old <= n_drop)return
+  n_new = n_old - n_drop
+
+  allocate(tmp(n_new)); tmp = tarray(n_drop+1:n_old); call move_alloc(tmp,tarray)
+  allocate(tmp(n_new)); tmp = larray(n_drop+1:n_old); call move_alloc(tmp,larray)
+  allocate(tmp(n_new)); tmp = lfs(n_drop+1:n_old); call move_alloc(tmp,lfs)
+  allocate(tmp(n_new)); tmp = lrs(n_drop+1:n_old); call move_alloc(tmp,lrs)
+  allocate(tmp(n_new)); tmp = temparray(n_drop+1:n_old); call move_alloc(tmp,temparray)
+  allocate(tmp(n_new)); tmp = rarray(n_drop+1:n_old); call move_alloc(tmp,rarray)
+  allocate(tmp(n_new)); tmp = varray(n_drop+1:n_old); call move_alloc(tmp,varray)
+  allocate(tmp(n_new)); tmp = marray(n_drop+1:n_old); call move_alloc(tmp,marray)
+  allocate(tmp(n_new)); tmp = ldiff(n_drop+1:n_old); call move_alloc(tmp,ldiff)
+  allocate(tmp(n_new)); tmp = rfsarray(n_drop+1:n_old); call move_alloc(tmp,rfsarray)
+  allocate(tmp(n_new)); tmp = rpharray(n_drop+1:n_old); call move_alloc(tmp,rpharray)
+  allocate(tmp(n_new)); tmp = etraparray(n_drop+1:n_old); call move_alloc(tmp,etraparray)
+  allocate(tmp(n_new)); tmp = tleakarray(n_drop+1:n_old); call move_alloc(tmp,tleakarray)
+  allocate(tmp(n_new)); tmp = tauarray_transport(n_drop+1:n_old); call move_alloc(tmp,tauarray_transport)
+ end subroutine drop_initial_output_rows
 
  subroutine lightcurve_wind_exponential(Mdotinput, tinput, vwindinput, Mexp, Eexp, eff, kappa)
 
@@ -794,7 +821,7 @@ end subroutine lightcurve_wind_bpl
   use integration
   use get_vals
 
-   integer:: n, m3_log_counter
+   integer:: n, m3_log_counter, n_store_seen
    real(8):: dt,ku,kr,km, t_end_run
    real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs
    real(8) :: r_ph, L_ph
@@ -845,6 +872,7 @@ end subroutine lightcurve_wind_bpl
   tau_array_transport = 0d0
   i_array = 0
   n = 0
+  n_store_seen = 0
   do while (t<=t_end_run)
 
 ! Evolve shell properties
@@ -948,6 +976,10 @@ end subroutine lightcurve_wind_bpl
    if(run_mode == 1)then
     if(n>=1)i_array(n) = op(2)%scan_i
    end if
+    if (run_mode == 3) then
+     n_store_seen = n_store_seen + 1
+     if (n_store_seen <= n_skip_initial_outputs) cycle
+    end if
     if (n >= ll) exit
     n = n+1
     
@@ -1026,7 +1058,11 @@ end subroutine lightcurve_wind_bpl
   etraparray(1:n) = etrap_array(1:n)
   tleakarray(1:n) = tleak_array(1:n)
   tauarray_transport(1:n) = tau_array_transport(1:n)
-  temparray(1:n) = temperature(larray(1:n),rarray(1:n))
+  if (run_mode == 3) then
+   temparray(1:n) = temperature(ldiff(1:n), max(rpharray(1:n), rarray(1:n)))
+  else
+   temparray(1:n) = temperature(larray(1:n), rarray(1:n))
+  end if
 
 !!$  do n = 1, size(tarray)
 !!$   print*,tarray(n),larray(n)

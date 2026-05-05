@@ -192,6 +192,16 @@ def _get_bpl_cutoff_ratio_from_kwargs(kwargs):
     return ratio
 
 
+def _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp):
+    """Attach BPL SN parameters so runtime cutoff settings are consistent."""
+    kwargs = dict(kwargs)
+    kwargs.setdefault("delta", delta)
+    kwargs.setdefault("nn", nn)
+    kwargs.setdefault("mexp", mexp)
+    kwargs.setdefault("eexp", eexp)
+    return kwargs
+
+
 def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     """
     Configure the shared Fortran runtime state for one wrapper call.
@@ -225,6 +235,127 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
         float(_get_bpl_cutoff_ratio_from_kwargs(kwargs))
     )
     return mode, kappa
+
+
+def _finite_transport_wind_history(tgrid, mdot, vwind_cgs, mode, kwargs):
+    """
+    Convert a wind history into the finite shell required by transport mode.
+
+    The wind constructor maps wind age to radius as r ~= vwind * t_wind.  In
+    simple mode the endpoint mdot values are intentionally extrapolated, which
+    is useful for steady winds. Transport mode instead needs a finite support
+    with a real inner and outer edge, so we add narrow edge ramps to zero before
+    sampling the history into a static radial grid.
+    """
+    if mode != "transport":
+        return tgrid, mdot
+
+    if vwind_cgs <= 0.0:
+        raise ValueError("transport wind models require vwind > 0")
+
+    tgrid = np.asarray(tgrid, dtype=np.float64)
+    mdot = np.asarray(mdot, dtype=np.float64)
+    if tgrid.size != mdot.size or tgrid.size == 0:
+        raise ValueError("wind history requires matching non-empty tgrid and mdot arrays")
+
+    order = np.argsort(tgrid, kind="mergesort")
+    t_sorted = np.maximum(tgrid[order], 0.0)
+    mdot_sorted = np.maximum(mdot[order], 0.0)
+
+    inner_default = 1.0 * 365.25 * DAY
+    if "transport_r_inner" in kwargs:
+        t_inner = float(kwargs["transport_r_inner"]) / vwind_cgs
+    elif "r_inner" in kwargs:
+        t_inner = float(kwargs["r_inner"]) / vwind_cgs
+    elif "transport_wind_inner_age" in kwargs:
+        t_inner = float(kwargs["transport_wind_inner_age"]) * 365.25 * DAY
+    else:
+        t_inner = max(t_sorted[0], inner_default)
+
+    if "transport_r_outer" in kwargs:
+        t_outer = float(kwargs["transport_r_outer"]) / vwind_cgs
+    elif "r_outer" in kwargs:
+        t_outer = float(kwargs["r_outer"]) / vwind_cgs
+    elif "transport_wind_age" in kwargs:
+        t_outer = float(kwargs["transport_wind_age"]) * 365.25 * DAY
+    elif "wind_age" in kwargs:
+        t_outer = float(kwargs["wind_age"]) * 365.25 * DAY
+    elif t_sorted.size == 1:
+        t_outer = 100.0 * 365.25 * DAY
+    else:
+        t_outer = t_sorted[-1]
+
+    t_inner = max(t_inner, 1.0e-6)
+    if t_outer <= t_inner:
+        t_outer = t_inner + 1.0 * 365.25 * DAY
+
+    span = t_outer - t_inner
+    edge_dt = min(max(1.0e-6 * span, 1.0), 0.05 * span)
+    t_inner_on = t_inner + edge_dt
+    t_outer_off = t_outer - edge_dt
+    if t_outer_off <= t_inner_on:
+        t_inner_on = t_inner + 0.25 * span
+        t_outer_off = t_outer - 0.25 * span
+
+    mdot_inner = np.interp(t_inner_on, t_sorted, mdot_sorted, left=mdot_sorted[0], right=mdot_sorted[-1])
+    mdot_outer = np.interp(t_outer_off, t_sorted, mdot_sorted, left=mdot_sorted[0], right=mdot_sorted[-1])
+    keep = (t_sorted > t_inner_on) & (t_sorted < t_outer_off)
+
+    t_new = np.concatenate((
+        np.array([t_inner, t_inner_on], dtype=np.float64),
+        t_sorted[keep],
+        np.array([t_outer_off, t_outer], dtype=np.float64),
+    ))
+    mdot_new = np.concatenate((
+        np.array([0.0, mdot_inner], dtype=np.float64),
+        mdot_sorted[keep],
+        np.array([mdot_outer, 0.0], dtype=np.float64),
+    ))
+    return t_new, mdot_new
+
+
+def _wind_history_to_static_grid(tgrid, mdot, vwind_cgs, mode, kwargs):
+    """Sample a wind history into a finite static radial CSM grid for transport."""
+    if mode != "transport":
+        return None, None
+
+    t_finite, mdot_finite = _finite_transport_wind_history(tgrid, mdot, vwind_cgs, mode, kwargs)
+    if t_finite.size < 2:
+        raise ValueError("transport wind conversion requires at least two wind-history points")
+
+    threshold = max(np.max(mdot_finite) * 1.0e-12, 0.0)
+    active = np.flatnonzero(mdot_finite > threshold)
+    if active.size < 2:
+        raise ValueError("transport wind conversion found no finite-density CSM support")
+
+    t_inner = max(t_finite[active[0]], 1.0e-6)
+    t_outer = max(t_finite[active[-1]], t_inner * (1.0 + 1.0e-6))
+    r_inner = max(vwind_cgs * t_inner, 1.0)
+    r_outer = max(vwind_cgs * t_outer, r_inner * (1.0 + 1.0e-6))
+    n_points = max(64, int(kwargs.get("transport_csm_n_points", kwargs.get("csm_n_points", 512))))
+
+    r_grid = np.logspace(np.log10(r_inner), np.log10(r_outer), n_points).astype(np.float64)
+    t_wind = r_grid / vwind_cgs
+    mdot_grid = np.interp(t_wind, t_finite, mdot_finite, left=0.0, right=0.0)
+    rho_grid = mdot_grid / (4.0 * np.pi * r_grid**2 * vwind_cgs)
+    return r_grid, np.maximum(rho_grid, 0.0).astype(np.float64)
+
+
+def _call_static_wind_transport_if_needed(tgrid, mdot, vwind_cgs, sn_kind, sn_args, eff, kappa, mode, kwargs):
+    """Use the static finite CSM transport path for wind-history CSMs."""
+    if mode != "transport":
+        return False
+
+    r_grid, rho_grid = _wind_history_to_static_grid(tgrid, mdot, vwind_cgs, mode, kwargs)
+    if sn_kind == "exponential":
+        mexp, eexp = sn_args
+        _get_csm().lc_mod.lightcurve_static_exponential(rho_grid, r_grid, mexp, eexp, eff, kappa)
+    elif sn_kind == "bpl":
+        delta, nn, mexp, eexp = sn_args
+        _get_csm().lc_mod.lightcurve_static_bpl(rho_grid, r_grid, delta, nn, mexp, eexp, eff, kappa)
+    else:
+        raise ValueError(f"unknown static wind transport SN kind: {sn_kind}")
+    return True
 
 
 def _get_last_transport_diagnostics():
@@ -302,8 +433,9 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     if mode == 'simple' and eff is None:
         raise ValueError("Simple mode requires 'eff' parameter (0-1)")
 
-    # Call Fortran with or without kappa
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "exponential", (mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_exponential(
             mdot, tgrid, vwind, mexp, eexp, eff, kappa
         )
@@ -409,6 +541,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
@@ -419,8 +552,9 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     mdot = np.array([mdot], dtype=np.float64)
     tgrid = np.array([1.0], dtype=np.float64)
 
-    # Call Fortran with or without kappa
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "bpl", (delta, nn, mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_bpl(
             mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
         )
@@ -517,8 +651,9 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     mdot = np.array([mdot], dtype=np.float64)
     tgrid = np.array([1.0], dtype=np.float64)
 
-    # Call Fortran with or without kappa
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "exponential", (mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_exponential_wind(
             mexp, eexp, mdot, tgrid, vwind, eff, kappa
         )
@@ -607,6 +742,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
@@ -617,8 +753,9 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
     tgrid = np.array([1.0], dtype=np.float64)
     mdot = np.array([mdot], dtype=np.float64)
 
-    # Call Fortran with or without kappa
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "bpl", (delta, nn, mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_bpl_wind(
             delta, nn, mexp, eexp, mdot, tgrid, vwind, eff, kappa
         )
@@ -1154,7 +1291,9 @@ def _get_lc_boxwind_exponential(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert erg to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "exponential", (mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_exponential(
             mdot, tgrid, vwind, mexp, eexp, eff, kappa
         )
@@ -1221,6 +1360,7 @@ def _get_lc_boxwind_bpl(
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     mdot = np.array([mdot_0, mdot_1, mdot_1, mdot_2])
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec  # Convert to g/s
@@ -1230,7 +1370,9 @@ def _get_lc_boxwind_bpl(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "bpl", (delta, nn, mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_bpl(
             mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
         )
@@ -1330,7 +1472,9 @@ def _get_lc_gausswind_exponential(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "exponential", (mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_exponential(
             mdot, tgrid, vwind, mexp, eexp, eff, kappa
         )
@@ -1409,6 +1553,7 @@ def _get_lc_gausswind_bpl(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid for Gaussian profile
@@ -1427,7 +1572,9 @@ def _get_lc_gausswind_bpl(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "bpl", (delta, nn, mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_bpl(
             mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
         )
@@ -1513,6 +1660,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
@@ -1548,7 +1696,9 @@ def _get_lc_triple_powerlaw_wind_bpl(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "bpl", (delta, nn, mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_bpl(
             mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
         )
@@ -1655,7 +1805,9 @@ def _get_lc_triple_powerlaw_wind_exponential(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "exponential", (mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_exponential(
             mdot, tgrid, vwind, mexp, eexp, eff, kappa
         )
@@ -1759,7 +1911,9 @@ def _get_lc_exponential_triple_powerlaw_wind(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "exponential", (mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_exponential_wind(
             mexp, eexp, mdot, tgrid, vwind, eff, kappa
         )
@@ -1842,6 +1996,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
     n_points = kwargs.get("n_points", 50)
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
@@ -1877,7 +2032,9 @@ def _get_lc_bpl_triple_powerlaw_wind(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "bpl", (delta, nn, mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_bpl_wind(
             delta, nn, mexp, eexp, mdot, tgrid, vwind, eff, kappa
         )
@@ -1963,6 +2120,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
     """
     n_points = kwargs.get("n_points", 50)
     smooth_factor = kwargs.get("smooth_factor", 0.2)
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Create time grid spanning the three power law regimes
@@ -2016,7 +2174,9 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "bpl", (delta, nn, mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_bpl(
             mdot, tgrid, vwind, delta, nn, mexp, eexp, eff, kappa
         )
@@ -2141,7 +2301,9 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
     mexp = mexp * solar_mass  # Convert solar masses to grams
     eexp = eexp * foe  # Convert foe to ergs
 
-    if kappa is not None:
+    if _call_static_wind_transport_if_needed(tgrid, mdot, vwind, "exponential", (mexp, eexp), eff, kappa, mode, kwargs):
+        pass
+    elif kappa is not None:
         _get_csm().lc_mod.lightcurve_wind_exponential(
             mdot, tgrid, vwind, mexp, eexp, eff, kappa
         )
@@ -3762,6 +3924,8 @@ class SequentialCSMModel:
     time_ref specified in days.
     """
 
+    n_velocity_grid = 1000
+
     def __init__(self, time_ref, verbose=True):
         """
         Initialize the sequential CSM model.
@@ -3783,6 +3947,9 @@ class SequentialCSMModel:
         self.v_grid = None
         self.r_grid = None
         self.final_result = None
+
+    def _make_velocity_grid(self):
+        return np.linspace(1e5, 1e10, self.n_velocity_grid, dtype=np.float64)
 
     def _print(self, message):
         """Print message if verbose mode is enabled."""
@@ -3820,7 +3987,7 @@ class SequentialCSMModel:
 
         # Create grids if not yet created
         if self.v_grid is None:
-            self.v_grid = np.arange(1, 100001, dtype=np.float64) * 1e5  # cm/s
+            self.v_grid = self._make_velocity_grid()
             self.r_grid = self.v_grid * self.time_ref_seconds
 
         # Wind extent
@@ -3912,7 +4079,7 @@ class SequentialCSMModel:
         v0 = np.sqrt(energy / (6.0 * mass))
 
         # Velocity grid
-        v_grid = np.arange(1, 100001, dtype=np.float64) * 1e5  # 1e5 to 1e10 cm/s
+        v_grid = self._make_velocity_grid()
 
         # Radius grid: r = v * t
         r_grid = v_grid * self.time_ref_seconds
@@ -3970,7 +4137,7 @@ class SequentialCSMModel:
         v_star = np.sqrt(numerator / denominator)
 
         # Velocity grid
-        v_grid = np.arange(1, 100001, dtype=np.float64) * 1e5  # 1e5 to 1e10 cm/s
+        v_grid = self._make_velocity_grid()
 
         # Radius grid: r = v * t
         r_grid = v_grid * self.time_ref_seconds

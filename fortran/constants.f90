@@ -9,7 +9,13 @@ contains
  elemental function temperature(l,r) result(T)
   real(8),intent(in)::l,r
   real(8)::T
-  T = (max(l,1d-10)/(4d0*pi*sigma*r**2))**0.25d0
+  real(8),parameter:: l_temp_min = 1d20
+  if (l > l_temp_min .and. r > 0d0) then
+   T = (l/(4d0*pi*sigma*r**2))**0.25d0
+   if (T < 1d0) T = 0d0
+  else
+   T = 0d0
+  end if
  end function temperature
 
  function intpol(xp,x,y) result(yp)

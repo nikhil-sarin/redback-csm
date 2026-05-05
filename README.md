@@ -68,7 +68,18 @@ keywords controlling the transport treatment:
 | `mode='transport'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
 | `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In transport mode, defaults to `0.34` if not supplied. |
 | `n_rad_zones` | Number of radiation/transport zones in transport mode. Values below 40 are promoted to 40 because the transport boundary layer is under-resolved below that. Higher values reduce numerical roughness but increase runtime. |
+| `transport_wind_inner_age` | Effective inner wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use the larger of their first tabulated age and `1 yr`; one-point steady winds use `1 yr`. This creates the finite inner cavity needed by the nondimensional transport setup and is ignored in simple mode. |
+| `transport_wind_age` | Effective outer wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use their last tabulated age; one-point steady winds use `100 yr`. This supplies the finite outer edge required by the transport solver and is ignored in simple mode. |
+| `transport_r_inner` / `r_inner` | Alternative direct inner cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_inner` takes precedence. |
+| `transport_r_outer` / `r_outer` | Alternative direct outer cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_outer` takes precedence. |
 | `efficiency_mode` | Optional shock-efficiency mode. Default is `0`, which applies the user-supplied constant `eff` to both shocks; `1` applies the free-free-limited time-dependent efficiency to both forward and reverse shocks. |
+
+Transport mode requires a finite CSM support. Static CSM constructors already
+have this through their radial grid or explicit `r_outer`. In transport mode,
+wind-history constructors are first sampled into a finite static radial CSM grid
+using `transport_wind_inner_age` / `transport_wind_age` or direct
+`transport_r_inner` / `transport_r_outer` cutoffs. Simple mode keeps the older
+effectively steady wind extrapolation.
 
 Current output convention:
 
