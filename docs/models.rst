@@ -35,9 +35,9 @@ keywords controlling diffusion / transport:
    * - ``kappa``
      - Opacity in ``cm^2 g^-1``. Optional in simple mode. In transport mode it defaults to ``0.34`` if omitted.
    * - ``n_rad_zones``
-     - Number of transport zones used in transport mode. Larger values reduce numerical roughness at higher runtime cost.
+     - Number of transport zones used in transport mode. Values below 40 are promoted to 40 because the transport boundary layer is under-resolved below that. Larger values reduce numerical roughness at higher runtime cost.
    * - ``efficiency_mode``
-     - Optional alternate forward-shock efficiency mode. Default ``0`` keeps the user-supplied constant ``eff``.
+     - Optional alternate shock-efficiency mode. Default ``0`` keeps the user-supplied constant ``eff`` for both shocks.
 
 Output convention:
 

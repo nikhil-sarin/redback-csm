@@ -67,7 +67,7 @@ keywords controlling the transport treatment:
 | `mode='simple'` | Default thin-shell calculation. If `kappa` is provided, this uses the legacy post-processed diffusion light curve. |
 | `mode='transport'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
 | `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In transport mode, defaults to `0.34` if not supplied. |
-| `n_rad_zones` | Number of radiation/transport zones in transport mode. Higher values reduce numerical roughness but increase runtime. |
+| `n_rad_zones` | Number of radiation/transport zones in transport mode. Values below 40 are promoted to 40 because the transport boundary layer is under-resolved below that. Higher values reduce numerical roughness but increase runtime. |
 | `efficiency_mode` | Optional shock-efficiency mode. Default is `0`, which applies the user-supplied constant `eff` to both shocks; `1` applies the free-free-limited time-dependent efficiency to both forward and reverse shocks. |
 
 Current output convention:

@@ -212,7 +212,7 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
         _get_csm().lc_mod.set_run_mode(3)
         if kappa is None:
             kappa = 0.34
-        n_rad_zones = int(kwargs.get("n_rad_zones", default_n_rad_zones))
+        n_rad_zones = max(40, int(kwargs.get("n_rad_zones", default_n_rad_zones)))
         _get_csm().lc_mod.set_transport_parameters(
             n_zones=n_rad_zones,
             kappa_val=float(kappa),

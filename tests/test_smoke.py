@@ -57,6 +57,7 @@ def test_static_powerlaw_transport_smoke():
         eff=1.0,
         m_csm=1.0,
         mode="transport",
+        efficiency_mode=1,
         kappa=0.2,
         n_rad_zones=8,
     )

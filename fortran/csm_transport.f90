@@ -2277,6 +2277,16 @@ end subroutine update_tau_and_luminosity
   type(dimless_state_type), intent(in) :: state
   real(8), intent(in) :: x
   real(8) :: eta
+  real(8) :: xi_cool
+
+  if (state%in_cooling_phase .and. allocated(state%eta_cool_grid) .and. &
+      allocated(state%xi_grid)) then
+   xi_cool = (x - state%x_min_cool) / max(state%x_out_cool - state%x_min_cool, 1d-30)
+   call interp_eta_cool(min(max(xi_cool, 0d0), 1d0), state%xi_grid, state%eta_cool_grid, &
+                        state%n_zones, eta)
+   eta = max(eta, 1d-30)
+   return
+  end if
 
   if (state%csm_cache_valid .and. x >= state%csm_cache_x_inner - 1d-12 .and. &
       x <= state%csm_cache_x_outer + 1d-12 .and. &
@@ -2661,7 +2671,7 @@ end subroutine update_tau_and_luminosity
  end do
  end subroutine integrate_tau_from_x
 
- real(8) function dimless_total_radiation_energy(state) result(e_tot)
+real(8) function dimless_total_radiation_energy(state) result(e_tot)
   type(dimless_state_type), intent(in) :: state
   integer :: i, n
   real(8) :: x_lo, Delta_x, dxi, x_i, x_ip1
@@ -2938,16 +2948,12 @@ subroutine release_interaction_breakout_reservoir(state, dt_cgs)
  call integrate_tau_from_x(1d0, state, tau_inner)
  if (tau_inner <= tau_breakout) return
 
- ! The diffusion grid contains radiation still in the unshocked transport
- ! layer.  The remainder of the global energy budget is shocked-shell energy
- ! left behind the moving boundary.  When tau_ahead <= c/v_sh, that reservoir
- ! can leak through the remaining CSM during the interaction phase.
- E_field_dim = dimless_total_radiation_energy(state)
- E_field_cgs = 4d0 * pi * state%u0 * state%R_csm_in**3 * E_field_dim
- E_available = state%E_injected_cum - state%E_radiated_cum - &
-               state%E_breakout_cgs - E_field_cgs
- E_available = max(E_available, 0d0)
- if (E_available <= 0d0) return
+  E_field_dim = dimless_total_radiation_energy(state)
+  E_field_cgs = 4d0 * pi * state%u0 * state%R_csm_in**3 * E_field_dim
+  E_available = state%E_injected_cum - state%E_radiated_cum - &
+                state%E_breakout_cgs - E_field_cgs
+  E_available = max(E_available, 0d0)
+  if (E_available <= 0d0) return
 
  escape_weight = 1d0 - state%tau_ahead_csm / max(tau_breakout, 1d-30)
  escape_weight = min(max(escape_weight, 0d0), 1d0)
@@ -3115,7 +3121,7 @@ subroutine advance_shocked_shell_energy(state, x_left_in, x_right_in, lum_heat, 
 
   integer :: i
   real(8) :: x_left, x_right, bin_l, bin_r, ov_l, ov_r
-  real(8) :: sweep_vol, e_add, E_dim
+  real(8) :: sweep_vol, e_add, E_dim, bin_vol, ov_vol
 
   if (.not. allocated(state%shell_e)) return
   if (state%in_cooling_phase) return
@@ -3137,7 +3143,13 @@ subroutine advance_shocked_shell_energy(state, x_left_in, x_right_in, lum_heat, 
    call shell_bin_bounds(state, i, bin_l, bin_r)
    ov_l = max(bin_l, x_left)
    ov_r = min(bin_r, x_right)
-   if (ov_r > ov_l) state%shell_e(i) = state%shell_e(i) + e_add
+   if (ov_r > ov_l) then
+    bin_vol = (bin_r**3 - bin_l**3) / 3d0
+    ov_vol = (ov_r**3 - ov_l**3) / 3d0
+    if (bin_vol > 0d0 .and. ov_vol > 0d0) then
+     state%shell_e(i) = state%shell_e(i) + e_add * min(ov_vol / bin_vol, 1d0)
+    end if
+   end if
   end do
 end subroutine advance_shocked_shell_energy
 
@@ -3686,6 +3698,7 @@ subroutine transition_to_cooling(state)
   real(8) :: x_sh_old, x_ph_old, dxi, Delta_x_old
   real(8) :: E_before, E_after, E_after_inner, E_store_cgs, E_budget
   real(8) :: E_residual_cgs, E_surface_cgs, L_surface_pre_cgs, t_surface_cgs, surface_weight
+  real(8) :: L_heat_pre_cgs
   real(8) :: dx, frac_interp, x_split
   real(8) :: x_l, x_r, x_cap
   real(8) :: profile_scale, profile_norm, density_norm, surface_norm
@@ -3695,7 +3708,9 @@ subroutine transition_to_cooling(state)
   real(8) :: tail_fraction, tail_energy_cgs, shell_radius_cgs, diffusion_beta
   real(8) :: eta_out_tail, s_tail_eff, tail_shape_retention, pdv_retention_power
   real(8) :: e_l, e_r
+  real(8) :: tau_depth, trap_weight, tau_trap_scale
   real(8) :: r_in_base, r_out_base, r_sh_se, v_sh_se, r_dim
+  real(8) :: raw_lum_total_se, radiative_retention_se
   real(8), allocatable :: e_old(:)
 
   ! Guard: only do this once per run
@@ -3705,6 +3720,7 @@ subroutine transition_to_cooling(state)
   state%x_sh = x_sh_old
   x_ph_old = state%x_ph
   L_surface_pre_cgs = max(state%lum_obs_cgs, 0d0)
+  L_heat_pre_cgs = max(state%lum_heat_total_cgs, 0d0)
   n = state%n_zones
   dxi = 1d0 / dble(n - 1)
 
@@ -3774,6 +3790,9 @@ subroutine transition_to_cooling(state)
   allocate(state%eta_cool_grid(n))
   do i = 1, n
    x_l = state%x_min_cool + state%xi_grid(i) * (state%x_out_cool - state%x_min_cool)
+   dx = (state%x_out_cool - state%x_min_cool) / dble(max(n - 1, 1))
+   if (i == 1) x_l = min(state%x_out_cool, x_l + 0.5d0 * dx)
+   if (i == n) x_l = max(state%x_min_cool, x_l - 0.5d0 * dx)
    r_dim = x_l * state%R0
    state%eta_cool_grid(i) = max(query_csm_density(r_dim, state%zeta_se * state%t_in, op(2)) &
                                / max(state%rho_csm_in, 1d-30), 1d-30)
@@ -3785,6 +3804,21 @@ subroutine transition_to_cooling(state)
   ! so it must be folded into e_int(x), not subtracted and discarded.  After the
   ! handoff the paper cooling PDE carries the whole passive reservoir.
   E_residual_cgs = max(state%E_injected_cum - state%E_radiated_cum, 0d0)
+  if (shock_efficiency_mode == 1) then
+   ! For cooling-limited efficiencies, the unresolved cumulative residual should
+   ! not be promoted wholesale into a radiative cooling reservoir. Retain the
+   ! fraction corresponding to the local radiative efficiency at emergence; the
+   ! rest is shock/internal energy that has not cooled into photons on the local
+   ! free-free timescale.
+   raw_lum_total_se = state%eff * max(forward_shock_luminosity(r_sh_se, state%zeta_se * state%t_in, &
+                                      v_sh_se, op) + &
+                                      reverse_shock_luminosity(r_sh_se, state%zeta_se * state%t_in, &
+                                      v_sh_se, op), 0d0)
+   if (raw_lum_total_se > 0d0) then
+    radiative_retention_se = min(max(L_heat_pre_cgs / raw_lum_total_se, 0d0), 1d0)
+    E_residual_cgs = E_residual_cgs * radiative_retention_se
+   end if
+  end if
   ! The interaction solve has a photospheric skin already carrying the
   ! pre-emergence luminosity.  If it is folded entirely into the passive
   ! cooling grid, the emitting boundary is rebuilt from a different coordinate
@@ -3854,7 +3888,16 @@ subroutine transition_to_cooling(state)
   do i = 1, n
    x_l = state%x_min_cool + state%xi_grid(i) * (state%x_ph - state%x_min_cool)
    state%work_old_e(i) = shocked_shell_profile_at(state, x_l)
-   state%e_grid(i) = max(compute_eta_csm(x_l, state), 0d0)
+   call integrate_tau_from_x(x_l, state, tau_depth)
+   ! The scalar residual at handoff is trapped internal energy, not radiation
+   ! already sitting in the free-streaming surface cell.  Weight the passive
+   ! reservoir by optical-depth depth from the outer edge so the emitting skin
+   ! is populated by diffusion after handoff, which removes the numerical flash
+   ! caused by remapping the whole reservoir directly onto x=x_out.
+   tau_trap_scale = max(2d0 / 3d0, min(clight / max(v_sh_se, 1d5), &
+                    (2d0 / 3d0) * max(state%x_out_cool / 10d0, 1d0)**3))
+   trap_weight = 1d0 - exp(-max(tau_depth, 0d0) / tau_trap_scale)
+   state%e_grid(i) = max(compute_eta_csm(x_l, state) * trap_weight, 0d0)
   end do
 
   density_norm = 0d0
@@ -3936,7 +3979,7 @@ subroutine transition_to_cooling(state)
    do i = 1, n
     state%e_grid(i) = max(profile_scale * state%e_grid(i), 0d0)
    end do
- else
+  else
    do i = 1, n
     if (surface_norm > 0d0 .and. density_norm > 0d0) then
      state%e_grid(i) = surface_budget * max(state%work_old_e(i), 0d0) / surface_norm + &
@@ -4174,6 +4217,14 @@ subroutine transition_to_cooling(state)
     else if ((state%zeta - state%zeta_se) * state%t_in < 0.2d0 * 86400d0) then
      dzeta_step = min(dzeta_step, 0.005d0 * 86400d0 / state%t_in)
     end if
+    ! The cooling luminosity is read directly from the Eddington surface
+    ! cell.  When the post-emergence diffusion wave crosses that cell, taking
+    ! the same physical timestep at much finer n_rad_zones under-resolves the
+    ! boundary layer and creates zone-dependent surface spikes.  Scale the
+    ! cooling accuracy cap with the grid spacing so increasing n_zones
+    ! approaches a resolved limit instead of becoming less stable.
+    dzeta_step = min(dzeta_step, (0.50d0 * 40d0 / dble(max(state%n_zones, 1))) * &
+                              86400d0 / state%t_in)
    end if
 
    ! --- Step 1: Advance dynamics ---
@@ -4229,11 +4280,11 @@ subroutine transition_to_cooling(state)
      phi_sh_cross = phi_sh_pre + frac * (state%phi_sh - phi_sh_pre)
      zeta_cross   = zeta_pre   + frac * dzeta_step
 
-     ! Solve diffusion for pre-emergence portion with midpoint geometry.
-     if (dy_pre > 0d0) then
-      dt_int_cgs = frac * dzeta_step * state%t_in
-      x_ph_pre = state%x_ph
-      state%x_sh   = 0.5d0 * (x_sh_pre + x_sh_cross)
+      ! Solve diffusion for pre-emergence portion with midpoint geometry.
+      if (dy_pre > 0d0) then
+       dt_int_cgs = frac * dzeta_step * state%t_in
+       x_ph_pre = state%x_ph
+       state%x_sh   = 0.5d0 * (x_sh_pre + x_sh_cross)
       state%w_sh   = 0.5d0 * (w_sh_pre + w_sh_cross)
       state%phi_sh = 0.5d0 * (phi_sh_pre + phi_sh_cross)
       state%zeta   = zeta_pre + 0.5d0 * frac * dzeta_step
@@ -4253,12 +4304,12 @@ subroutine transition_to_cooling(state)
       state%E_injected_cum = state%E_injected_cum + state%lum_heat_total_cgs * dt_int_cgs
       state%E_injected_fs_cum = state%E_injected_fs_cum + state%lum_heat_fs_cgs * dt_int_cgs
       state%E_injected_rs_cum = state%E_injected_rs_cum + state%lum_heat_rs_cgs * dt_int_cgs
-      call record_deposition_profile(state, x_sh_pre, state%x_sh, state%lum_heat_cgs, dt_int_cgs)
-      call advance_shocked_shell_energy(state, x_sh_pre, state%x_sh, state%lum_heat_fs_cgs, dt_int_cgs)
-      call dimless_to_cgs(state)
-      lum_diff_cgs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0)
-      state%E_radiated_cum = state%E_radiated_cum + lum_diff_cgs * dt_int_cgs
-      call drain_shocked_shell_energy(state, lum_diff_cgs * dt_int_cgs)
+       call record_deposition_profile(state, x_sh_pre, state%x_sh, state%lum_heat_cgs, dt_int_cgs)
+       call advance_shocked_shell_energy(state, x_sh_pre, state%x_sh, state%lum_heat_fs_cgs, dt_int_cgs)
+       call dimless_to_cgs(state)
+       lum_diff_cgs = max(state%lum_obs_cgs - state%lum_breakout_cgs, 0d0)
+       state%E_radiated_cum = state%E_radiated_cum + lum_diff_cgs * dt_int_cgs
+       call drain_shocked_shell_energy(state, lum_diff_cgs * dt_int_cgs)
        call release_interaction_breakout_reservoir(state, dt_int_cgs)
        call dimless_to_cgs(state)
        state%E_radiated_cum = state%E_radiated_cum + state%lum_breakout_avg_cgs * dt_int_cgs
@@ -4309,11 +4360,6 @@ subroutine transition_to_cooling(state)
       call dimless_to_cgs(state)
       dt_emit_cgs = (1d0 - frac) * dzeta_step * state%t_in
       lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
-      if (lum_pre_cross_cgs > 0d0) lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * lum_pre_cross_cgs)
-      if (state%lum_emergence_cgs > 0d0 .and. &
-          (state%zeta - state%zeta_se) * state%t_in < 1d0 * 86400d0) then
-       lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * state%lum_emergence_cgs)
-      end if
       if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
         lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
        end if
@@ -4344,10 +4390,6 @@ subroutine transition_to_cooling(state)
      call dimless_to_cgs(state)
      dt_emit_cgs = dzeta_step * state%t_in
      lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
-     if (state%lum_emergence_cgs > 0d0 .and. &
-         (state%zeta - state%zeta_se) * state%t_in < 1d0 * 86400d0) then
-      lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * state%lum_emergence_cgs)
-     end if
      if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
         lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
        end if
@@ -4409,10 +4451,6 @@ subroutine transition_to_cooling(state)
       call dimless_to_cgs(state)
       dt_emit_cgs = dzeta_step * state%t_in
       lum_emit_cgs = max(state%lum_obs_cgs, 0d0)
-      if (state%lum_emergence_cgs > 0d0 .and. &
-          (state%zeta - state%zeta_se) * state%t_in < 1d0 * 86400d0) then
-       lum_emit_cgs = min(lum_emit_cgs, 1.05d0 * state%lum_emergence_cgs)
-      end if
       if (state%lum_breakout_avg_cgs > 0d0 .or. state%lum_breakout_cgs > 0d0) then
        lum_emit_cgs = max(lum_emit_cgs - state%lum_breakout_cgs, 0d0) + state%lum_breakout_avg_cgs
       end if
