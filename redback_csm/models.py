@@ -37,7 +37,12 @@ from redback.transient_models.supernova_models import (
     _nickelcobalt_engine as _nickelcobalt_engine,
 )
 
-from redback_csm.core import _call_csm, _call_csm_radio, _call_csm_xray
+from redback_csm.core import (
+    _call_csm,
+    _call_csm_radio,
+    _call_csm_xray,
+    create_generic_csm_density as _create_generic_csm_density,
+)
 
 DAY = 86400.0    # seconds per day
 _AU = 1.496e13   # cm per AU
@@ -216,15 +221,15 @@ def _finite_wind_mass_from_grid(tgrid, mdot):
 def _generic_density_csm_mass(kwargs, n_shells):
     """Estimate CSM mass for generic density-profile constructors."""
     r_inner = float(kwargs.get("r_inner", 1e10))
-    r_outer = float(kwargs.get("r_outer", 1e20))
-    if not (r_outer > r_inner > 0.0):
+    r_outer = kwargs.get("r_outer", None)
+    if not (r_inner > 0.0):
         return 0.0
 
-    r_grid = _np.logspace(_np.log10(r_inner), _np.log10(r_outer), 1000)
     base_density = float(kwargs.get("base_density", 0.0))
     base_index = float(kwargs.get("base_index", -2.0))
-    rho = base_density * (r_grid / 1e14) ** base_index
-
+    shell_radii = []
+    shell_widths = []
+    shell_densities = []
     for shell_idx in range(1, n_shells + 1):
         density = float(kwargs.get(f"shell{shell_idx}_density", 0.0))
         if density <= 0.0:
@@ -233,8 +238,23 @@ def _generic_density_csm_mass(kwargs, n_shells):
         width = float(kwargs.get(f"shell{shell_idx}_width", 0.0))
         if radius <= 0.0 or width <= 0.0:
             continue
-        sigma = width / 2.355
-        rho = rho + density * _np.exp(-0.5 * ((r_grid - radius) / sigma) ** 2)
+        shell_radii.append(radius)
+        shell_widths.append(width)
+        shell_densities.append(density)
+
+    r_grid, _, rho = _create_generic_csm_density(
+        r_inner=r_inner,
+        r_outer=r_outer,
+        n_points=int(kwargs.get("n_points", 1000)),
+        base_density=base_density,
+        base_index=base_index,
+        n_shells=len(shell_radii),
+        shell_radii=shell_radii if shell_radii else None,
+        shell_widths=shell_widths if shell_widths else None,
+        shell_densities=shell_densities if shell_densities else None,
+        shell_profiles="gaussian",
+        time_ref_days=float(kwargs.get("interval_sn", 10.0 * 365.25)),
+    )
 
     mass_cgs = _TRAPEZOID(4.0 * _np.pi * r_grid**2 * _np.maximum(rho, 0.0), r_grid)
     return max(float(mass_cgs / _SOLAR_MASS), 0.0)

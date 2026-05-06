@@ -2408,6 +2408,7 @@ def _get_lc_multi_eruption_bpl_sn(
         lc = _get_lc_multi_eruption_bpl_sn(eruptions, interval=350.0, delta_sn=0.5, nn_sn=12,
                                            mej_sn_grams=2.0, esn_sn_ergs=1)
     """
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej, esn)
     mej = mej * solar_mass  # Convert to grams
     esn = esn * foe  # Convert to ergs
     time_ref_days = kwargs.get("time_ref", interval)
@@ -2738,9 +2739,84 @@ def _get_lc_multi_eruption_arbitrary_sn(
     return _freeze_output(outs)
 
 
+def _generic_csm_radius_grid(
+    r_inner,
+    r_outer,
+    n_points,
+    shell_radii=None,
+    shell_widths=None,
+    shell_profiles="gaussian",
+    base_bpl_params=None,
+    shell_extent_widths=3.0,
+    shell_refinement_points=80,
+):
+    """Build a radius grid with broad log coverage and local shell refinement."""
+    r_inner = float(r_inner)
+    if r_inner <= 0.0:
+        raise ValueError("r_inner must be positive")
+
+    active_radii = np.asarray([] if shell_radii is None else shell_radii, dtype=float)
+    active_widths = np.asarray([] if shell_widths is None else shell_widths, dtype=float)
+    active_mask = (
+        (active_radii > 0.0)
+        & (active_widths > 0.0)
+        & np.isfinite(active_radii)
+        & np.isfinite(active_widths)
+    )
+    active_radii = active_radii[active_mask]
+    active_widths = active_widths[active_mask]
+
+    if r_outer is None:
+        if active_radii.size:
+            outer_edge = np.max(active_radii + shell_extent_widths * active_widths)
+            r_outer = max(1.5 * outer_edge, 10.0 * r_inner)
+        else:
+            r_outer = max(1.0e17, 10.0 * r_inner)
+    r_outer = float(r_outer)
+    if not (r_outer > r_inner):
+        raise ValueError("r_outer must be greater than r_inner")
+
+    n_points = max(16, int(n_points))
+    grid_parts = [np.logspace(np.log10(r_inner), np.log10(r_outer), n_points)]
+
+    if active_radii.size:
+        if isinstance(shell_profiles, str):
+            active_profiles = [shell_profiles] * active_radii.size
+        else:
+            profiles_all = list(shell_profiles)
+            active_profiles = [profiles_all[i] for i, keep in enumerate(active_mask) if keep]
+
+        n_local = max(16, int(shell_refinement_points))
+        for r_shell, width, profile_type in zip(active_radii, active_widths, active_profiles):
+            if profile_type == "gaussian":
+                half_width = 5.0 * width / 2.355
+            elif profile_type == "tophat":
+                half_width = 0.6 * width
+            elif profile_type == "exponential":
+                half_width = 4.0 * width
+            else:
+                half_width = shell_extent_widths * width
+            lo = max(r_inner, r_shell - half_width)
+            hi = min(r_outer, r_shell + half_width)
+            if hi > lo:
+                grid_parts.append(np.linspace(lo, hi, n_local))
+            if profile_type == "tophat":
+                edge_lo = max(r_inner, r_shell - 0.5 * width)
+                edge_hi = min(r_outer, r_shell + 0.5 * width)
+                grid_parts.append(np.array([edge_lo, edge_hi], dtype=float))
+
+    if base_bpl_params is not None and base_bpl_params.get("r_break") is not None:
+        r_break = float(base_bpl_params["r_break"])
+        if r_inner < r_break < r_outer:
+            grid_parts.append(np.array([r_break], dtype=float))
+
+    r_grid = np.unique(np.concatenate(grid_parts))
+    return r_grid[(r_grid >= r_inner) & (r_grid <= r_outer)]
+
+
 def create_generic_csm_density(
     r_inner=1e10,
-    r_outer=1e20,
+    r_outer=None,
     n_points=1000,
     base_density=1e-14,
     base_index=-2.0,
@@ -2764,8 +2840,8 @@ def create_generic_csm_density(
     ----------
     r_inner : float
         Inner radius in cm (default: 1e10 cm)
-    r_outer : float
-        Outer radius in cm (default: 1e20 cm)
+    r_outer : float or None
+        Outer radius in cm. If omitted, inferred from the active shells.
     n_points : int
         Number of grid points (default: 1000)
     base_density : float
@@ -2807,8 +2883,33 @@ def create_generic_csm_density(
     csm_density : array
         Total CSM density profile in g/cm^3
     """
-    # Create radius grid (log spacing for better resolution)
-    r_grid = np.logspace(np.log10(r_inner), np.log10(r_outer), n_points)
+    if n_shells > 0:
+        if shell_radii is None:
+            if r_outer is None:
+                r_outer = max(1.0e17, 10.0 * float(r_inner))
+            shell_radii = np.logspace(
+                np.log10(float(r_inner) * 2.0), np.log10(float(r_outer) / 2.0), n_shells
+            )
+        else:
+            shell_radii = np.atleast_1d(shell_radii)
+
+        if shell_widths is None:
+            shell_widths = 0.1 * shell_radii
+        else:
+            shell_widths = np.atleast_1d(shell_widths)
+
+        if shell_densities is not None:
+            shell_densities = np.atleast_1d(shell_densities)
+
+    r_grid = _generic_csm_radius_grid(
+        r_inner=r_inner,
+        r_outer=r_outer,
+        n_points=n_points,
+        shell_radii=shell_radii,
+        shell_widths=shell_widths,
+        shell_profiles=shell_profiles,
+        base_bpl_params=base_bpl_params,
+    )
 
     # Base density profile
     if base_profile == "powerlaw":
@@ -2858,21 +2959,6 @@ def create_generic_csm_density(
 
     # Add shells if requested
     if n_shells > 0:
-        # Handle default shell parameters
-        if shell_radii is None:
-            # Evenly space shells in log space
-            shell_radii = np.logspace(
-                np.log10(r_inner * 2), np.log10(r_outer / 2), n_shells
-            )
-        else:
-            shell_radii = np.atleast_1d(shell_radii)
-
-        if shell_widths is None:
-            # Default: width = 10% of shell radius
-            shell_widths = 0.1 * shell_radii
-        else:
-            shell_widths = np.atleast_1d(shell_widths)
-
         if shell_densities is None:
             # Default: 10x the base density at shell location
             shell_densities = np.array(
@@ -3097,7 +3183,7 @@ def _get_lc_generic_csm_exponential(
         )
     """
     r_inner = kwargs.get("r_inner", 1e10)
-    r_outer = kwargs.get("r_outer", 1e20)
+    r_outer = kwargs.get("r_outer", None)
     n_points = int(kwargs.get("n_points", 1000))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
@@ -3246,8 +3332,9 @@ def _get_lc_generic_csm_bpl(
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej_sn, esn)
     r_inner = kwargs.get("r_inner", 1e10)
-    r_outer = kwargs.get("r_outer", 1e20)
+    r_outer = kwargs.get("r_outer", None)
     n_points = int(kwargs.get("n_points", 1000))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
@@ -3709,8 +3796,9 @@ def _get_lc_generic_4shell_csm_bpl(
         - kappa: (optional) Opacity in cm²/g for photon diffusion
     :return: Named tuple (time, lbol, lbol_shock, lbol_diffuse, rph, temperature, vshell, shell_mass)
     """
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej_sn, esn)
     r_inner = kwargs.get("r_inner", 1e10)
-    r_outer = kwargs.get("r_outer", 1e20)
+    r_outer = kwargs.get("r_outer", None)
     n_points = int(kwargs.get("n_points", 1000))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
@@ -3926,8 +4014,9 @@ def _get_lc_generic_8shell_csm_bpl(
             interval_sn=100, delta_sn=0.5, nn_sn=10, mej_sn=10.0, esn=1.0, eff=0.5
         )
     """
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej_sn, esn)
     r_inner = kwargs.get("r_inner", 1e10)
-    r_outer = kwargs.get("r_outer", 1e20)
+    r_outer = kwargs.get("r_outer", None)
     base_profile = kwargs.get("base_profile", "powerlaw")
     base_bpl_params = kwargs.get("base_bpl_params", None)
     n_points = int(kwargs.get("n_points", 1000))
@@ -5613,7 +5702,7 @@ def _rho_generic_at_r(r_array, **kwargs):
     density grid that was passed to the Fortran and interpolating at r_array.
     """
     r_inner = kwargs.get('r_inner', 1e10)
-    r_outer = kwargs.get('r_outer', 1e20)
+    r_outer = kwargs.get('r_outer', None)
     base_density = kwargs['base_density']
     base_index   = kwargs['base_index']
 

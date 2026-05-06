@@ -15,6 +15,7 @@ Run:
 """
 
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import bilby
 import redback
@@ -23,6 +24,45 @@ from redback_csm.models import (
     gausswind_exponential_bolometric,
     smooth_triple_powerlaw_wind_exponential_bolometric,
 )
+
+# ---------------------------------------------------------------------------
+# MNRAS-compatible plotting style, matched to scripts/paper_model_plots.py
+# ---------------------------------------------------------------------------
+mpl.rcParams.update({
+    "font.family":       "serif",
+    "font.serif":        ["Times New Roman", "Times", "DejaVu Serif"],
+    "font.size":         10,
+    "axes.labelsize":    10,
+    "axes.titlesize":    10,
+    "xtick.labelsize":   8,
+    "ytick.labelsize":   8,
+    "legend.fontsize":   8,
+    "legend.framealpha": 0.85,
+    "legend.edgecolor":  "0.7",
+    "lines.linewidth":   1.5,
+    "axes.linewidth":    0.8,
+    "xtick.major.width": 0.8,
+    "ytick.major.width": 0.8,
+    "xtick.direction":   "in",
+    "ytick.direction":   "in",
+    "xtick.top":         True,
+    "ytick.right":       True,
+    "figure.dpi":        200,
+    "savefig.dpi":       300,
+    "savefig.bbox":      "tight",
+    "pdf.fonttype":      42,
+})
+
+COL = 3.32
+PAGE = 6.97
+C = {
+    "blue":   "#1f77b4",
+    "green":  "#2ca02c",
+    "red":    "#d62728",
+    "orange": "#ff7f0e",
+    "gray":   "#7f7f7f",
+    "black":  "#111111",
+}
 
 # ---------------------------------------------------------------------------
 # Reproducibility
@@ -57,17 +97,17 @@ TRUE_PARAMS = dict(
 time_yr  = np.logspace(-1, 3, 300)   # yr before explosion (for density panels)
 time_days = np.geomspace(1, 1000, 300)  # days after explosion (for lightcurves)
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(PAGE, PAGE * 0.42))
 
 # ---- Left: mass-loss histories ----
 # Constant wind
 ax1.loglog(time_yr, np.full_like(time_yr, 1e-5),
-           color="steelblue", lw=2, label="Constant wind")
+           color=C["blue"], label="Constant wind")
 
 # Gaussian wind
 gauss = np.exp(-0.5 * ((time_yr - 50) / 20) ** 2)
 ax1.loglog(time_yr, 1e-5 + (1e-4 - 1e-5) * gauss,
-           color="darkorange", lw=2, label="Gaussian outburst")
+           color=C["green"], label="Gaussian outburst")
 
 # Smooth triple power-law wind
 t1, t2 = 5.0, 50.0
@@ -81,42 +121,38 @@ s1 = m0 * (time_yr / 1.0) ** (-0.5)
 s2 = m0 * (t1 / 1.0) ** (-0.5) * (time_yr / t1) ** 1.0
 s3 = m0 * (t1 / 1.0) ** (-0.5) * (t2 / t1) ** 1.0 * (time_yr / t2) ** (-1.5)
 ax1.loglog(time_yr, (1 - w1) * s1 + w1 * (1 - w2) * s2 + w1 * w2 * s3,
-           color="firebrick", lw=2, label="Smooth triple power-law")
+           color=C["red"], label="Smooth triple power-law")
 
-ax1.set_xlabel("Time before explosion (yr)", fontsize=12)
-ax1.set_ylabel(r"$\dot{M}$ ($M_\odot$ yr$^{-1}$)", fontsize=12)
-ax1.set_title("Mass-loss histories", fontsize=12)
-ax1.legend(fontsize=10)
-ax1.grid(True, alpha=0.3)
+ax1.set_xlabel("Time before explosion (yr)")
+ax1.set_ylabel(r"$\dot{M}$ ($\mathrm{M}_\odot\,\mathrm{yr}^{-1}$)")
+ax1.legend(loc="upper right")
 
 # ---- Right: corresponding bolometric lightcurves ----
 ax2.loglog(time_days,
            wind_exponential_bolometric(time_days, mdot=1e-5, vwind=30,
                                        mexp=MEXP, eexp=EEXP, eff=EFF, kappa=KAPPA),
-           color="steelblue", lw=2, label="Constant wind")
+           color=C["blue"], label="Constant wind")
 
 ax2.loglog(time_days,
            gausswind_exponential_bolometric(time_days,
                t_peak=50, t_width=20, mdot_baseline=1e-5, mdot_peak=1e-4,
                vwind=30, mexp=MEXP, eexp=EEXP, eff=EFF, kappa=KAPPA),
-           color="darkorange", lw=2, label="Gaussian outburst")
+           color=C["green"], label="Gaussian outburst")
 
 ax2.loglog(time_days,
            smooth_triple_powerlaw_wind_exponential_bolometric(time_days,
                t_break1=5, t_break2=50, mdot_0=2e-5,
                alpha1=-0.5, alpha2=1.0, alpha3=-1.5,
                vwind=30, mexp=MEXP, eexp=EEXP, eff=EFF, kappa=KAPPA),
-           color="firebrick", lw=2, label="Smooth triple power-law")
+           color=C["red"], label="Smooth triple power-law")
 
-ax2.set_xlabel("Time (days)", fontsize=12)
-ax2.set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)", fontsize=12)
-ax2.set_title("CSM interaction lightcurves", fontsize=12)
-ax2.legend(fontsize=10)
-ax2.grid(True, alpha=0.3)
+ax2.set_xlabel("Time (days)")
+ax2.set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)")
+ax2.legend(loc="lower left")
 ax2.set_xlim(1, 1000)
 
-fig.tight_layout()
-fig.savefig("variable_wind_overview.png", dpi=150)
+fig.tight_layout(pad=0.4, w_pad=0.7)
+fig.savefig("variable_wind_overview.png")
 print("Saved: variable_wind_overview.png")
 
 # ---------------------------------------------------------------------------
@@ -134,20 +170,18 @@ noise_frac = 0.12
 lbol_obs = lbol_noiseless * np.random.normal(1.0, noise_frac, len(t_obs))
 lbol_err = noise_frac * lbol_noiseless
 
-fig, ax = plt.subplots(figsize=(8, 5))
-ax.plot(t_truth, lbol_truth, "k--", lw=1.5, label="True model")
-ax.errorbar(t_obs, lbol_obs, yerr=lbol_err, fmt="o", color="firebrick",
-            capsize=3, ms=5, label="Synthetic observations")
+fig, ax = plt.subplots(figsize=(COL, COL * 0.88))
+ax.plot(t_truth, lbol_truth, color=C["black"], ls="--", label="True model")
+ax.errorbar(t_obs, lbol_obs, yerr=lbol_err, fmt="o", color=C["red"],
+            capsize=2.5, ms=3.2, elinewidth=0.8, label="Synthetic observations")
 ax.set_xscale("log")
 ax.set_yscale("log")
-ax.set_xlabel("Time (days)", fontsize=12)
-ax.set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)", fontsize=12)
-ax.set_title("Synthetic Gaussian wind CSM data", fontsize=12)
-ax.legend(fontsize=10)
-ax.grid(True, alpha=0.3)
+ax.set_xlabel("Time (days)")
+ax.set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)")
+ax.legend(loc="lower left")
 ax.set_xlim(0.8, 600)
-fig.tight_layout()
-fig.savefig("variable_wind_synthetic_data.png", dpi=150)
+fig.tight_layout(pad=0.4)
+fig.savefig("variable_wind_synthetic_data.png")
 print("Saved: variable_wind_synthetic_data.png")
 
 # ---------------------------------------------------------------------------
@@ -216,7 +250,7 @@ print("Saved: variable_wind_corner.png")
 # ---------------------------------------------------------------------------
 # Figure 5: Posterior predictions — mass-loss history + lightcurve fit
 # ---------------------------------------------------------------------------
-fig, (ax_lc, ax_mdot) = plt.subplots(2, 1, figsize=(7, 10))
+fig, (ax_lc, ax_mdot) = plt.subplots(2, 1, figsize=(COL, COL * 1.55))
 
 # ---- Bottom panel: mass-loss history reconstruction ----
 # The Gaussian CSM profile is fully determined by t_peak, t_width,
@@ -233,21 +267,20 @@ all_mdot = np.array(all_mdot)
 lo95, med, hi95 = np.percentile(all_mdot, [2.5, 50, 97.5], axis=0)
 lo68, hi68      = np.percentile(all_mdot, [16, 84], axis=0)
 
-ax_mdot.fill_between(t_common, lo95, hi95, color="steelblue", alpha=0.25, label=r"$95\%$ CI")
+ax_mdot.fill_between(t_common, lo95, hi95, color=C["blue"], alpha=0.25, label=r"$95\%$ CI")
 
 # True mass-loss history (evaluated on the same t_common grid)
 gauss_true = np.exp(-0.5 * ((t_common - TRUE_PARAMS["t_peak"]) / TRUE_PARAMS["t_width"]) ** 2)
 mdot_true  = (TRUE_PARAMS["mdot_baseline"]
               + (TRUE_PARAMS["mdot_peak"] - TRUE_PARAMS["mdot_baseline"]) * gauss_true)
-ax_mdot.plot(t_common, mdot_true, "r-", lw=2.5, label="True model", zorder=5)
+ax_mdot.plot(t_common, mdot_true, color=C["red"], label="True model", zorder=5)
 
-ax_mdot.set_xlabel("Time before explosion (yr)", fontsize=12)
-ax_mdot.set_ylabel(r"$\dot{M}$ ($M_\odot$ yr$^{-1}$)", fontsize=12)
+ax_mdot.set_xlabel("Time before explosion (yr)")
+ax_mdot.set_ylabel(r"$\dot{M}$ ($\mathrm{M}_\odot\,\mathrm{yr}^{-1}$)")
 # ax_mdot.set_title("Inferred mass-loss history", fontsize=12)
 ax_mdot.set_yscale("log")
 ax_mdot.set_xlim(0, 150)
-ax_mdot.legend(fontsize=9)
-ax_mdot.grid(True, alpha=0.3)
+ax_mdot.legend(loc="upper right")
 
 # ---- Top panel: lightcurve fit ----
 t_plot = np.geomspace(1, 600, 200)
@@ -266,21 +299,20 @@ all_lc = np.array(all_lc)
 lc_lo95, lc_med, lc_hi95 = np.percentile(all_lc, [2.5, 50, 97.5], axis=0)
 lc_lo68, lc_hi68          = np.percentile(all_lc, [16, 84], axis=0)
 
-ax_lc.fill_between(t_plot, lc_lo95, lc_hi95, color="steelblue", alpha=0.25)
+ax_lc.fill_between(t_plot, lc_lo95, lc_hi95, color=C["blue"], alpha=0.25)
 ax_lc.plot(t_plot, gausswind_exponential_bolometric(t_plot, **TRUE_PARAMS),
-           "r-", lw=2.5, label="True model")
-ax_lc.errorbar(t_obs, lbol_obs, yerr=lbol_err, fmt="o", color="k",
-               capsize=3, ms=4, label="Observations", zorder=5)
+           color=C["red"], label="True model")
+ax_lc.errorbar(t_obs, lbol_obs, yerr=lbol_err, fmt="o", color=C["black"],
+               capsize=2.5, ms=3.0, elinewidth=0.8, label="Observations", zorder=5)
 
 ax_lc.set_xscale("log")
 ax_lc.set_yscale("log")
-ax_lc.set_xlabel("Time (days)", fontsize=12)
-ax_lc.set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)", fontsize=12)
+ax_lc.set_xlabel("Time (days)")
+ax_lc.set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)")
 # ax_lc.set_title("Lightcurve posterior predictions", fontsize=12)
 ax_lc.set_xlim(0.8, 600)
-ax_lc.legend(fontsize=9)
-ax_lc.grid(True, alpha=0.3)
+ax_lc.legend(loc="lower left")
 
-fig.tight_layout()
-fig.savefig("variable_wind_posterior_predictions.png", dpi=150)
+fig.tight_layout(pad=0.4, h_pad=0.5)
+fig.savefig("variable_wind_posterior_predictions.png")
 print("Saved: variable_wind_posterior_predictions.png")

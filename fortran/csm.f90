@@ -77,6 +77,32 @@ contains
   call set_global_bpl_vmax_ratio(ratio)
  end subroutine set_bpl_cutoff_ratio
 
+ function initial_bpl_shell_velocity(op_bpl) result(v_init)
+  use get_vals, only: outflow_parameters
+  type(outflow_parameters),intent(in):: op_bpl
+  real(8):: v_init
+
+  if(op_bpl%bpl_vmax>0d0)then
+   ! The shell is initialized just inside the finite outer ejecta edge; r=1.2*u*t
+   ! below then places the initial interaction at r ~= v_max*t.
+   v_init = op_bpl%bpl_vmax/1.2d0
+  else
+   v_init = 20d0*op_bpl%bpl_vt/1.2d0
+  end if
+  v_init = min(v_init,0.9d0*clight)
+ end function initial_bpl_shell_velocity
+
+ function initial_exp_shell_velocity(op_exp) result(v_init)
+  use get_vals, only: outflow_parameters
+  type(outflow_parameters),intent(in):: op_exp
+  real(8):: v_init
+
+  ! Exponential profiles have infinite formal support.  Twenty scale velocities
+  ! is already beyond the effective mass-bearing edge and avoids superluminal
+  ! startup artifacts from the old 100*v0 convention.
+  v_init = min(20d0*op_exp%exp_v0/1.2d0,0.9d0*clight)
+ end function initial_exp_shell_velocity
+
  subroutine finalize_outputs(csm_type, kappa)
   integer,intent(in):: csm_type
   real(8),intent(in),optional:: kappa
@@ -149,7 +175,7 @@ contains
   call get_exp_v0(op(1))
 
   t = t_start   ! Use non-zero initial time to avoid singularity
-  u = max(1.d2*op(1)%exp_v0,op(2)%vwind)
+  u = max(initial_exp_shell_velocity(op(1)),op(2)%vwind)
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -234,7 +260,7 @@ contains
   call get_bpl_coeffs(op(1))
 
   t = t_start   ! Use non-zero initial time to avoid singularity
-  u = max(1.d2*op(1)%bpl_vt,op(2)%vwind)
+  u = max(initial_bpl_shell_velocity(op(1)),op(2)%vwind)
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -447,7 +473,7 @@ end subroutine lightcurve_wind_bpl
   call get_bpl_coeffs(op(2))
 
   t = t_start   ! Use non-zero initial time to avoid singularity
-  u = 1.d2*op(1)%bpl_vt
+  u = initial_bpl_shell_velocity(op(1))
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -486,7 +512,7 @@ end subroutine lightcurve_wind_bpl
   call get_exp_v0(op(2))
 
   t = t_start   ! Use non-zero initial time to avoid singularity
-  u = 1.d2*op(1)%exp_v0
+  u = initial_exp_shell_velocity(op(1))
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -577,7 +603,7 @@ end subroutine lightcurve_wind_bpl
   call get_bpl_coeffs(op(1))
 
   t = t_start   ! Use non-zero initial time to avoid singularity
-  u = 1.d2*op(1)%bpl_vt
+  u = initial_bpl_shell_velocity(op(1))
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -620,7 +646,7 @@ end subroutine lightcurve_wind_bpl
   call get_bpl_coeffs(op(1))
 
   t = t_start
-  u = 1.d2*op(1)%bpl_vt
+  u = initial_bpl_shell_velocity(op(1))
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -666,7 +692,7 @@ end subroutine lightcurve_wind_bpl
   call get_bpl_coeffs(op(2))
 
   t = t_start   ! Use non-zero initial time to avoid singularity
-  u = 1.d2*op(1)%exp_v0
+  u = initial_exp_shell_velocity(op(1))
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -762,7 +788,7 @@ end subroutine lightcurve_wind_bpl
   call get_exp_v0(op(1))
 
   t = t_start   ! Use non-zero initial time to avoid singularity
-  u = 1.d2*op(1)%exp_v0
+  u = initial_exp_shell_velocity(op(1))
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
@@ -803,7 +829,7 @@ end subroutine lightcurve_wind_bpl
   call get_exp_v0(op(1))
 
   t = t_start
-  u = 1.d2*op(1)%exp_v0
+  u = initial_exp_shell_velocity(op(1))
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0

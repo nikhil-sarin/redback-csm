@@ -77,7 +77,7 @@ def main():
         },
     ]
 
-    fig, axes = plt.subplots(1, 2, figsize=(PAGE, 2.95), sharex=True)
+    fig, axes = plt.subplots(1, 2, figsize=(PAGE, 2.95), sharex=False)
 
     for ax, panel in zip(axes, panels):
         for s, color in zip(slopes, colors):
@@ -101,7 +101,7 @@ def main():
 
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.set_xlim(1.0, 300.0)
+        ax.set_xlim(1.0, 200.0)
         ax.set_ylim(panel["ylim"])
         ax.set_xlabel("Time (days)")
         ax.set_title(panel["title"])
@@ -119,6 +119,7 @@ def main():
 
     axes[0].set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)")
     axes[0].legend(loc="upper right", ncol=1, handlelength=1.8)
+    axes[0].set_xlim(4, 100)
     fig.subplots_adjust(left=0.085, right=0.985, bottom=0.18, top=0.88, wspace=0.23)
     fig.savefig(output)
     print(f"Saved: {output}")
