@@ -344,8 +344,53 @@ contains
    else
     rho_here = op_in%rho_static(lo)
    end if
-  end if
+ end if
  end function static_profile_density_at_r
+
+ function explosion_profile_density_at_r(r,t,op_in) result(rho_here)
+ ! Side-effect-free density lookup for homologous gridded profiles.
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r,t
+  real(8):: rho_here, tp, v, v_lo, v_hi, frac
+  integer:: lo, hi, mid, n
+
+  rho_here = 0d0
+  if(.not.associated(op_in%v_grid).or..not.associated(op_in%rho_expl))return
+
+  tp = t + op_in%delay
+  if(tp<=0d0)return
+
+  n = size(op_in%v_grid)
+  if(n<=0)return
+
+  v = r/tp
+  if(v<=op_in%v_grid(1))then
+   rho_here = op_in%rho_expl(1)
+  elseif(v>=op_in%v_grid(n))then
+   rho_here = op_in%rho_expl(n)
+  else
+   lo = 1
+   hi = n
+   do while(hi-lo>1)
+    mid = (lo+hi)/2
+    if(op_in%v_grid(mid)<=v)then
+     lo = mid
+    else
+     hi = mid
+    end if
+   end do
+   v_lo = op_in%v_grid(lo)
+   v_hi = op_in%v_grid(hi)
+   if(v_hi>v_lo)then
+    frac = (v-v_lo)/(v_hi-v_lo)
+    rho_here = op_in%rho_expl(lo) + frac*(op_in%rho_expl(hi)-op_in%rho_expl(lo))
+   else
+    rho_here = op_in%rho_expl(lo)
+   end if
+  end if
+
+  rho_here = rho_here*(op_in%t_ref/tp)**3
+ end function explosion_profile_density_at_r
 
  function v_wind(r,t,op)
   type(outflow_parameters),intent(inout):: op
@@ -382,6 +427,11 @@ function v_explosion(r,t,op)
    return
   end if
 
+  if(associated(op_in%v_grid).and.associated(op_in%rho_expl))then
+   rho_csm = explosion_profile_density_at_r(r,t,op_in)
+   return
+  end if
+
   op_local = op_in
   op_local%scan_i = 1  ! Reset scan to avoid stale index from outer loop
  rho_csm = rho4pir2_out(r,t,op_local)/(4d0*pi*max(r,1d0)**2)
@@ -394,6 +444,11 @@ function v_explosion(r,t,op)
   real(8),intent(in):: r,t
   real(8):: rho_ej
   type(outflow_parameters):: op_local
+
+  if(associated(op_in%v_grid).and.associated(op_in%rho_expl))then
+   rho_ej = explosion_profile_density_at_r(r,t,op_in)
+   return
+  end if
 
   op_local = op_in
   op_local%scan_i = 1  ! Reset scan to avoid stale index from outer loop
