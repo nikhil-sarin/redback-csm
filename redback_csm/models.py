@@ -129,6 +129,8 @@ __all__ = [
     "generic_powerlaw_csm_exponential",
     "generic_powerlaw_csm_bpl_bolometric",
     "generic_powerlaw_csm_bpl",
+    "static_spline_csm_bpl_bolometric",
+    "static_spline_csm_bpl",
     "generic_powerlaw_csm_exponential_radio",
     "generic_powerlaw_csm_bpl_radio",
     "generic_4shell_csm_bpl_bolometric",
@@ -3574,6 +3576,100 @@ def generic_powerlaw_csm_bpl(
         )
     return _multiband_output(
         *_multiband_csm(time, redshift, "static_powerlaw_csm_bpl", csm_kwargs, dl), **kwargs
+    )
+
+
+@_citation_wrapper(CITATION)
+def static_spline_csm_bpl_bolometric(
+    time,
+    log_r_inner,
+    log_r_outer,
+    log_rho_0,
+    log_rho_1,
+    log_rho_2,
+    log_rho_3,
+    log_rho_4,
+    log_rho_5,
+    log_rho_6,
+    log_rho_7,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs
+):
+    """Bolometric light curve for a finite static CSM snapshot parameterised by density nodes."""
+    return _csm_bolometric_impl(
+        time,
+        "static_spline_csm_bpl",
+        log_r_inner=log_r_inner,
+        log_r_outer=log_r_outer,
+        log_rho_0=log_rho_0,
+        log_rho_1=log_rho_1,
+        log_rho_2=log_rho_2,
+        log_rho_3=log_rho_3,
+        log_rho_4=log_rho_4,
+        log_rho_5=log_rho_5,
+        log_rho_6=log_rho_6,
+        log_rho_7=log_rho_7,
+        delta_sn=delta_sn,
+        nn_sn=nn_sn,
+        mej_sn=mej_sn,
+        esn=esn,
+        eff=eff,
+        **kwargs
+    )
+
+
+@_citation_wrapper(CITATION)
+def static_spline_csm_bpl(
+    time,
+    redshift,
+    log_r_inner,
+    log_r_outer,
+    log_rho_0,
+    log_rho_1,
+    log_rho_2,
+    log_rho_3,
+    log_rho_4,
+    log_rho_5,
+    log_rho_6,
+    log_rho_7,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs
+):
+    """Multiband light curve for a finite static CSM snapshot parameterised by density nodes."""
+    dl = kwargs.get("cosmology", _cosmo).luminosity_distance(redshift).cgs.value
+    csm_kwargs = dict(
+        log_r_inner=log_r_inner,
+        log_r_outer=log_r_outer,
+        log_rho_0=log_rho_0,
+        log_rho_1=log_rho_1,
+        log_rho_2=log_rho_2,
+        log_rho_3=log_rho_3,
+        log_rho_4=log_rho_4,
+        log_rho_5=log_rho_5,
+        log_rho_6=log_rho_6,
+        log_rho_7=log_rho_7,
+        delta_sn=delta_sn,
+        nn_sn=nn_sn,
+        mej_sn=mej_sn,
+        esn=esn,
+        eff=eff,
+        **kwargs
+    )
+    if kwargs.get("output_format") == "flux_density":
+        return _multiband_csm_flux_density(
+            time, redshift, "static_spline_csm_bpl", csm_kwargs, dl
+        )
+    return _multiband_output(
+        *_multiband_csm(time, redshift, "static_spline_csm_bpl", csm_kwargs, dl),
+        **kwargs
     )
 
 

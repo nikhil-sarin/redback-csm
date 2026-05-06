@@ -36,7 +36,7 @@ def _get_csm():
 
 import numpy as np
 from collections import namedtuple
-from scipy.interpolate import interp1d
+from scipy.interpolate import PchipInterpolator, interp1d
 import matplotlib.pyplot as plt
 
 # Unit conversion constants (internal use for Fortran interface)
@@ -641,7 +641,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
         plt.plot(lc.time, lc.lbol_shock)   # Plots shock luminosity
         plt.plot(lc.time, lc.lbol_diffuse) # Same as lc.lbol when kappa provided
     """
-    mode, kappa = _configure_runtime_from_kwargs(kwargs)
+    _mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     mdot = mdot * solar_mass_per_yr_to_gram_per_sec
     vwind = vwind * 1e5  # Convert km/s to cm/s
@@ -2969,6 +2969,48 @@ def create_static_powerlaw_csm_density(
     return r_grid, rho_grid
 
 
+def create_static_spline_csm_density(
+    log_r_inner,
+    log_r_outer,
+    log_rho_nodes,
+    n_points=1000,
+    log_r_nodes=None,
+):
+    """
+    Create a finite static CSM snapshot from log-density nodes.
+
+    ``log_r_*`` and ``log_rho_nodes`` are base-10 values in cgs units.
+    Interpolation is PCHIP in log-log space, which is shape-preserving and
+    avoids the ringing that ordinary cubic splines can introduce.
+    """
+    log_r_inner = float(log_r_inner)
+    log_r_outer = float(log_r_outer)
+    if not log_r_outer > log_r_inner:
+        raise ValueError("log_r_outer must be greater than log_r_inner")
+
+    log_rho_nodes = np.asarray(log_rho_nodes, dtype=np.float64)
+    if log_rho_nodes.ndim != 1 or log_rho_nodes.size < 2:
+        raise ValueError("log_rho_nodes must be a one-dimensional array with at least two nodes")
+    if not np.all(np.isfinite(log_rho_nodes)):
+        raise ValueError("log_rho_nodes must be finite")
+
+    if log_r_nodes is None:
+        log_r_nodes = np.linspace(log_r_inner, log_r_outer, log_rho_nodes.size)
+    else:
+        log_r_nodes = np.asarray(log_r_nodes, dtype=np.float64)
+        if log_r_nodes.shape != log_rho_nodes.shape:
+            raise ValueError("log_r_nodes must have the same shape as log_rho_nodes")
+        if np.any(np.diff(log_r_nodes) <= 0.0):
+            raise ValueError("log_r_nodes must be strictly increasing")
+
+    n_points = max(16, int(n_points))
+    log_r_grid = np.linspace(log_r_inner, log_r_outer, n_points)
+    log_rho_grid = PchipInterpolator(log_r_nodes, log_rho_nodes, extrapolate=False)(log_r_grid)
+    r_grid = 10.0 ** log_r_grid
+    rho_grid = 10.0 ** log_rho_grid
+    return r_grid.astype(np.float64), np.maximum(rho_grid, 0.0).astype(np.float64)
+
+
 def _rho_static_powerlaw_at_r(r_array, **kwargs):
     """Static finite-support power-law CSM density evaluated directly in radius."""
     eta = kwargs["eta"]
@@ -3459,6 +3501,156 @@ def _get_lc_static_powerlaw_csm_bpl(
     outs.vshell = vshell
     outs.shell_mass = shell_mass
     return _freeze_output(outs)
+
+
+def _call_static_bpl_from_arrays(
+    r_grid,
+    csm_density,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
+    """Run the static BPL CSM backend for an already sampled finite density profile."""
+    kwargs = dict(kwargs)
+    kwargs.setdefault("delta_sn", delta_sn)
+    kwargs.setdefault("nn_sn", nn_sn)
+    kwargs.setdefault("mej_sn", mej_sn)
+    kwargs.setdefault("esn", esn)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
+
+    r_grid = np.asarray(r_grid, dtype=np.float64)
+    csm_density = np.asarray(csm_density, dtype=np.float64)
+    if r_grid.ndim != 1 or csm_density.ndim != 1 or r_grid.size != csm_density.size:
+        raise ValueError("r_grid and csm_density must be one-dimensional arrays with the same length")
+    if r_grid.size < 16:
+        raise ValueError("r_grid and csm_density must contain at least 16 samples")
+    if np.any(np.diff(r_grid) <= 0.0):
+        raise ValueError("r_grid must be strictly increasing")
+    if not np.all(np.isfinite(r_grid)) or not np.all(np.isfinite(csm_density)):
+        raise ValueError("r_grid and csm_density must be finite")
+    if np.any(r_grid <= 0.0) or np.any(csm_density < 0.0):
+        raise ValueError("r_grid must be positive and csm_density must be non-negative")
+    if not np.any(csm_density > 0.0):
+        raise ValueError("csm_density must contain at least one positive value")
+
+    mej_sn_grams = mej_sn * solar_mass
+    esn_ergs = esn * foe
+
+    if kappa is not None:
+        _get_csm().lc_mod.lightcurve_static_bpl(
+            csm_density,
+            r_grid,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            eff,
+            kappa,
+        )
+    else:
+        _get_csm().lc_mod.lightcurve_static_bpl(
+            csm_density, r_grid, delta_sn, nn_sn, mej_sn_grams, esn_ergs, eff
+        )
+
+    time_array = _get_csm().lc_mod.tarray.copy()
+    lbol_shock = _get_csm().lc_mod.larray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
+    vshell = _get_csm().lc_mod.varray.copy()
+    shell_mass = _get_csm().lc_mod.marray.copy()
+    temperature = _get_csm().lc_mod.temparray.copy()
+
+    if kappa is not None:
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+    else:
+        lbol_diffuse = None
+        lbol = lbol_shock
+
+    outs = _output_builder(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
+    outs.time = time_array
+    outs.lbol = lbol
+    outs.lbol_shock = lbol_shock
+    outs.lbol_diffuse = lbol_diffuse
+    outs.rph = rph
+    outs.temperature = temperature
+    outs.vshell = vshell
+    outs.shell_mass = shell_mass
+    return _freeze_output(outs)
+
+
+def _get_lc_static_arbitrary_csm_bpl(
+    r_grid,
+    csm_density,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
+    """Static finite CSM snapshot sampled on an arbitrary radius grid."""
+    return _call_static_bpl_from_arrays(
+        r_grid, csm_density, delta_sn, nn_sn, mej_sn, esn, eff, **kwargs
+    )
+
+
+def _get_lc_static_spline_csm_bpl(
+    log_r_inner,
+    log_r_outer,
+    log_rho_0,
+    log_rho_1,
+    log_rho_2,
+    log_rho_3,
+    log_rho_4,
+    log_rho_5,
+    log_rho_6,
+    log_rho_7,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
+    """Inference-friendly static finite CSM snapshot from eight log-density nodes."""
+    log_rho_nodes = np.array(
+        [
+            log_rho_0,
+            log_rho_1,
+            log_rho_2,
+            log_rho_3,
+            log_rho_4,
+            log_rho_5,
+            log_rho_6,
+            log_rho_7,
+        ],
+        dtype=np.float64,
+    )
+    n_points = kwargs.get("n_points", 1000)
+    r_grid, csm_density = create_static_spline_csm_density(
+        log_r_inner=log_r_inner,
+        log_r_outer=log_r_outer,
+        log_rho_nodes=log_rho_nodes,
+        n_points=n_points,
+    )
+    return _call_static_bpl_from_arrays(
+        r_grid, csm_density, delta_sn, nn_sn, mej_sn, esn, eff, **kwargs
+    )
 
 
 def _get_lc_generic_4shell_csm_bpl(
@@ -5132,6 +5324,38 @@ _DISPATCH = {
             "esn",
             "eff",
             "m_csm",
+        ],
+    ),
+    "static_arbitrary_csm_bpl": (
+        _get_lc_static_arbitrary_csm_bpl,
+        [
+            "r_grid",
+            "csm_density",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "static_spline_csm_bpl": (
+        _get_lc_static_spline_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "log_rho_1",
+            "log_rho_2",
+            "log_rho_3",
+            "log_rho_4",
+            "log_rho_5",
+            "log_rho_6",
+            "log_rho_7",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
         ],
     ),
     "generic_4shell_csm_bpl": (
