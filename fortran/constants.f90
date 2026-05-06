@@ -1,6 +1,7 @@
 module constants
  implicit none
  real(8),parameter:: pi = acos(-1d0), clight = 2.99792458d10
+ real(8),parameter:: a_rad = 7.5657d-15
  real(8),parameter:: day = 24d0*3600d0, year=day*365.25d0
  real(8),parameter:: msun = 1.989d33, lsun=3.839d33, sigma=5.67d-5
 
