@@ -303,8 +303,49 @@ contains
    rho_here = intpol(r,op%r_grid_static(i:i+1),op%rho_static(i:i+1))
   end if
 
-  rho_static_profile = 4d0*pi*rho_here*r*r
+ rho_static_profile = 4d0*pi*rho_here*r*r
  end function rho_static_profile
+
+ function static_profile_density_at_r(r,op_in) result(rho_here)
+ ! Side-effect-free density lookup for static CSM profiles.
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r
+  real(8):: rho_here, r_lo, r_hi, frac
+  integer:: lo, hi, mid, n
+
+  rho_here = 0d0
+  if(.not.associated(op_in%r_grid_static).or..not.associated(op_in%rho_static))return
+
+  n = size(op_in%r_grid_static)
+  if(n<=0)return
+
+  if(r<op_in%r_grid_static(1).or.r>op_in%r_grid_static(n))return
+
+  if(r<=op_in%r_grid_static(1))then
+   rho_here = op_in%rho_static(1)
+  elseif(r>=op_in%r_grid_static(n))then
+   rho_here = op_in%rho_static(n)
+  else
+   lo = 1
+   hi = n
+   do while(hi-lo>1)
+    mid = (lo+hi)/2
+    if(op_in%r_grid_static(mid)<=r)then
+     lo = mid
+    else
+     hi = mid
+    end if
+   end do
+   r_lo = op_in%r_grid_static(lo)
+   r_hi = op_in%r_grid_static(hi)
+   if(r_hi>r_lo)then
+    frac = (r-r_lo)/(r_hi-r_lo)
+    rho_here = op_in%rho_static(lo) + frac*(op_in%rho_static(hi)-op_in%rho_static(lo))
+   else
+    rho_here = op_in%rho_static(lo)
+   end if
+  end if
+ end function static_profile_density_at_r
 
  function v_wind(r,t,op)
   type(outflow_parameters),intent(inout):: op
@@ -335,6 +376,11 @@ function v_explosion(r,t,op)
   real(8),intent(in):: r,t
   real(8):: rho_csm
   type(outflow_parameters):: op_local
+
+  if(associated(op_in%r_grid_static).and.associated(op_in%rho_static))then
+   rho_csm = static_profile_density_at_r(r,op_in)
+   return
+  end if
 
   op_local = op_in
   op_local%scan_i = 1  ! Reset scan to avoid stale index from outer loop

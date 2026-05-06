@@ -332,7 +332,11 @@ def _wind_history_to_static_grid(tgrid, mdot, vwind_cgs, mode, kwargs):
     t_outer = max(t_finite[active[-1]], t_inner * (1.0 + 1.0e-6))
     r_inner = max(vwind_cgs * t_inner, 1.0)
     r_outer = max(vwind_cgs * t_outer, r_inner * (1.0 + 1.0e-6))
-    n_points = max(64, int(kwargs.get("transport_csm_n_points", kwargs.get("csm_n_points", 512))))
+    default_points = max(96, 4 * int(kwargs.get("n_rad_zones", 40)))
+    n_points = max(
+        64,
+        int(kwargs.get("transport_csm_n_points", kwargs.get("csm_n_points", default_points))),
+    )
 
     r_grid = np.logspace(np.log10(r_inner), np.log10(r_outer), n_points).astype(np.float64)
     t_wind = r_grid / vwind_cgs
@@ -2973,7 +2977,7 @@ def create_static_spline_csm_density(
     log_r_inner,
     log_r_outer,
     log_rho_nodes,
-    n_points=1000,
+    n_points=256,
     log_r_nodes=None,
 ):
     """
@@ -3094,6 +3098,7 @@ def _get_lc_generic_csm_exponential(
     """
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", 1e20)
+    n_points = int(kwargs.get("n_points", 1000))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Build shell parameters based on which shells are enabled
@@ -3122,7 +3127,7 @@ def _get_lc_generic_csm_exponential(
     r_grid, v_grid, csm_density = create_generic_csm_density(
         r_inner=r_inner,
         r_outer=r_outer,
-        n_points=1000,
+        n_points=n_points,
         base_density=base_density,
         base_index=base_index,
         n_shells=n_shells,
@@ -3243,6 +3248,7 @@ def _get_lc_generic_csm_bpl(
     """
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", 1e20)
+    n_points = int(kwargs.get("n_points", 1000))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
@@ -3270,7 +3276,7 @@ def _get_lc_generic_csm_bpl(
     r_grid, v_grid, csm_density = create_generic_csm_density(
         r_inner=r_inner,
         r_outer=r_outer,
-        n_points=1000,
+        n_points=n_points,
         base_density=base_density,
         base_index=base_index,
         n_shells=n_shells,
@@ -3440,7 +3446,7 @@ def _get_lc_static_powerlaw_csm_bpl(
     kwargs.setdefault("mej_sn", mej_sn)
     kwargs.setdefault("esn", esn)
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
-    n_points = kwargs.get("n_points", 1000)
+    n_points = kwargs.get("n_points", 256)
 
     r_grid, csm_density = create_static_powerlaw_csm_density(
         eta=eta, r_inner=r_inner, r_outer=r_outer, m_csm=m_csm, n_points=n_points
@@ -3641,7 +3647,7 @@ def _get_lc_static_spline_csm_bpl(
         ],
         dtype=np.float64,
     )
-    n_points = kwargs.get("n_points", 1000)
+    n_points = kwargs.get("n_points", 256)
     r_grid, csm_density = create_static_spline_csm_density(
         log_r_inner=log_r_inner,
         log_r_outer=log_r_outer,
@@ -3705,6 +3711,7 @@ def _get_lc_generic_4shell_csm_bpl(
     """
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", 1e20)
+    n_points = int(kwargs.get("n_points", 1000))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
@@ -3737,7 +3744,7 @@ def _get_lc_generic_4shell_csm_bpl(
     r_grid, v_grid, csm_density = create_generic_csm_density(
         r_inner=r_inner,
         r_outer=r_outer,
-        n_points=1000,
+        n_points=n_points,
         base_density=base_density,
         base_index=base_index,
         n_shells=n_shells,
@@ -3923,6 +3930,7 @@ def _get_lc_generic_8shell_csm_bpl(
     r_outer = kwargs.get("r_outer", 1e20)
     base_profile = kwargs.get("base_profile", "powerlaw")
     base_bpl_params = kwargs.get("base_bpl_params", None)
+    n_points = int(kwargs.get("n_points", 1000))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Build shell parameters based on which shells are enabled
@@ -3976,7 +3984,7 @@ def _get_lc_generic_8shell_csm_bpl(
     r_grid, v_grid, csm_density = create_generic_csm_density(
         r_inner=r_inner,
         r_outer=r_outer,
-        n_points=1000,
+        n_points=n_points,
         base_density=base_density,
         base_index=base_index,
         n_shells=n_shells,
@@ -5621,10 +5629,11 @@ def _rho_generic_at_r(r_array, **kwargs):
             shell_densities.append(d)
 
     n_shells = len(shell_radii)
+    n_points = int(kwargs.get("n_points", 1000))
     r_grid, _, csm_density = create_generic_csm_density(
         r_inner=r_inner,
         r_outer=r_outer,
-        n_points=1000,
+        n_points=n_points,
         base_density=base_density,
         base_index=base_index,
         n_shells=n_shells,

@@ -918,11 +918,11 @@ end subroutine lightcurve_wind_bpl
     if (t < 4d0*86400d0) then
      dt = min(dt, 0.05d0*86400d0)
     else if (t < 10d0*86400d0) then
-     dt = min(dt, 0.02d0*86400d0)
+     dt = min(dt, 0.05d0*86400d0)
     else if (t < 30d0*86400d0) then
-     dt = min(dt, 0.10d0*86400d0)
+     dt = min(dt, 0.15d0*86400d0)
     else if (t < 120d0*86400d0) then
-     dt = min(dt, 0.25d0*86400d0)
+     dt = min(dt, 0.50d0*86400d0)
     else
      dt = min(dt, 1.00d0*86400d0)
     end if
