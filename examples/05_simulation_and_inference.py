@@ -192,7 +192,7 @@ result = redback.fit_model(
     model=model_for_redback,
     prior=priors,
     sampler="pymultinest", # change to different sampler if you prefer
-    nlive=500,
+    nlive=1000,
     plot=False,
     injection_parameters=TRUE_PARAMS,
     clean=True
@@ -243,7 +243,7 @@ ax_mdot.plot(t_common, mdot_true, "r-", lw=2.5, label="True model", zorder=5)
 
 ax_mdot.set_xlabel("Time before explosion (yr)", fontsize=12)
 ax_mdot.set_ylabel(r"$\dot{M}$ ($M_\odot$ yr$^{-1}$)", fontsize=12)
-ax_mdot.set_title("Inferred mass-loss history", fontsize=12)
+# ax_mdot.set_title("Inferred mass-loss history", fontsize=12)
 ax_mdot.set_yscale("log")
 ax_mdot.set_xlim(0, 150)
 ax_mdot.legend(fontsize=9)
@@ -276,7 +276,7 @@ ax_lc.set_xscale("log")
 ax_lc.set_yscale("log")
 ax_lc.set_xlabel("Time (days)", fontsize=12)
 ax_lc.set_ylabel(r"$L_{\rm bol}$ (erg s$^{-1}$)", fontsize=12)
-ax_lc.set_title("Lightcurve posterior predictions", fontsize=12)
+# ax_lc.set_title("Lightcurve posterior predictions", fontsize=12)
 ax_lc.set_xlim(0.8, 600)
 ax_lc.legend(fontsize=9)
 ax_lc.grid(True, alpha=0.3)
