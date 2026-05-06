@@ -1,7 +1,6 @@
 module csm_transport
 
- use constants, only: pi, clight
- use physical_constants, only: a_rad
+ use constants, only: pi, clight, a_rad
 use get_vals, only: op, query_csm_density, query_csm_inner_edge, query_csm_outer_edge, &
                      query_tau_to_edge, query_csm_photosphere_radius, query_csm_velocity, &
                      query_ejecta_density, query_ejecta_velocity
