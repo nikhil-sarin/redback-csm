@@ -41,6 +41,7 @@ from redback_csm.core import (
     _call_csm,
     _call_csm_radio,
     _call_csm_xray,
+    GENERIC_CSM_DEFAULT_N_POINTS,
     create_generic_csm_density as _create_generic_csm_density,
 )
 
@@ -245,7 +246,7 @@ def _generic_density_csm_mass(kwargs, n_shells):
     r_grid, _, rho = _create_generic_csm_density(
         r_inner=r_inner,
         r_outer=r_outer,
-        n_points=int(kwargs.get("n_points", 1000)),
+        n_points=int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS)),
         base_density=base_density,
         base_index=base_index,
         n_shells=len(shell_radii),

@@ -46,6 +46,7 @@ solar_mass_per_yr_to_gram_per_sec = solar_mass / (365.25 * 24 * 3600)
 YEAR = 365.25 * 24 * 3600  # seconds in a year
 DAY = 86400  # seconds in a day
 YEAR_DAYS = YEAR / DAY  # 365.25 days in a year
+GENERIC_CSM_DEFAULT_N_POINTS = 500
 
 
 _NAMEDTUPLE_TYPE_CACHE = {}
@@ -2817,7 +2818,7 @@ def _generic_csm_radius_grid(
 def create_generic_csm_density(
     r_inner=1e10,
     r_outer=None,
-    n_points=1000,
+    n_points=GENERIC_CSM_DEFAULT_N_POINTS,
     base_density=1e-14,
     base_index=-2.0,
     n_shells=0,
@@ -3184,7 +3185,7 @@ def _get_lc_generic_csm_exponential(
     """
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", None)
-    n_points = int(kwargs.get("n_points", 1000))
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Build shell parameters based on which shells are enabled
@@ -3335,7 +3336,7 @@ def _get_lc_generic_csm_bpl(
     kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej_sn, esn)
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", None)
-    n_points = int(kwargs.get("n_points", 1000))
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
@@ -3799,7 +3800,7 @@ def _get_lc_generic_4shell_csm_bpl(
     kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej_sn, esn)
     r_inner = kwargs.get("r_inner", 1e10)
     r_outer = kwargs.get("r_outer", None)
-    n_points = int(kwargs.get("n_points", 1000))
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
     # Build shell parameters based on which shells are enabled
     shell_radii = []
@@ -4019,7 +4020,7 @@ def _get_lc_generic_8shell_csm_bpl(
     r_outer = kwargs.get("r_outer", None)
     base_profile = kwargs.get("base_profile", "powerlaw")
     base_bpl_params = kwargs.get("base_bpl_params", None)
-    n_points = int(kwargs.get("n_points", 1000))
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
     mode, kappa = _configure_runtime_from_kwargs(kwargs)
 
     # Build shell parameters based on which shells are enabled
@@ -5718,7 +5719,7 @@ def _rho_generic_at_r(r_array, **kwargs):
             shell_densities.append(d)
 
     n_shells = len(shell_radii)
-    n_points = int(kwargs.get("n_points", 1000))
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
     r_grid, _, csm_density = create_generic_csm_density(
         r_inner=r_inner,
         r_outer=r_outer,

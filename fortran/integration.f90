@@ -10,6 +10,29 @@ module integration
 
 contains
 
+ subroutine shell_rhs_and_luminosity(u, r, m, t, op, du_dt, dr_dt, dm_dt, lum_fs, lum_rs)
+  ! Evaluate shell dynamics and raw shock powers with one set of density/velocity calls.
+  type(outflow_parameters),intent(inout):: op(1:2)
+  real(8),intent(in):: u,r,m,t
+  real(8),intent(out):: du_dt, dr_dt, dm_dt, lum_fs, lum_rs
+  real(8):: v_inner, v_outer, rho_inner_4pir2, rho_outer_4pir2
+  real(8):: rel_in, rel_out
+
+  v_inner = v_in(r,t,op(1))
+  v_outer = v_out(r,t,op(2))
+  rho_inner_4pir2 = rho4pir2_in(r,t,op(1))
+  rho_outer_4pir2 = rho4pir2_out(r,t,op(2))
+
+  rel_in = max(v_inner - u, 0d0)
+  rel_out = max(u - v_outer, 0d0)
+
+  dm_dt = rho_inner_4pir2*rel_in + rho_outer_4pir2*rel_out
+  du_dt = (rho_inner_4pir2*rel_in**2 - rho_outer_4pir2*rel_out**2) / m
+  dr_dt = u
+  lum_fs = 0.5d0*rho_outer_4pir2*rel_out**3
+  lum_rs = 0.5d0*rho_inner_4pir2*rel_in**3
+ end subroutine shell_rhs_and_luminosity
+
 function dmdt(u,r,t,op)
   ! Continuity equation
   type(outflow_parameters),intent(inout):: op(1:2)

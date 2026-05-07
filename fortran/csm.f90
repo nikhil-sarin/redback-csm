@@ -30,6 +30,9 @@ use csm_transport, only: dimless_state_type, dimless_comoving_transport_step, &
  private:: get_diffuse_lc
  private
 integer,parameter:: ll=200000, n_skip_initial_outputs=10
+ real(8),parameter:: simple_store_min_dlogt=2d-2
+ real(8),parameter:: simple_store_min_rell=2d-2
+ real(8),parameter:: simple_store_min_relr=1d-2
  real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array, fs_array, rs_array
  real(8),dimension(ll):: rfs_array, rph_array, etrap_array, tleak_array, tau_array_transport
  integer,dimension(ll):: i_array
@@ -850,10 +853,12 @@ end subroutine lightcurve_wind_bpl
    integer:: n, m3_log_counter, n_store_seen
    real(8):: dt,ku,kr,km, t_end_run
    real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs
+   real(8):: simple_t_last_store, simple_l_last_store, simple_r_last_store
+   real(8):: simple_dlogt, simple_rell, simple_relr
    real(8) :: r_ph, L_ph
    character(len=32) :: m3_debug_env
    integer :: m3_debug_status
-   logical :: mode3_debug
+   logical :: mode3_debug, simple_dense_output
 
   call reset_dimless_state(dl_state_global)
    if(run_mode == 3)then
@@ -872,6 +877,15 @@ end subroutine lightcurve_wind_bpl
   if (m3_debug_status == 0) then
    mode3_debug = len_trim(m3_debug_env) > 0 .and. m3_debug_env(1:1) /= '0' .and. m3_debug_env(1:1) /= 'f' .and. &
                  m3_debug_env(1:1) /= 'F' .and. m3_debug_env(1:1) /= 'n' .and. m3_debug_env(1:1) /= 'N'
+  end if
+  simple_dense_output = .false.
+  m3_debug_env = ''
+  m3_debug_status = 1
+  call get_environment_variable('REDBACK_CSM_SIMPLE_DENSE_OUTPUT', m3_debug_env, status=m3_debug_status)
+  if (m3_debug_status == 0) then
+   simple_dense_output = len_trim(m3_debug_env) > 0 .and. m3_debug_env(1:1) /= '0' .and. &
+                         m3_debug_env(1:1) /= 'f' .and. m3_debug_env(1:1) /= 'F' .and. &
+                         m3_debug_env(1:1) /= 'n' .and. m3_debug_env(1:1) /= 'N'
   end if
 
   if (run_mode == 3) then
@@ -899,6 +913,9 @@ end subroutine lightcurve_wind_bpl
   i_array = 0
   n = 0
   n_store_seen = 0
+  simple_t_last_store = -1d0
+  simple_l_last_store = 0d0
+  simple_r_last_store = 0d0
   do while (t<=t_end_run)
 
 ! Evolve shell properties
@@ -911,11 +928,7 @@ end subroutine lightcurve_wind_bpl
     lum_rs = dl_state_global%lum_heat_rs_cgs
     lum_heat = dl_state_global%lum_heat_total_cgs
    else
-    ku = dudt(u,r,m,t,op)
-    kr = u
-    km = dmdt(u,r,t,op)
-    lum_fs = forward_shock_luminosity(r,t,u,op)
-    lum_rs = reverse_shock_luminosity(r,t,u,op)
+    call shell_rhs_and_luminosity(u, r, m, t, op, ku, kr, km, lum_fs, lum_rs)
     select case (shock_efficiency_mode)
     case (1)
      eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
@@ -992,16 +1005,21 @@ end subroutine lightcurve_wind_bpl
 
 ! Store output arrays
    if((run_mode == 1 .and. t>1d4) .or. (run_mode == 3 .and. t>t_start))then
-   if (n >= 1) then
-      if (run_mode == 3) then
-        if (t <= t_array(n) + 1d-6) cycle
-      else
-        if (t <= t_array(n) * (1.0d0 + 1.0d-10)) cycle
-      end if
+    if (n >= 1) then
+     if (run_mode == 3) then
+      if (t <= t_array(n) + 1d-6) cycle
+     else
+      if (t <= t_array(n) * (1.0d0 + 1.0d-10)) cycle
+     end if
     end if
-   if(run_mode == 1)then
-    if(n>=1)i_array(n) = op(2)%scan_i
-   end if
+    if (run_mode == 1 .and. diffusion_enabled .and. .not.simple_dense_output .and. n >= 1 .and. t < t_end_run) then
+     simple_dlogt = abs(log(max(t, 1d-99) / max(simple_t_last_store, 1d-99)))
+     simple_rell = abs(lum_heat - simple_l_last_store) / max(max(abs(lum_heat), abs(simple_l_last_store)), 1d-99)
+     simple_relr = abs(r - simple_r_last_store) / max(max(abs(r), abs(simple_r_last_store)), 1d-99)
+     if (simple_dlogt < simple_store_min_dlogt .and. &
+         simple_rell < simple_store_min_rell .and. &
+         simple_relr < simple_store_min_relr) cycle
+    end if
     if (run_mode == 3) then
      n_store_seen = n_store_seen + 1
      if (n_store_seen <= n_skip_initial_outputs) cycle
@@ -1044,12 +1062,18 @@ end subroutine lightcurve_wind_bpl
     end if
     
     t_array(n) = t
+    if(run_mode == 1)i_array(n) = op(2)%scan_i
     l_array(n) = lum_store
     fs_array(n) = lum_fs
     rs_array(n) = lum_rs
     r_array(n) = r_store
     m_array(n) = m
     v_array(n) = u
+    if (run_mode == 1 .and. diffusion_enabled) then
+     simple_t_last_store = t
+     simple_l_last_store = lum_heat
+     simple_r_last_store = r
+    end if
    end if
 
   end do
