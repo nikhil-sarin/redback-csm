@@ -1,7 +1,12 @@
 Available Models
 ================
 
-Each physical scenario is exposed as four functions:
+The package exposes 29 base CSM-density/ejecta scenarios. These are the
+unsuffixed physical configurations before adding output-specific wrappers. Each
+base scenario has generated optical, nickel, radio, and X-ray wrapper variants,
+so the public callable model count is larger than 29: 29 base scenarios times
+six wrapper forms, plus the generic ``csm_xray`` helper, for 175 public
+callables. The optical wrapper family is:
 
 .. list-table::
    :header-rows: 1
@@ -16,6 +21,21 @@ Each physical scenario is exposed as four functions:
      - CSM + radioactive nickel/cobalt decay, bolometric
    * - ``{name}_nickel``
      - CSM + radioactive nickel/cobalt decay, multiband
+
+The 29 base names are:
+``wind_exponential``, ``wind_bpl``, ``exponential_wind``, ``bpl_wind``,
+``exponential_exponential``, ``exponential_bpl``, ``bpl_bpl``,
+``bpl_exponential``, ``boxwind_exponential``, ``boxwind_bpl``,
+``gausswind_exponential``, ``gausswind_bpl``,
+``triple_powerlaw_wind_bpl``, ``triple_powerlaw_wind_exponential``,
+``exponential_triple_powerlaw_wind``, ``bpl_triple_powerlaw_wind``,
+``smooth_triple_powerlaw_wind_bpl``,
+``smooth_triple_powerlaw_wind_exponential``, ``generic_csm_exponential``,
+``generic_csm_bpl``, ``static_powerlaw_csm_exponential``,
+``static_powerlaw_csm_bpl``, ``homologous_powerlaw_csm_exponential``,
+``homologous_powerlaw_csm_bpl``, ``generic_4shell_csm_bpl``,
+``generic_8shell_csm_bpl``, ``static_spline_csm_bpl``,
+``generic_spline_csm_bpl``, and ``generic_spline12_csm_bpl``.
 
 Shared Runtime Options
 ----------------------
@@ -35,7 +55,7 @@ keywords controlling diffusion / transport:
    * - ``kappa``
      - Opacity in ``cm^2 g^-1``. Optional in simple mode. In transport mode it defaults to ``0.34`` if omitted.
    * - ``n_rad_zones``
-     - Number of transport zones used in transport mode. Values below 40 are promoted to 40 because the transport boundary layer is under-resolved below that. Larger values reduce numerical roughness at higher runtime cost.
+     - Number of transport zones used in transport mode. Python model calls promote values below 40 to 40 because the transport boundary layer is under-resolved below that. Larger values reduce numerical roughness at higher runtime cost.
    * - ``efficiency_mode``
      - Optional alternate shock-efficiency mode. Default ``0`` keeps the user-supplied constant ``eff`` for both shocks.
 
@@ -77,7 +97,7 @@ yet a general replacement for the arbitrary-CSM Fortran implementation.
 Radio and X-ray variants
 ------------------------
 
-Each radio-enabled CSM scenario also has matching ``_radio`` and ``_xray``
+Each base CSM scenario also has matching ``_radio`` and ``_xray``
 wrappers. The radio wrappers compute synchrotron emission from the CSM
 interaction shock. The X-ray wrappers compute an approximate thermal
 bremsstrahlung diagnostic using the same shock trajectory and upstream CSM
@@ -90,6 +110,24 @@ Common X-ray controls include ``logepsx``, ``e_min_kev``, ``e_max_kev``,
 
 Wind / Simple CSM Models
 ------------------------
+
+Broken power-law ejecta cutoff
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All BPL-ejecta wrappers accept the optional keyword ``vej_max_ratio``. It sets
+the finite outer ejecta edge as
+
+.. math::
+
+   v_{\rm max} = {\tt vej\_max\_ratio}\,v_t,
+
+where ``v_t`` is the BPL transition velocity set by the ejecta mass, kinetic
+energy, and the inner/outer power-law indices. If it is omitted, wrappers that
+provide BPL parameters use ``vej_max_ratio=3``. This is intentionally finite:
+increasing it lets faster, lower-mass outer ejecta interact with distant CSM at
+earlier times, while decreasing it delays that interaction. The aliases
+``A_ratio`` and ``vej_max`` are also accepted; ``vej_max`` is supplied in km/s
+and converted internally.
 
 **wind_exponential**
     A steady, spherically symmetric wind (constant mass-loss rate) creates the CSM.
@@ -169,11 +207,18 @@ poorly constrained.
 **generic_csm_exponential** / **generic_csm_bpl**
     Power-law base + up to 3 Gaussian shells + exponential or BPL supernova.
 
-**generic_powerlaw_csm_exponential** / **generic_powerlaw_csm_bpl**
+**static_powerlaw_csm_exponential** / **static_powerlaw_csm_bpl**
     Finite-support power-law CSM shell with
     ``rho(r) = rho_in (r / r_inner)^eta`` on ``[r_inner, r_outer]``,
-    normalized by the total shell mass ``m_csm``. These also have matching
-    ``_radio`` variants.
+    normalized by the total shell mass ``m_csm``. This treats the CSM as a
+    static density snapshot.
+
+**homologous_powerlaw_csm_exponential** / **homologous_powerlaw_csm_bpl**
+    The same finite-support power-law density normalization, but with a
+    homologous velocity grid ``v = r / interval_sn``. Here ``interval_sn`` is
+    a public parameter for the homologous variants only: it is the time between
+    CSM ejection and SN explosion in days. This is the direct power-law
+    analogue of the homologous generic/spline CSM constructors.
 
 **generic_4shell_csm_bpl**
     Power-law base + up to 4 Gaussian shells + BPL supernova.
@@ -181,6 +226,122 @@ poorly constrained.
 **generic_8shell_csm_bpl**
     Power-law base + up to 8 Gaussian shells + BPL supernova. High-dimensional
     (30+ parameters); consider using the 3-shell or 4-shell variant first.
+
+Spline CSM Models
+-----------------
+
+The spline models represent the CSM density directly through log-density nodes
+between ``log_r_inner`` and ``log_r_outer``. The interpolation is
+shape-preserving in log-radius/log-density space, so these models are useful
+when the data require more freedom than a small number of Gaussian shells but a
+fully arbitrary density table would be too awkward for inference.
+
+**static_spline_csm_bpl**
+    Static finite CSM snapshot with eight log-density nodes and BPL SN ejecta.
+    This is the data-driven analogue of ``static_powerlaw_csm_bpl``.
+
+**generic_spline_csm_bpl**
+    Homologous finite CSM snapshot with eight log-density nodes and BPL SN
+    ejecta. The parameter ``interval_sn`` sets the homologous velocity grid
+    through ``v = r / interval_sn``.
+
+**generic_spline12_csm_bpl**
+    Twelve-node homologous spline CSM. This is exposed for bolometric and
+    nickel-bolometric fitting where the eight-node profile is too restrictive.
+    Higher-node penalised-spline reconstructions can be run through the MLE
+    utilities described below.
+
+The public wrappers have generated priors for the exposed optical, radio, and
+X-ray variants. For high-node reconstructions, use a smoothness penalty or
+informative priors; the individual nodes should not be interpreted as discrete
+physical shells.
+
+Generated priors
+----------------
+
+Priors are generated programmatically from the model signatures, rather than
+stored as one duplicated file per callable wrapper. This keeps the optical,
+nickel, radio, X-ray, static-shell, generic-shell, and spline variants
+consistent as the model list changes. The generic ``csm_xray`` convenience
+function is the only exported helper without an automatically generated prior,
+because its physical CSM model is selected at runtime through the ``csm_model``
+argument.
+
+CSM mass interpretation
+-----------------------
+
+The arbitrary and spline CSM models fit a density field. The direct mass
+integral is therefore a spherical-equivalent mass,
+``M = integral 4 pi r^2 rho(r) dr``. If the CSM is clumpy or asymmetric, this
+should be scaled by an assumed covering fraction and filling factor rather than
+interpreted as a unique total mass.
+
+``redback_csm.analysis`` provides helpers for this bookkeeping, including
+``csm_mass_from_density_grid``, ``generic_spline_csm_mass_from_params``, and
+``sample_geometry_corrected_mass``. For example:
+
+.. code-block:: python
+
+   from redback_csm.analysis import (
+       generic_spline_csm_mass_from_params,
+       sample_geometry_corrected_mass,
+   )
+
+   m_spherical = generic_spline_csm_mass_from_params(best_fit_parameters)
+   mass_samples = sample_geometry_corrected_mass(
+       m_spherical,
+       covering_fraction={"kind": "uniform", "min": 0.1, "max": 1.0},
+       filling_factor={"kind": "loguniform", "min": 0.01, "max": 1.0},
+   )
+
+Spline MLE utilities
+--------------------
+
+For rapid iteration before running a full sampler, ``redback_csm.spline_mle``
+provides lightweight least-squares utilities for static and homologous spline
+CSM reconstructions. The helper handles parameter ordering, bounds, random
+starts, curvature penalties on the log-density nodes, and optional CSM-mass
+penalties, while the user supplies the event-specific model function. The
+packaged examples use bolometric luminosities. The helper itself only assumes a
+one-dimensional scalar data vector, so multiband fitting would require the
+caller to flatten the observations across filters and provide a matching
+flattened model vector.
+
+.. code-block:: python
+
+   from redback_csm.spline_mle import (
+       SplineMLEProblem,
+       default_spline_bounds,
+       make_random_starts,
+       spline_parameter_names,
+   )
+
+   names = spline_parameter_names(
+       n_nodes=24,
+       profile="generic",
+       include_time_offset=True,
+       include_nickel=True,
+   )
+   bounds = default_spline_bounds(
+       n_nodes=24,
+       profile="generic",
+       include_time_offset=True,
+       include_nickel=True,
+   )
+
+   problem = SplineMLEProblem(
+       time=time,
+       luminosity=lbol,
+       error=lbol_err,
+       parameter_names=names,
+       bounds=bounds,
+       model_function=my_model_function,
+       profile="generic",
+       smoothness_sigma=0.5,
+       max_csm_mass=100.0,
+   )
+   starts = make_random_starts(start_params, bounds, names, n_random=8)
+   result = problem.fit(starts, max_nfev=500)
 
 Syntax
 -------------------------------------

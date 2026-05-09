@@ -15,6 +15,20 @@ Exploration utilities
    :members:
    :undoc-members:
 
+CSM analysis utilities
+----------------------
+
+.. automodule:: redback_csm.analysis
+   :members:
+   :undoc-members:
+
+Spline MLE utilities
+--------------------
+
+.. automodule:: redback_csm.spline_mle
+   :members:
+   :undoc-members:
+
 JAX static CSM backend
 ----------------------
 

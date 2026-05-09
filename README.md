@@ -37,7 +37,9 @@ The naming convention is purely descriptive of the density profiles and does not
 
 ### Optical / bolometric model variants
 
-Each of the 24 CSM scenarios is exposed as four functions:
+The package currently exposes 29 base CSM-density/ejecta scenarios. These are
+the physical configurations listed below, before adding output-specific wrapper
+suffixes. Each base scenario has the same optical wrapper family:
 
 | Suffix | Output | Time frame |
 |---|---|---|
@@ -57,6 +59,10 @@ finite CSM shell mass when that mass is defined by the CSM constructor. There
 is no separate CSM-mass parameter for the nickel component; for unusual cases
 you can override only the total Arnett diffusion mass with `mej_arnett`.
 
+Priors are generated programmatically from the model signatures, so the package
+does not need a separate `.prior` file for every callable wrapper. This covers
+all exported wrappers except the generic `csm_xray` convenience function.
+
 ### Shared Runtime Options
 
 All optical / bolometric CSM wrappers also accept a common set of runtime
@@ -67,7 +73,7 @@ keywords controlling the transport treatment:
 | `mode='simple'` | Default thin-shell calculation. If `kappa` is provided, this uses the legacy post-processed diffusion light curve. |
 | `mode='transport'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
 | `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In transport mode, defaults to `0.34` if not supplied. |
-| `n_rad_zones` | Number of radiation/transport zones in transport mode. Values below 40 are promoted to 40 because the transport boundary layer is under-resolved below that. Higher values reduce numerical roughness but increase runtime. |
+| `n_rad_zones` | Number of radiation/transport zones in transport mode. Python model calls promote values below 40 to 40 because the transport boundary layer is under-resolved below that. Higher values reduce numerical roughness but increase runtime. |
 | `transport_wind_inner_age` | Effective inner wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use the larger of their first tabulated age and `1 yr`; one-point steady winds use `1 yr`. This creates the finite inner cavity needed by the nondimensional transport setup and is ignored in simple mode. |
 | `transport_wind_age` | Effective outer wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use their last tabulated age; one-point steady winds use `100 yr`. This supplies the finite outer edge required by the transport solver and is ignored in simple mode. |
 | `transport_r_inner` / `r_inner` | Alternative direct inner cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_inner` takes precedence. |
@@ -87,6 +93,23 @@ Current output convention:
 - `lbol_shock` is the shock-powered luminosity
 - `lbol_diffuse` is the diffusion / transport luminosity when available
 - `rph` is the historical output field name, but currently stores the shell radius by convention
+
+### Broken power-law ejecta cutoff
+
+BPL ejecta models use a finite maximum ejecta velocity by default. The optional
+`vej_max_ratio` parameter sets
+
+```text
+v_max = vej_max_ratio * v_t
+```
+
+where `v_t` is the BPL transition velocity implied by the ejecta mass, kinetic
+energy, and the `delta`/`nn` power-law indices. If `vej_max_ratio` is not given,
+the default is `3` for Python wrappers that provide the BPL parameters. Larger
+values allow faster outer ejecta to reach distant CSM earlier; smaller values
+delay or suppress early interaction with large-radius shells. The old alias
+`A_ratio` is also accepted. You can instead pass `vej_max` in km/s, in which
+case the wrapper converts it to `vej_max_ratio`.
 
 ### JAX static CSM prototype
 
@@ -120,7 +143,7 @@ not every arbitrary CSM constructor supported by the Fortran backend.
 
 ### Radio synchrotron model variants
 
-Each of the 24 CSM scenarios also has a `{name}_radio` function that computes
+Each base CSM scenario also has a `{name}_radio` function that computes
 synchrotron radio emission from the CSM-interaction shock using the
 Chevalier (1998) formalism with self-absorption. These take additional parameters:
 
@@ -135,7 +158,7 @@ Output is flux density in mJy.
 
 ### X-ray thermal bremsstrahlung model variants
 
-Each radio-enabled CSM scenario also has a matching `{name}_xray` function. The
+Each base CSM scenario also has a matching `{name}_xray` function. The
 X-ray layer is a fast post-processor: it uses the CSM shock evolution and
 upstream density, sets the post-shock plasma temperature from the strong-shock
 velocity, estimates the shocked-CSM emission measure, and emits a thermal
@@ -181,48 +204,60 @@ References for the underlying physics include Rybicki & Lightman (1979),
 Chevalier & Fransson (1994, ApJ, 420, 268), and Margalit, Quataert & Ho
 (2022, ApJ, 928, 122).
 
-### Available CSM scenarios (24 total)
+### Available base CSM-density/ejecta scenarios (29 total)
 
-**Steady wind CSM**
-- `wind_exponential` — steady wind CSM + exponential SN ejecta
-- `wind_bpl` — steady wind CSM + broken power-law SN ejecta
-- `exponential_wind` — exponential outer shell + inner wind ejecta (non-SN transients)
-- `bpl_wind` — broken power-law outer shell + inner wind ejecta (non-SN transients)
+These are the unsuffixed physical configurations. Each base scenario has
+generated optical, nickel, radio, and X-ray wrapper variants, so the public
+model function count is larger than 29: 29 base scenarios times six wrapper
+forms (`{name}`, `{name}_bolometric`, `{name}_nickel`,
+`{name}_nickel_bolometric`, `{name}_radio`, `{name}_xray`), plus the generic
+`csm_xray` helper, for 175 public callables.
 
-**Two-component eruption + explosion**
-- `exponential_exponential` — outer exponential shell + inner exponential SN
-- `exponential_bpl` — outer exponential shell + inner BPL SN
-- `bpl_bpl` — outer BPL shell + inner BPL SN
-- `bpl_exponential` — outer BPL shell + inner exponential SN
+| Base model | CSM / outer material | Inner explosion/ejecta |
+|---|---|---|
+| `wind_exponential` | steady wind | exponential SN ejecta |
+| `wind_bpl` | steady wind | broken power-law SN ejecta |
+| `exponential_wind` | steady wind | exponential eruption/ejecta |
+| `bpl_wind` | steady wind | broken power-law eruption/ejecta |
+| `exponential_exponential` | exponential outer shell | exponential SN ejecta |
+| `exponential_bpl` | exponential outer shell | broken power-law SN ejecta |
+| `bpl_bpl` | broken power-law outer shell | broken power-law SN ejecta |
+| `bpl_exponential` | broken power-law outer shell | exponential SN ejecta |
+| `boxwind_exponential` | box-shaped wind history | exponential SN ejecta |
+| `boxwind_bpl` | box-shaped wind history | broken power-law SN ejecta |
+| `gausswind_exponential` | Gaussian wind history | exponential SN ejecta |
+| `gausswind_bpl` | Gaussian wind history | broken power-law SN ejecta |
+| `triple_powerlaw_wind_bpl` | triple power-law wind history | broken power-law SN ejecta |
+| `triple_powerlaw_wind_exponential` | triple power-law wind history | exponential SN ejecta |
+| `exponential_triple_powerlaw_wind` | triple power-law wind | exponential inner ejecta |
+| `bpl_triple_powerlaw_wind` | triple power-law wind | broken power-law inner ejecta |
+| `smooth_triple_powerlaw_wind_bpl` | smoothed triple power-law wind history | broken power-law SN ejecta |
+| `smooth_triple_powerlaw_wind_exponential` | smoothed triple power-law wind history | exponential SN ejecta |
+| `generic_csm_exponential` | power-law base + 3 Gaussian shells | exponential SN ejecta |
+| `generic_csm_bpl` | power-law base + 3 Gaussian shells | broken power-law SN ejecta |
+| `static_powerlaw_csm_exponential` | finite static power-law shell | exponential SN ejecta |
+| `static_powerlaw_csm_bpl` | finite static power-law shell | broken power-law SN ejecta |
+| `homologous_powerlaw_csm_exponential` | finite homologous power-law shell | exponential SN ejecta |
+| `homologous_powerlaw_csm_bpl` | finite homologous power-law shell | broken power-law SN ejecta |
+| `generic_4shell_csm_bpl` | power-law base + 4 Gaussian shells | broken power-law SN ejecta |
+| `generic_8shell_csm_bpl` | power-law base + 8 Gaussian shells | broken power-law SN ejecta |
+| `static_spline_csm_bpl` | finite static spline density profile | broken power-law SN ejecta |
+| `generic_spline_csm_bpl` | homologous eight-node spline density profile | broken power-law SN ejecta |
+| `generic_spline12_csm_bpl` | homologous twelve-node spline density profile | broken power-law SN ejecta |
 
-**Shaped wind profiles**
-- `boxwind_exponential` — box-shaped (constant interval) wind CSM + exponential SN
-- `boxwind_bpl` — box-shaped wind CSM + BPL SN
-- `gausswind_exponential` — Gaussian-varying mass-loss rate wind CSM + exponential SN
-- `gausswind_bpl` — Gaussian-varying mass-loss rate wind CSM + BPL SN
+### Finite power-law CSM shell models
 
-**Triple power-law winds**
-- `triple_powerlaw_wind_bpl` — piecewise triple power-law wind CSM + BPL SN
-- `triple_powerlaw_wind_exponential` — piecewise triple power-law wind CSM + exponential SN
-- `exponential_triple_powerlaw_wind` — outer exponential shell + inner triple power-law wind
-- `bpl_triple_powerlaw_wind` — outer BPL shell + inner triple power-law wind
-- `smooth_triple_powerlaw_wind_bpl` — smooth (tanh-connected) triple power-law wind + BPL SN
-- `smooth_triple_powerlaw_wind_exponential` — smooth triple power-law wind + exponential SN
+These are the classic finite-support power-law CSM density profiles,
+consistent with e.g., Chatzopoulos+2012. Two variants are exposed:
+`static_powerlaw_csm_*` treats the CSM as a static density snapshot, while
+`homologous_powerlaw_csm_*` uses the same mass-normalized radial density but
+assigns a homologous velocity grid through `v = r / interval_sn`.
 
-**Generic phenomenological CSM**
-- `generic_csm_exponential` — power-law base density + 3 shells + exponential SN
-- `generic_csm_bpl` — power-law base density + 3 shells + BPL SN
-- `generic_4shell_csm_bpl` — power-law base density + 4 shells + BPL SN
-- `generic_8shell_csm_bpl` — power-law base density + 8 shells + BPL SN
-
-### New finite power-law CSM shell models
-
-This is the classic power-law finite-support density profiles, 
-consistent with e.g., Chatzopoulos+2012 
-
-- `generic_powerlaw_csm_exponential`
-- `generic_powerlaw_csm_bpl`
-- and the matching `_bolometric` / `_radio` variants
+- `static_powerlaw_csm_exponential`
+- `static_powerlaw_csm_bpl`
+- `homologous_powerlaw_csm_exponential`
+- `homologous_powerlaw_csm_bpl`
+- and the matching optical, radio, and X-ray variants
 
 These have a density profile parameterized as 
 
@@ -238,6 +273,11 @@ Public parameters are:
 - `r_inner` — inner shell radius in `cm`
 - `r_outer` — outer shell radius in `cm`
 - `m_csm` — total CSM mass in `Msun`
+
+For the homologous variants only:
+
+- `interval_sn` — time between CSM ejection and SN explosion in days; this sets
+  the homologous CSM velocity field through `v = r / interval_sn`.
 
 The density normalization `rho_in` is derived internally from `m_csm`, so the
 public API does not ask for a redundant density parameter.
@@ -265,6 +305,60 @@ fig = csm_lightcurve_from_density(
 fig.savefig('my_lightcurve.png')
 ```
 
+## CSM mass analysis
+
+Arbitrary and spline CSM fits return density fields. The direct mass integral is
+a spherical-equivalent value unless you explicitly assume a covering fraction or
+volume filling factor:
+
+```python
+from redback_csm.analysis import (
+    generic_spline_csm_mass_from_params,
+    sample_geometry_corrected_mass,
+)
+
+m_spherical = generic_spline_csm_mass_from_params(best_fit_parameters)
+mass_samples = sample_geometry_corrected_mass(
+    m_spherical,
+    covering_fraction={"kind": "uniform", "min": 0.1, "max": 1.0},
+    filling_factor={"kind": "loguniform", "min": 0.01, "max": 1.0},
+)
+```
+
+## Spline CSM MLE helpers
+
+For fast data-driven CSM reconstruction, the package includes finite spline CSM
+models and a small least-squares helper. The public model wrappers are
+`static_spline_csm_bpl`, `generic_spline_csm_bpl`, and
+`generic_spline12_csm_bpl`; the MLE helper can also be used with more nodes in
+custom scripts. The included MLE examples are bolometric. The helper only
+requires a one-dimensional scalar data vector, so multiband fitting would need a
+custom wrapper that flattens all bands into one residual vector.
+
+```python
+from redback_csm.spline_mle import (
+    SplineMLEProblem,
+    default_spline_bounds,
+    make_random_starts,
+    spline_parameter_names,
+)
+
+names = spline_parameter_names(n_nodes=24, profile="generic", include_nickel=True)
+bounds = default_spline_bounds(n_nodes=24, profile="generic", include_nickel=True)
+problem = SplineMLEProblem(
+    time=time,
+    luminosity=lbol,
+    error=lbol_err,
+    parameter_names=names,
+    bounds=bounds,
+    model_function=my_model_function,
+    profile="generic",
+    smoothness_sigma=0.5,
+)
+starts = make_random_starts(start_params, bounds, names, n_random=8)
+result = problem.fit(starts, max_nfev=500)
+```
+
 ## Installation
 
 ### Requirements
@@ -286,31 +380,6 @@ bash setup_fortran.sh
 # 3. Install
 pip install -e .
 ```
-
-Optional development extras:
-
-```bash
-pip install -e ".[dev]"
-pip install -e ".[jax]"   # optional static-CSM JAX backend
-```
-
-## Validation and smoke tests
-
-Run the fast smoke tests with:
-
-```bash
-python -m pytest tests/test_smoke.py -q
-```
-
-Useful release-validation scripts are:
-
-```bash
-MPLBACKEND=Agg python examples/08_static_power_law_transport.py
-MPLBACKEND=Agg python examples/06_xray.py
-```
-
-These regenerate the static finite power-law CSM transport example and the
-thermal bremsstrahlung X-ray example.
 
 Optional development extras:
 
@@ -375,7 +444,7 @@ lbol_transport = wind_bpl_bolometric(
     eff=0.5,
     mode='transport',
     kappa=0.34,
-    n_rad_zones=120,
+    n_rad_zones=20,
 )
 
 # Multiband (per-band magnitudes)
@@ -414,17 +483,40 @@ lx = wind_bpl_xray(
     e_min_kev=0.3, e_max_kev=10.0,
     output_format='luminosity',
 )
+```
 
-# Get priors for Bayesian fitting
-priors = redback.priors.get_priors('wind_bpl_bolometric')
+## Fitting with redback
 
-# Fit to data using redback
-transient = redback.transient.Supernova.from_open_access_catalogue('SN2010jl')
+After installation, the CSM wrappers are registered with redback's model
+library and their priors are generated automatically from the model signatures.
+For a multiband fit, use the unsuffixed model name and the matching unsuffixed
+prior:
+
+```python
+import redback
+
+transient = redback.transient.Supernova.from_open_access_catalogue("SN2010jl")
+priors = redback.priors.get_priors("wind_bpl")
+
 result = redback.fit_model(
     transient=transient,
     prior=priors,
-    model='wind_bpl',
-    sampler='dynesty',
+    model="wind_bpl",
+    sampler="dynesty",
+    nlive=500,
+)
+```
+
+For bolometric luminosity data, use the bolometric wrapper and matching
+bolometric prior instead:
+
+```python
+priors = redback.priors.get_priors("wind_bpl_bolometric")
+result = redback.fit_model(
+    transient=bolometric_transient,
+    prior=priors,
+    model="wind_bpl_bolometric",
+    sampler="dynesty",
     nlive=500,
 )
 ```

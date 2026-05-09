@@ -50,6 +50,21 @@ def test_prior_provider_nickel():
     assert "kappa" in prior
 
 
+def test_prior_provider_spline_models():
+    from redback_csm.prior_provider import get_prior
+
+    static_prior = get_prior("static_spline_csm_bpl_bolometric")
+    generic_prior = get_prior("generic_spline12_csm_bpl_nickel_bolometric")
+
+    assert static_prior is not None
+    assert "log_r_inner" in static_prior
+    assert "log_rho_7" in static_prior
+    assert generic_prior is not None
+    assert "log_rho_11" in generic_prior
+    assert "interval_sn" in generic_prior
+    assert "f_nickel" in generic_prior
+
+
 def test_prior_provider_unknown():
     from redback_csm.prior_provider import get_prior
 
@@ -163,43 +178,80 @@ def test_csm_nickel_uses_outer_ejecta_for_double_explosion(monkeypatch):
     assert calls["diffusion_mej"] == 6.4
 
 
-def test_all_prior_files_exist():
-    """Check that all 88 expected prior files exist."""
-    from redback_csm.prior_provider import PRIOR_DIR
-    import os
+def test_csm_nickel_bolometric_consistency(monkeypatch):
+    import numpy as np
+    import redback_csm.models as models
 
-    models = [
-        "wind_exponential",
+    time = np.array([10.0, 1.0, 3.0])
+    csm_lbol = np.array([4.0, 2.0, 3.0])
+    engine_lbol = np.array([40.0, 20.0, 30.0])
+    calls = {}
+
+    def fake_csm(input_time, csm_model, **kwargs):
+        return csm_lbol
+
+    def fake_engine(time, f_nickel, mej, **kwargs):
+        return np.ones_like(time, dtype=float) * f_nickel * mej
+
+    class FakeDiffusion:
+        def __init__(self, time, dense_times, luminosity, mej, vej, **kwargs):
+            calls["dense_max"] = dense_times[-1]
+            calls["time"] = np.array(time)
+            calls["mej"] = mej
+            self.new_luminosity = engine_lbol
+
+    monkeypatch.setattr(models, "_csm_bolometric_impl", fake_csm)
+    monkeypatch.setattr(models, "_nickelcobalt_engine", fake_engine)
+
+    zero = models._csm_nickel_bolometric_impl(
+        time,
         "wind_bpl",
-        "exponential_wind",
-        "bpl_wind",
-        "exponential_exponential",
-        "exponential_bpl",
-        "bpl_bpl",
-        "bpl_exponential",
-        "boxwind_exponential",
-        "boxwind_bpl",
-        "gausswind_exponential",
-        "gausswind_bpl",
-        "triple_powerlaw_wind_bpl",
-        "triple_powerlaw_wind_exponential",
-        "exponential_triple_powerlaw_wind",
-        "bpl_triple_powerlaw_wind",
-        "smooth_triple_powerlaw_wind_bpl",
-        "smooth_triple_powerlaw_wind_exponential",
-        "generic_csm_exponential",
-        "generic_csm_bpl",
-        "generic_4shell_csm_bpl",
-        "generic_8shell_csm_bpl",
-    ]
-    suffixes = ["_bolometric", "", "_nickel_bolometric", "_nickel"]
+        mdot=0.1,
+        vwind=100.0,
+        delta=0.5,
+        nn=12.0,
+        mexp=5.0,
+        eexp=1.0,
+        eff=0.5,
+        f_nickel=0.0,
+        interaction_process=None,
+    )
+    assert np.all(zero == csm_lbol)
+
+    combined = models._csm_nickel_bolometric_impl(
+        time,
+        "wind_bpl",
+        mdot=0.1,
+        vwind=100.0,
+        delta=0.5,
+        nn=12.0,
+        mexp=5.0,
+        eexp=1.0,
+        eff=0.5,
+        f_nickel=0.1,
+        kappa=0.34,
+        kappa_gamma=0.027,
+        interaction_process=FakeDiffusion,
+        dense_resolution=16,
+    )
+
+    assert calls["dense_max"] == np.max(time) + 100.0
+    assert np.all(calls["time"] == time)
+    assert np.all(combined == csm_lbol + engine_lbol)
+
+
+def test_generated_priors_cover_exported_models():
+    """Every exported concrete model except the generic csm_xray helper gets a prior."""
+    from redback_csm.prior_provider import get_prior
+    import redback_csm.models as models
+
     missing = []
-    for m in models:
-        for s in suffixes:
-            fname = f"{m}{s}.prior"
-            if not os.path.exists(os.path.join(PRIOR_DIR, fname)):
-                missing.append(fname)
-    assert not missing, f"Missing prior files: {missing}"
+    for name in models.__all__:
+        if name == "csm_xray":
+            continue
+        if get_prior(name) is None:
+            missing.append(name)
+    assert not missing, f"Missing generated priors: {missing}"
 
 
 def test_models_registered_in_redback():
@@ -254,34 +306,32 @@ def test_bolometric_model_callable():
 
 
 def test_prior_latex_labels_render():
-    """All latex_labels in every prior file must render without error in matplotlib."""
+    """All generated latex_labels must render without error in matplotlib."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from redback_csm.prior_provider import PRIOR_DIR
-    import os
-    from bilby.core.prior import PriorDict
-
-    prior_files = sorted(f for f in os.listdir(PRIOR_DIR) if f.endswith(".prior"))
-    assert prior_files, "No prior files found"
+    from redback_csm.prior_provider import get_prior
+    import redback_csm.models as models
 
     fig, ax = plt.subplots()
     failures = []
-    for fname in prior_files:
-        priors = PriorDict()
-        priors.from_file(os.path.join(PRIOR_DIR, fname))
+    for model_name in models.__all__:
+        if model_name == "csm_xray":
+            continue
+        priors = get_prior(model_name)
+        assert priors is not None
         for param, prior in priors.items():
             try:
                 ax.set_xlabel(prior.latex_label)
                 fig.canvas.draw()
             except Exception as e:
-                failures.append(f"{fname}::{param} — {prior.latex_label!r} → {e}")
+                failures.append(f"{model_name}::{param} — {prior.latex_label!r} → {e}")
     plt.close(fig)
     assert not failures, "Latex label rendering failures:\n" + "\n".join(failures)
 
 
 def test_dispatch_registry():
-    """_DISPATCH should contain all 22 expected model keys."""
+    """_DISPATCH should contain all base CSM model keys."""
     from redback_csm.core import _DISPATCH
 
     expected_keys = [
@@ -305,6 +355,13 @@ def test_dispatch_registry():
         "smooth_triple_powerlaw_wind_exponential",
         "generic_csm_exponential",
         "generic_csm_bpl",
+        "static_powerlaw_csm_exponential",
+        "static_powerlaw_csm_bpl",
+        "homologous_powerlaw_csm_exponential",
+        "homologous_powerlaw_csm_bpl",
+        "static_spline_csm_bpl",
+        "generic_spline_csm_bpl",
+        "generic_spline12_csm_bpl",
         "generic_4shell_csm_bpl",
         "generic_8shell_csm_bpl",
     ]

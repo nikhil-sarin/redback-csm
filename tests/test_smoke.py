@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from redback_csm.models import (
-    generic_powerlaw_csm_bpl_bolometric,
+    homologous_powerlaw_csm_bpl_bolometric,
+    static_powerlaw_csm_bpl_bolometric,
     wind_bpl_bolometric,
     wind_bpl_nickel_bolometric,
     wind_bpl_radio,
@@ -45,7 +46,7 @@ def test_wind_bpl_simple_and_legacy_diffusion_smoke():
 
 def test_static_powerlaw_transport_smoke():
     time = np.array([3.0, 10.0, 30.0])
-    lbol = generic_powerlaw_csm_bpl_bolometric(
+    lbol = static_powerlaw_csm_bpl_bolometric(
         time=time,
         eta=-2.0,
         r_inner=500.0 * 6.957e10,
@@ -60,6 +61,25 @@ def test_static_powerlaw_transport_smoke():
         efficiency_mode=1,
         kappa=0.2,
         n_rad_zones=8,
+    )
+    _assert_lightcurve(lbol, time.size)
+
+
+def test_homologous_powerlaw_simple_smoke():
+    time = np.array([3.0, 10.0, 30.0])
+    lbol = homologous_powerlaw_csm_bpl_bolometric(
+        time=time,
+        eta=-2.0,
+        r_inner=500.0 * 6.957e10,
+        r_outer=5000.0 * 6.957e10,
+        interval_sn=100.0,
+        delta_sn=1.0,
+        nn_sn=10.0,
+        mej_sn=5.0,
+        esn=1.0,
+        eff=1.0,
+        m_csm=1.0,
+        mode="simple",
     )
     _assert_lightcurve(lbol, time.size)
 

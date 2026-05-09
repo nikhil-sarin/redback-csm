@@ -14,7 +14,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
-from redback_csm.models import generic_powerlaw_csm_bpl_bolometric
+from redback_csm.models import static_powerlaw_csm_bpl_bolometric
 
 
 R_SUN = 6.957e10
@@ -81,7 +81,7 @@ def main():
 
     for ax, panel in zip(axes, panels):
         for s, color in zip(slopes, colors):
-            lbol = generic_powerlaw_csm_bpl_bolometric(
+            lbol = static_powerlaw_csm_bpl_bolometric(
                 time=time,
                 eta=-s,
                 r_inner=5.0e2 * R_SUN,

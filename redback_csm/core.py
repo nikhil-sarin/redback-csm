@@ -3060,6 +3060,32 @@ def create_static_powerlaw_csm_density(
     return r_grid, rho_grid
 
 
+def create_homologous_powerlaw_csm_density(
+    eta,
+    r_inner,
+    r_outer,
+    m_csm,
+    interval_sn,
+    n_points=200,
+):
+    """
+    Create a finite mass-normalized power-law CSM snapshot with a homologous
+    velocity grid, v = r / interval_sn.
+    """
+    r_grid, rho_grid = create_static_powerlaw_csm_density(
+        eta=eta,
+        r_inner=r_inner,
+        r_outer=r_outer,
+        m_csm=m_csm,
+        n_points=n_points,
+    )
+    interval_sn = float(interval_sn)
+    if interval_sn <= 0.0:
+        raise ValueError("interval_sn must be positive")
+    v_grid = r_grid / (interval_sn * DAY)
+    return r_grid, v_grid.astype(np.float64), rho_grid
+
+
 def create_static_spline_csm_density(
     log_r_inner,
     log_r_outer,
@@ -3100,6 +3126,36 @@ def create_static_spline_csm_density(
     r_grid = 10.0 ** log_r_grid
     rho_grid = 10.0 ** log_rho_grid
     return r_grid.astype(np.float64), np.maximum(rho_grid, 0.0).astype(np.float64)
+
+
+def create_generic_spline_csm_density(
+    log_r_inner,
+    log_r_outer,
+    log_rho_nodes,
+    interval_sn,
+    n_points=256,
+    log_r_nodes=None,
+):
+    """
+    Create a finite homologous CSM snapshot from log-density nodes.
+
+    This is the spline analogue of ``create_generic_csm_density``: the density
+    is sampled as a static profile at explosion time, but the velocity grid is
+    homologous, ``v = r / interval_sn``, so it can be passed through the same
+    Fortran backend as the generic shell CSM models.
+    """
+    r_grid, rho_grid = create_static_spline_csm_density(
+        log_r_inner=log_r_inner,
+        log_r_outer=log_r_outer,
+        log_rho_nodes=log_rho_nodes,
+        n_points=n_points,
+        log_r_nodes=log_r_nodes,
+    )
+    interval_sn = float(interval_sn)
+    if interval_sn <= 0.0:
+        raise ValueError("interval_sn must be positive")
+    v_grid = r_grid / (interval_sn * DAY)
+    return r_grid, v_grid.astype(np.float64), rho_grid
 
 
 def _rho_static_powerlaw_at_r(r_array, **kwargs):
@@ -3687,6 +3743,181 @@ def _call_static_bpl_from_arrays(
     return _freeze_output(outs)
 
 
+def _get_lc_homologous_powerlaw_csm_exponential(
+    eta,
+    r_inner,
+    r_outer,
+    interval_sn,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs,
+):
+    """Homologous finite power-law CSM shell interacting with an exponential SN."""
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
+    n_points = kwargs.get("n_points", 256)
+    r_grid, v_grid, csm_density = create_homologous_powerlaw_csm_density(
+        eta=eta,
+        r_inner=r_inner,
+        r_outer=r_outer,
+        m_csm=m_csm,
+        interval_sn=interval_sn,
+        n_points=n_points,
+    )
+
+    mej_sn_grams = mej_sn * solar_mass
+    esn_ergs = esn * foe
+    interval_sec = interval_sn * DAY
+
+    if kappa is not None:
+        _get_csm().lc_mod.lightcurve_explosion_exponential(
+            csm_density,
+            v_grid,
+            interval_sec,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+            kappa,
+        )
+    else:
+        _get_csm().lc_mod.lightcurve_explosion_exponential(
+            csm_density, v_grid, interval_sec, mej_sn_grams, esn_ergs, interval_sec, eff
+        )
+
+    time_array = _get_csm().lc_mod.tarray.copy()
+    lbol_shock = _get_csm().lc_mod.larray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
+    vshell = _get_csm().lc_mod.varray.copy()
+    shell_mass = _get_csm().lc_mod.marray.copy()
+    temperature = _get_csm().lc_mod.temparray.copy()
+
+    if kappa is not None:
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+    else:
+        lbol_diffuse = None
+        lbol = lbol_shock
+
+    outs = _output_builder(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
+    outs.time = time_array
+    outs.lbol = lbol
+    outs.lbol_shock = lbol_shock
+    outs.lbol_diffuse = lbol_diffuse
+    outs.rph = rph
+    outs.temperature = temperature
+    outs.vshell = vshell
+    outs.shell_mass = shell_mass
+    return _freeze_output(outs)
+
+
+def _get_lc_homologous_powerlaw_csm_bpl(
+    eta,
+    r_inner,
+    r_outer,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    m_csm,
+    **kwargs,
+):
+    """Homologous finite power-law CSM shell interacting with a BPL SN."""
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej_sn, esn)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
+    n_points = kwargs.get("n_points", 256)
+    r_grid, v_grid, csm_density = create_homologous_powerlaw_csm_density(
+        eta=eta,
+        r_inner=r_inner,
+        r_outer=r_outer,
+        m_csm=m_csm,
+        interval_sn=interval_sn,
+        n_points=n_points,
+    )
+
+    mej_sn_grams = mej_sn * solar_mass
+    esn_ergs = esn * foe
+    interval_sec = interval_sn * DAY
+
+    if kappa is not None:
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+            kappa,
+        )
+    else:
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+        )
+
+    time_array = _get_csm().lc_mod.tarray.copy()
+    lbol_shock = _get_csm().lc_mod.larray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
+    vshell = _get_csm().lc_mod.varray.copy()
+    shell_mass = _get_csm().lc_mod.marray.copy()
+    temperature = _get_csm().lc_mod.temparray.copy()
+
+    if kappa is not None:
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+    else:
+        lbol_diffuse = None
+        lbol = lbol_shock
+
+    outs = _output_builder(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
+    outs.time = time_array
+    outs.lbol = lbol
+    outs.lbol_shock = lbol_shock
+    outs.lbol_diffuse = lbol_diffuse
+    outs.rph = rph
+    outs.temperature = temperature
+    outs.vshell = vshell
+    outs.shell_mass = shell_mass
+    return _freeze_output(outs)
+
+
 def _get_lc_static_arbitrary_csm_bpl(
     r_grid,
     csm_density,
@@ -3745,6 +3976,200 @@ def _get_lc_static_spline_csm_bpl(
     return _call_static_bpl_from_arrays(
         r_grid, csm_density, delta_sn, nn_sn, mej_sn, esn, eff, **kwargs
     )
+
+
+def _get_lc_generic_spline_csm_bpl(
+    log_r_inner,
+    log_r_outer,
+    log_rho_0,
+    log_rho_1,
+    log_rho_2,
+    log_rho_3,
+    log_rho_4,
+    log_rho_5,
+    log_rho_6,
+    log_rho_7,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
+    """Homologous finite CSM snapshot from eight log-density nodes."""
+    log_rho_nodes = np.array(
+        [
+            log_rho_0,
+            log_rho_1,
+            log_rho_2,
+            log_rho_3,
+            log_rho_4,
+            log_rho_5,
+            log_rho_6,
+            log_rho_7,
+        ],
+        dtype=np.float64,
+    )
+    return _run_generic_spline_csm_bpl(
+        log_r_inner,
+        log_r_outer,
+        log_rho_nodes,
+        interval_sn,
+        delta_sn,
+        nn_sn,
+        mej_sn,
+        esn,
+        eff,
+        **kwargs,
+    )
+
+
+def _get_lc_generic_spline12_csm_bpl(
+    log_r_inner,
+    log_r_outer,
+    log_rho_0,
+    log_rho_1,
+    log_rho_2,
+    log_rho_3,
+    log_rho_4,
+    log_rho_5,
+    log_rho_6,
+    log_rho_7,
+    log_rho_8,
+    log_rho_9,
+    log_rho_10,
+    log_rho_11,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
+    """Homologous finite CSM snapshot from twelve log-density nodes."""
+    log_rho_nodes = np.array(
+        [
+            log_rho_0,
+            log_rho_1,
+            log_rho_2,
+            log_rho_3,
+            log_rho_4,
+            log_rho_5,
+            log_rho_6,
+            log_rho_7,
+            log_rho_8,
+            log_rho_9,
+            log_rho_10,
+            log_rho_11,
+        ],
+        dtype=np.float64,
+    )
+    return _run_generic_spline_csm_bpl(
+        log_r_inner,
+        log_r_outer,
+        log_rho_nodes,
+        interval_sn,
+        delta_sn,
+        nn_sn,
+        mej_sn,
+        esn,
+        eff,
+        **kwargs,
+    )
+
+
+def _run_generic_spline_csm_bpl(
+    log_r_inner,
+    log_r_outer,
+    log_rho_nodes,
+    interval_sn,
+    delta_sn,
+    nn_sn,
+    mej_sn,
+    esn,
+    eff,
+    **kwargs,
+):
+    """Run the homologous spline CSM backend for an arbitrary number of nodes."""
+    kwargs = _with_bpl_runtime_kwargs(kwargs, delta_sn, nn_sn, mej_sn, esn)
+    mode, kappa = _configure_runtime_from_kwargs(kwargs)
+    n_points = kwargs.get("n_points", 256)
+    r_grid, v_grid, csm_density = create_generic_spline_csm_density(
+        log_r_inner=log_r_inner,
+        log_r_outer=log_r_outer,
+        log_rho_nodes=log_rho_nodes,
+        interval_sn=interval_sn,
+        n_points=n_points,
+    )
+
+    mej_sn_grams = mej_sn * solar_mass
+    esn_ergs = esn * foe
+    interval_sec = interval_sn * DAY
+
+    if kappa is not None:
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+            kappa,
+        )
+    else:
+        _get_csm().lc_mod.lightcurve_explosion_bpl(
+            csm_density,
+            v_grid,
+            interval_sec,
+            delta_sn,
+            nn_sn,
+            mej_sn_grams,
+            esn_ergs,
+            interval_sec,
+            eff,
+        )
+
+    time_array = _get_csm().lc_mod.tarray.copy()
+    lbol_shock = _get_csm().lc_mod.larray.copy()
+    rph = _get_csm().lc_mod.rpharray.copy()
+    vshell = _get_csm().lc_mod.varray.copy()
+    shell_mass = _get_csm().lc_mod.marray.copy()
+    temperature = _get_csm().lc_mod.temparray.copy()
+
+    if kappa is not None:
+        lbol_diffuse = _get_csm().lc_mod.ldiff.copy()
+        lbol = lbol_diffuse
+    else:
+        lbol_diffuse = None
+        lbol = lbol_shock
+
+    outs = _output_builder(
+        "output",
+        [
+            "time",
+            "lbol",
+            "lbol_shock",
+            "lbol_diffuse",
+            "rph",
+            "temperature",
+            "vshell",
+            "shell_mass",
+        ],
+    )
+    outs.time = time_array
+    outs.lbol = lbol
+    outs.lbol_shock = lbol_shock
+    outs.lbol_diffuse = lbol_diffuse
+    outs.rph = rph
+    outs.temperature = temperature
+    outs.vshell = vshell
+    outs.shell_mass = shell_mass
+    return _freeze_output(outs)
 
 
 def _get_lc_generic_4shell_csm_bpl(
@@ -5424,6 +5849,34 @@ _DISPATCH = {
             "m_csm",
         ],
     ),
+    "homologous_powerlaw_csm_exponential": (
+        _get_lc_homologous_powerlaw_csm_exponential,
+        [
+            "eta",
+            "r_inner",
+            "r_outer",
+            "interval_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+            "m_csm",
+        ],
+    ),
+    "homologous_powerlaw_csm_bpl": (
+        _get_lc_homologous_powerlaw_csm_bpl,
+        [
+            "eta",
+            "r_inner",
+            "r_outer",
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+            "m_csm",
+        ],
+    ),
     "static_arbitrary_csm_bpl": (
         _get_lc_static_arbitrary_csm_bpl,
         [
@@ -5449,6 +5902,52 @@ _DISPATCH = {
             "log_rho_5",
             "log_rho_6",
             "log_rho_7",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_spline_csm_bpl": (
+        _get_lc_generic_spline_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "log_rho_1",
+            "log_rho_2",
+            "log_rho_3",
+            "log_rho_4",
+            "log_rho_5",
+            "log_rho_6",
+            "log_rho_7",
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_spline12_csm_bpl": (
+        _get_lc_generic_spline12_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "log_rho_1",
+            "log_rho_2",
+            "log_rho_3",
+            "log_rho_4",
+            "log_rho_5",
+            "log_rho_6",
+            "log_rho_7",
+            "log_rho_8",
+            "log_rho_9",
+            "log_rho_10",
+            "log_rho_11",
+            "interval_sn",
             "delta_sn",
             "nn_sn",
             "mej_sn",
@@ -5743,6 +6242,63 @@ def _rho_generic_at_r(r_array, **kwargs):
     return rho_interp(r_array)
 
 
+def _rho_generic_spline_at_r(r_array, **kwargs):
+    """CSM density for homologous spline models, reconstructed on the original radius grid."""
+    node_indices = sorted(
+        int(key.rsplit("_", 1)[1])
+        for key in kwargs
+        if key.startswith("log_rho_") and key.rsplit("_", 1)[1].isdigit()
+    )
+    if not node_indices:
+        raise ValueError("generic spline density requires log_rho_* nodes")
+    log_rho_nodes = np.array([kwargs[f"log_rho_{i}"] for i in node_indices], dtype=np.float64)
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
+    r_grid, _, csm_density = create_generic_spline_csm_density(
+        log_r_inner=kwargs["log_r_inner"],
+        log_r_outer=kwargs["log_r_outer"],
+        log_rho_nodes=log_rho_nodes,
+        interval_sn=kwargs.get("interval_sn", 10 * YEAR_DAYS),
+        n_points=n_points,
+    )
+
+    from scipy.interpolate import interp1d as _interp1d_loc
+    rho_interp = _interp1d_loc(
+        r_grid,
+        csm_density,
+        bounds_error=False,
+        fill_value=(0.0, 0.0),
+    )
+    return rho_interp(r_array)
+
+
+def _rho_static_spline_at_r(r_array, **kwargs):
+    """CSM density for static spline models, reconstructed on the original radius grid."""
+    node_indices = sorted(
+        int(key.rsplit("_", 1)[1])
+        for key in kwargs
+        if key.startswith("log_rho_") and key.rsplit("_", 1)[1].isdigit()
+    )
+    if not node_indices:
+        raise ValueError("static spline density requires log_rho_* nodes")
+    log_rho_nodes = np.array([kwargs[f"log_rho_{i}"] for i in node_indices], dtype=np.float64)
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
+    r_grid, csm_density = create_static_spline_csm_density(
+        log_r_inner=kwargs["log_r_inner"],
+        log_r_outer=kwargs["log_r_outer"],
+        log_rho_nodes=log_rho_nodes,
+        n_points=n_points,
+    )
+
+    from scipy.interpolate import interp1d as _interp1d_loc
+    rho_interp = _interp1d_loc(
+        r_grid,
+        csm_density,
+        bounds_error=False,
+        fill_value=(0.0, 0.0),
+    )
+    return rho_interp(r_array)
+
+
 # Maps each model name to the type of upstream density estimator it needs.
 # 'wind'            — simple steady wind: rho = mdot/(4 pi r^2 vwind)
 # 'exponential'     — exponential ejecta outer CSM
@@ -5772,8 +6328,13 @@ _CSM_DENSITY_TYPE = {
     'generic_csm_bpl':                     'generic',
     'generic_4shell_csm_bpl':              'generic',
     'generic_8shell_csm_bpl':              'generic',
+    'generic_spline_csm_bpl':              'generic_spline',
+    'generic_spline12_csm_bpl':            'generic_spline',
     'static_powerlaw_csm_exponential':     'static_powerlaw',
     'static_powerlaw_csm_bpl':             'static_powerlaw',
+    'homologous_powerlaw_csm_exponential': 'static_powerlaw',
+    'homologous_powerlaw_csm_bpl':         'static_powerlaw',
+    'static_spline_csm_bpl':               'static_spline',
 }
 
 
@@ -5821,8 +6382,14 @@ def _get_rho_csm_at_shock(csm_model, lc, **kwargs):
     elif density_type == 'generic':
         return _rho_generic_at_r(r_sh, **kwargs)
 
+    elif density_type == 'generic_spline':
+        return _rho_generic_spline_at_r(r_sh, **kwargs)
+
     elif density_type == 'static_powerlaw':
         return _rho_static_powerlaw_at_r(r_sh, **kwargs)
+
+    elif density_type == 'static_spline':
+        return _rho_static_spline_at_r(r_sh, **kwargs)
 
     else:
         raise ValueError(f"Unhandled density type '{density_type}'")
