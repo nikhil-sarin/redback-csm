@@ -55,6 +55,8 @@ def test_prior_provider_spline_models():
 
     static_prior = get_prior("static_spline_csm_bpl_bolometric")
     generic_prior = get_prior("generic_spline12_csm_bpl_nickel_bolometric")
+    pspline_prior = get_prior("generic_pspline24_csm_bpl_bolometric")
+    pspline96_prior = get_prior("generic_pspline96_csm_bpl_bolometric")
 
     assert static_prior is not None
     assert "log_r_inner" in static_prior
@@ -63,6 +65,13 @@ def test_prior_provider_spline_models():
     assert "log_rho_11" in generic_prior
     assert "interval_sn" in generic_prior
     assert "f_nickel" in generic_prior
+    assert pspline_prior is not None
+    assert "dlog_rho_0" in pspline_prior
+    assert "d2_log_rho_21" in pspline_prior
+    assert "log_rho_23" not in pspline_prior
+    assert pspline96_prior is not None
+    assert "d2_log_rho_93" in pspline96_prior
+    assert "d2_log_rho_94" not in pspline96_prior
 
 
 def test_prior_provider_unknown():
@@ -362,6 +371,12 @@ def test_dispatch_registry():
         "static_spline_csm_bpl",
         "generic_spline_csm_bpl",
         "generic_spline12_csm_bpl",
+        "static_pspline24_csm_bpl",
+        "generic_pspline24_csm_bpl",
+        "static_pspline48_csm_bpl",
+        "generic_pspline48_csm_bpl",
+        "static_pspline96_csm_bpl",
+        "generic_pspline96_csm_bpl",
         "generic_4shell_csm_bpl",
         "generic_8shell_csm_bpl",
     ]

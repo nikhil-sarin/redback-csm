@@ -3128,6 +3128,32 @@ def create_static_spline_csm_density(
     return r_grid.astype(np.float64), np.maximum(rho_grid, 0.0).astype(np.float64)
 
 
+def pspline_log_rho_nodes(
+    log_rho_0,
+    dlog_rho_0,
+    d2_log_rho_nodes,
+    log_rho_min=-30.0,
+    log_rho_max=-5.0,
+):
+    """
+    Reconstruct log-density nodes from a p-spline parameterisation.
+
+    The sampled parameters are the first node, the first node-to-node slope,
+    and the discrete second differences. Smoothness is encoded by placing
+    narrow priors on the second-difference parameters. The reconstructed
+    density nodes are clipped to a broad physical support in cgs units to avoid
+    spending prior volume on impossible CSM densities.
+    """
+    d2_log_rho_nodes = np.asarray(d2_log_rho_nodes, dtype=np.float64)
+    n_nodes = d2_log_rho_nodes.size + 2
+    nodes = np.empty(n_nodes, dtype=np.float64)
+    nodes[0] = float(log_rho_0)
+    nodes[1] = nodes[0] + float(dlog_rho_0)
+    for idx, curvature in enumerate(d2_log_rho_nodes):
+        nodes[idx + 2] = 2.0 * nodes[idx + 1] - nodes[idx] + curvature
+    return np.clip(nodes, float(log_rho_min), float(log_rho_max))
+
+
 def create_generic_spline_csm_density(
     log_r_inner,
     log_r_outer,
@@ -4078,6 +4104,99 @@ def _get_lc_generic_spline12_csm_bpl(
         eff,
         **kwargs,
     )
+
+
+def _pspline_curvature_from_args(args, n_nodes=24):
+    n_curvature = int(n_nodes) - 2
+    if len(args) < n_curvature:
+        raise ValueError(f"Expected {n_curvature} p-spline curvature parameters")
+    return np.asarray(args[:n_curvature], dtype=np.float64), args[n_curvature:]
+
+
+def _run_static_pspline_csm_bpl(
+    n_nodes,
+    log_r_inner,
+    log_r_outer,
+    log_rho_0,
+    dlog_rho_0,
+    *args,
+    **kwargs,
+):
+    """Static finite CSM snapshot from an n-node p-spline density profile."""
+    d2_nodes, rest = _pspline_curvature_from_args(args, n_nodes=n_nodes)
+    if len(rest) != 5:
+        raise ValueError("static p-spline CSM requires delta_sn, nn_sn, mej_sn, esn, eff")
+    delta_sn, nn_sn, mej_sn, esn, eff = rest
+    log_rho_nodes = pspline_log_rho_nodes(log_rho_0, dlog_rho_0, d2_nodes)
+    n_points = kwargs.get("n_points", 256)
+    r_grid, csm_density = create_static_spline_csm_density(
+        log_r_inner=log_r_inner,
+        log_r_outer=log_r_outer,
+        log_rho_nodes=log_rho_nodes,
+        n_points=n_points,
+    )
+    return _call_static_bpl_from_arrays(
+        r_grid, csm_density, delta_sn, nn_sn, mej_sn, esn, eff, **kwargs
+    )
+
+
+def _run_generic_pspline_csm_bpl(
+    n_nodes,
+    log_r_inner,
+    log_r_outer,
+    log_rho_0,
+    dlog_rho_0,
+    *args,
+    **kwargs,
+):
+    """Homologous finite CSM snapshot from an n-node p-spline density profile."""
+    d2_nodes, rest = _pspline_curvature_from_args(args, n_nodes=n_nodes)
+    if len(rest) != 6:
+        raise ValueError("generic p-spline CSM requires interval_sn, delta_sn, nn_sn, mej_sn, esn, eff")
+    interval_sn, delta_sn, nn_sn, mej_sn, esn, eff = rest
+    log_rho_nodes = pspline_log_rho_nodes(log_rho_0, dlog_rho_0, d2_nodes)
+    return _run_generic_spline_csm_bpl(
+        log_r_inner,
+        log_r_outer,
+        log_rho_nodes,
+        interval_sn,
+        delta_sn,
+        nn_sn,
+        mej_sn,
+        esn,
+        eff,
+        **kwargs,
+    )
+
+
+def _make_static_pspline_runner(n_nodes):
+    def runner(log_r_inner, log_r_outer, log_rho_0, dlog_rho_0, *args, **kwargs):
+        return _run_static_pspline_csm_bpl(
+            n_nodes, log_r_inner, log_r_outer, log_rho_0, dlog_rho_0, *args, **kwargs
+        )
+
+    runner.__name__ = f"_get_lc_static_pspline{n_nodes}_csm_bpl"
+    runner.__doc__ = f"Static finite CSM snapshot from a {n_nodes}-node p-spline density profile."
+    return runner
+
+
+def _make_generic_pspline_runner(n_nodes):
+    def runner(log_r_inner, log_r_outer, log_rho_0, dlog_rho_0, *args, **kwargs):
+        return _run_generic_pspline_csm_bpl(
+            n_nodes, log_r_inner, log_r_outer, log_rho_0, dlog_rho_0, *args, **kwargs
+        )
+
+    runner.__name__ = f"_get_lc_generic_pspline{n_nodes}_csm_bpl"
+    runner.__doc__ = f"Homologous finite CSM snapshot from a {n_nodes}-node p-spline density profile."
+    return runner
+
+
+_get_lc_static_pspline24_csm_bpl = _make_static_pspline_runner(24)
+_get_lc_static_pspline48_csm_bpl = _make_static_pspline_runner(48)
+_get_lc_static_pspline96_csm_bpl = _make_static_pspline_runner(96)
+_get_lc_generic_pspline24_csm_bpl = _make_generic_pspline_runner(24)
+_get_lc_generic_pspline48_csm_bpl = _make_generic_pspline_runner(48)
+_get_lc_generic_pspline96_csm_bpl = _make_generic_pspline_runner(96)
 
 
 def _run_generic_spline_csm_bpl(
@@ -5955,6 +6074,99 @@ _DISPATCH = {
             "eff",
         ],
     ),
+    "static_pspline24_csm_bpl": (
+        _get_lc_static_pspline24_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "dlog_rho_0",
+            *[f"d2_log_rho_{idx}" for idx in range(22)],
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_pspline24_csm_bpl": (
+        _get_lc_generic_pspline24_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "dlog_rho_0",
+            *[f"d2_log_rho_{idx}" for idx in range(22)],
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "static_pspline48_csm_bpl": (
+        _get_lc_static_pspline48_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "dlog_rho_0",
+            *[f"d2_log_rho_{idx}" for idx in range(46)],
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_pspline48_csm_bpl": (
+        _get_lc_generic_pspline48_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "dlog_rho_0",
+            *[f"d2_log_rho_{idx}" for idx in range(46)],
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "static_pspline96_csm_bpl": (
+        _get_lc_static_pspline96_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "dlog_rho_0",
+            *[f"d2_log_rho_{idx}" for idx in range(94)],
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
+    "generic_pspline96_csm_bpl": (
+        _get_lc_generic_pspline96_csm_bpl,
+        [
+            "log_r_inner",
+            "log_r_outer",
+            "log_rho_0",
+            "dlog_rho_0",
+            *[f"d2_log_rho_{idx}" for idx in range(94)],
+            "interval_sn",
+            "delta_sn",
+            "nn_sn",
+            "mej_sn",
+            "esn",
+            "eff",
+        ],
+    ),
     "generic_4shell_csm_bpl": (
         _get_lc_generic_4shell_csm_bpl,
         [
@@ -6271,6 +6483,40 @@ def _rho_generic_spline_at_r(r_array, **kwargs):
     return rho_interp(r_array)
 
 
+def _pspline_nodes_from_kwargs(kwargs):
+    indices = sorted(
+        int(key.rsplit("_", 1)[1])
+        for key in kwargs
+        if key.startswith("d2_log_rho_") and key.rsplit("_", 1)[1].isdigit()
+    )
+    if not indices:
+        raise ValueError("p-spline density requires d2_log_rho_* parameters")
+    d2_nodes = np.asarray([kwargs[f"d2_log_rho_{idx}"] for idx in indices], dtype=np.float64)
+    return pspline_log_rho_nodes(kwargs["log_rho_0"], kwargs["dlog_rho_0"], d2_nodes)
+
+
+def _rho_generic_pspline_at_r(r_array, **kwargs):
+    """CSM density for homologous p-spline models."""
+    log_rho_nodes = _pspline_nodes_from_kwargs(kwargs)
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
+    r_grid, _, csm_density = create_generic_spline_csm_density(
+        log_r_inner=kwargs["log_r_inner"],
+        log_r_outer=kwargs["log_r_outer"],
+        log_rho_nodes=log_rho_nodes,
+        interval_sn=kwargs.get("interval_sn", 10 * YEAR_DAYS),
+        n_points=n_points,
+    )
+
+    from scipy.interpolate import interp1d as _interp1d_loc
+    rho_interp = _interp1d_loc(
+        r_grid,
+        csm_density,
+        bounds_error=False,
+        fill_value=(0.0, 0.0),
+    )
+    return rho_interp(r_array)
+
+
 def _rho_static_spline_at_r(r_array, **kwargs):
     """CSM density for static spline models, reconstructed on the original radius grid."""
     node_indices = sorted(
@@ -6281,6 +6527,27 @@ def _rho_static_spline_at_r(r_array, **kwargs):
     if not node_indices:
         raise ValueError("static spline density requires log_rho_* nodes")
     log_rho_nodes = np.array([kwargs[f"log_rho_{i}"] for i in node_indices], dtype=np.float64)
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
+    r_grid, csm_density = create_static_spline_csm_density(
+        log_r_inner=kwargs["log_r_inner"],
+        log_r_outer=kwargs["log_r_outer"],
+        log_rho_nodes=log_rho_nodes,
+        n_points=n_points,
+    )
+
+    from scipy.interpolate import interp1d as _interp1d_loc
+    rho_interp = _interp1d_loc(
+        r_grid,
+        csm_density,
+        bounds_error=False,
+        fill_value=(0.0, 0.0),
+    )
+    return rho_interp(r_array)
+
+
+def _rho_static_pspline_at_r(r_array, **kwargs):
+    """CSM density for static p-spline models."""
+    log_rho_nodes = _pspline_nodes_from_kwargs(kwargs)
     n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
     r_grid, csm_density = create_static_spline_csm_density(
         log_r_inner=kwargs["log_r_inner"],
@@ -6330,11 +6597,17 @@ _CSM_DENSITY_TYPE = {
     'generic_8shell_csm_bpl':              'generic',
     'generic_spline_csm_bpl':              'generic_spline',
     'generic_spline12_csm_bpl':            'generic_spline',
+    'generic_pspline24_csm_bpl':           'generic_pspline',
+    'generic_pspline48_csm_bpl':           'generic_pspline',
+    'generic_pspline96_csm_bpl':           'generic_pspline',
     'static_powerlaw_csm_exponential':     'static_powerlaw',
     'static_powerlaw_csm_bpl':             'static_powerlaw',
     'homologous_powerlaw_csm_exponential': 'static_powerlaw',
     'homologous_powerlaw_csm_bpl':         'static_powerlaw',
     'static_spline_csm_bpl':               'static_spline',
+    'static_pspline24_csm_bpl':            'static_pspline',
+    'static_pspline48_csm_bpl':            'static_pspline',
+    'static_pspline96_csm_bpl':            'static_pspline',
 }
 
 
@@ -6385,11 +6658,17 @@ def _get_rho_csm_at_shock(csm_model, lc, **kwargs):
     elif density_type == 'generic_spline':
         return _rho_generic_spline_at_r(r_sh, **kwargs)
 
+    elif density_type == 'generic_pspline':
+        return _rho_generic_pspline_at_r(r_sh, **kwargs)
+
     elif density_type == 'static_powerlaw':
         return _rho_static_powerlaw_at_r(r_sh, **kwargs)
 
     elif density_type == 'static_spline':
         return _rho_static_spline_at_r(r_sh, **kwargs)
+
+    elif density_type == 'static_pspline':
+        return _rho_static_pspline_at_r(r_sh, **kwargs)
 
     else:
         raise ValueError(f"Unhandled density type '{density_type}'")

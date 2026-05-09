@@ -9,7 +9,7 @@ import inspect
 import os
 import re
 
-from bilby.core.prior import LogUniform, PriorDict, Uniform
+from bilby.core.prior import LogUniform, PriorDict, TruncatedGaussian, Uniform
 
 PRIOR_DIR = os.path.join(os.path.dirname(__file__), "priors")
 
@@ -20,6 +20,17 @@ def _uniform(name, minimum, maximum, label):
 
 def _loguniform(name, minimum, maximum, label):
     return LogUniform(minimum=minimum, maximum=maximum, name=name, latex_label=label)
+
+
+def _truncated_gaussian(name, mu, sigma, minimum, maximum, label):
+    return TruncatedGaussian(
+        mu=mu,
+        sigma=sigma,
+        minimum=minimum,
+        maximum=maximum,
+        name=name,
+        latex_label=label,
+    )
 
 
 def _latex_label(name):
@@ -80,6 +91,12 @@ def _latex_label(name):
     if match:
         idx = match.group(1)
         return f"$\\log_{{10}}\\rho_{{{idx}}}$"
+    if name == "dlog_rho_0":
+        return "$\\Delta\\log_{10}\\rho_0$"
+    match = re.match(r"d2_log_rho_(\d+)$", name)
+    if match:
+        idx = match.group(1)
+        return f"$\\Delta^2\\log_{{10}}\\rho_{{{idx}}}$"
     match = re.match(r"shell(\d+)_(radius|width|density)$", name)
     if match:
         idx, quantity = match.groups()
@@ -135,6 +152,10 @@ def _prior_for_parameter(name):
         return _uniform(name, 14.5, 18.0, label)
     if re.match(r"log_rho_\d+$", name):
         return _uniform(name, -22.0, -10.0, label)
+    if name == "dlog_rho_0":
+        return _uniform(name, -1.0, 1.0, label)
+    if re.match(r"d2_log_rho_\d+$", name):
+        return _truncated_gaussian(name, 0.0, 0.1, -0.4, 0.4, label)
     if name in {"interval", "interval_sn"}:
         return _loguniform(name, 1.0, 10000.0, label)
     if name in {"t1", "t2", "t_peak", "t_width", "t_break1", "t_break2"}:

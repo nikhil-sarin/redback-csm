@@ -44,8 +44,10 @@ from redback_csm.core import (
     _call_csm_radio,
     _call_csm_xray,
     GENERIC_CSM_DEFAULT_N_POINTS,
+    create_static_spline_csm_density as _create_static_spline_csm_density,
     create_generic_csm_density as _create_generic_csm_density,
     create_generic_spline_csm_density as _create_generic_spline_csm_density,
+    pspline_log_rho_nodes as _pspline_log_rho_nodes,
 )
 
 DAY = 86400.0    # seconds per day
@@ -83,6 +85,12 @@ BASE_MODEL_NAMES = (
     "static_spline_csm_bpl",
     "generic_spline_csm_bpl",
     "generic_spline12_csm_bpl",
+    "static_pspline24_csm_bpl",
+    "generic_pspline24_csm_bpl",
+    "static_pspline48_csm_bpl",
+    "generic_pspline48_csm_bpl",
+    "static_pspline96_csm_bpl",
+    "generic_pspline96_csm_bpl",
 )
 
 __all__ = []
@@ -193,6 +201,44 @@ def _generic_spline_csm_mass(kwargs):
     return max(float(mass_cgs / _SOLAR_MASS), 0.0)
 
 
+def _pspline_node_values(kwargs):
+    """Return reconstructed log-density nodes for p-spline constructors."""
+    indices = sorted(
+        int(key.rsplit("_", 1)[1])
+        for key in kwargs
+        if key.startswith("d2_log_rho_") and key.rsplit("_", 1)[1].isdigit()
+    )
+    if not indices:
+        raise ValueError("p-spline CSM models require d2_log_rho_* parameters")
+    d2_nodes = _np.array([kwargs[f"d2_log_rho_{idx}"] for idx in indices], dtype=float)
+    return _pspline_log_rho_nodes(kwargs["log_rho_0"], kwargs["dlog_rho_0"], d2_nodes)
+
+
+def _pspline_csm_mass(kwargs, profile):
+    """Estimate CSM mass for static or homologous p-spline constructors."""
+    log_rho_nodes = _pspline_node_values(kwargs)
+    n_points = int(kwargs.get("n_points", GENERIC_CSM_DEFAULT_N_POINTS))
+    if profile == "generic":
+        r_grid, _, rho = _create_generic_spline_csm_density(
+            log_r_inner=float(kwargs["log_r_inner"]),
+            log_r_outer=float(kwargs["log_r_outer"]),
+            log_rho_nodes=log_rho_nodes,
+            interval_sn=float(kwargs.get("interval_sn", 10.0 * 365.25)),
+            n_points=n_points,
+        )
+    elif profile == "static":
+        r_grid, rho = _create_static_spline_csm_density(
+            log_r_inner=float(kwargs["log_r_inner"]),
+            log_r_outer=float(kwargs["log_r_outer"]),
+            log_rho_nodes=log_rho_nodes,
+            n_points=n_points,
+        )
+    else:
+        raise ValueError("profile must be 'generic' or 'static'")
+    mass_cgs = _TRAPEZOID(4.0 * _np.pi * r_grid**2 * _np.maximum(rho, 0.0), r_grid)
+    return max(float(mass_cgs / _SOLAR_MASS), 0.0)
+
+
 def _csm_mass_for_nickel_diffusion(csm_model, kwargs):
     """Return CSM mass to add to the nickel diffusion mass, in Msun."""
     if "mej_arnett" in kwargs:
@@ -264,6 +310,10 @@ def _csm_mass_for_nickel_diffusion(csm_model, kwargs):
         return _generic_density_csm_mass(kwargs, 4)
     if csm_model.startswith("generic_spline_csm_") or csm_model.startswith("generic_spline12_csm_"):
         return _generic_spline_csm_mass(kwargs)
+    if csm_model.startswith("generic_pspline"):
+        return _pspline_csm_mass(kwargs, profile="generic")
+    if csm_model.startswith("static_pspline"):
+        return _pspline_csm_mass(kwargs, profile="static")
     if csm_model.startswith("generic_csm_"):
         return _generic_density_csm_mass(kwargs, 3)
 
@@ -1920,6 +1970,74 @@ def csm_xray(time, redshift, csm_model, logepsx, **kwargs):
 
 def _core_model_name(base_name):
     return base_name
+
+
+def _pspline_parameter_names(n_nodes=24, homologous=False):
+    names = ["log_r_inner", "log_r_outer", "log_rho_0", "dlog_rho_0"]
+    names.extend(f"d2_log_rho_{idx}" for idx in range(int(n_nodes) - 2))
+    if homologous:
+        names.append("interval_sn")
+    names.extend(["delta_sn", "nn_sn", "mej_sn", "esn", "eff"])
+    return tuple(names)
+
+
+def _make_pspline_bolometric_wrapper(base_name, n_nodes=24, homologous=False):
+    parameters = [
+        _inspect.Parameter(
+            "time",
+            kind=_inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=_inspect.Parameter.empty,
+        )
+    ]
+    parameters.extend(
+        _inspect.Parameter(
+            name,
+            kind=_inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=_inspect.Parameter.empty,
+        )
+        for name in _pspline_parameter_names(n_nodes=n_nodes, homologous=homologous)
+    )
+    parameters.append(
+        _inspect.Parameter(
+            "kwargs",
+            kind=_inspect.Parameter.VAR_KEYWORD,
+            default=_inspect.Parameter.empty,
+        )
+    )
+    sig = _inspect.Signature(parameters)
+
+    def wrapper(*args, **kwargs):
+        values = _bound_public_values(sig, args, kwargs)
+        time = values.pop("time")
+        return _csm_bolometric_impl(time, base_name, **values)
+
+    wrapper.__name__ = f"{base_name}_bolometric"
+    wrapper.__qualname__ = wrapper.__name__
+    wrapper.__signature__ = sig
+    wrapper.__doc__ = (
+        f"Bolometric light curve for ``{base_name}``, using a {n_nodes}-node "
+        "p-spline density parameterisation."
+    )
+    wrapper = _citation_wrapper(CITATION)(wrapper)
+    wrapper.__signature__ = sig
+    return wrapper
+
+
+for _pspline_n_nodes in (24, 48, 96):
+    globals()[f"static_pspline{_pspline_n_nodes}_csm_bpl_bolometric"] = (
+        _make_pspline_bolometric_wrapper(
+            f"static_pspline{_pspline_n_nodes}_csm_bpl",
+            n_nodes=_pspline_n_nodes,
+            homologous=False,
+        )
+    )
+    globals()[f"generic_pspline{_pspline_n_nodes}_csm_bpl_bolometric"] = (
+        _make_pspline_bolometric_wrapper(
+            f"generic_pspline{_pspline_n_nodes}_csm_bpl",
+            n_nodes=_pspline_n_nodes,
+            homologous=True,
+        )
+    )
 
 
 def _insert_signature_parameters(sig, parameters):

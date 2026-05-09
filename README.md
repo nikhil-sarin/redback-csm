@@ -37,7 +37,7 @@ The naming convention is purely descriptive of the density profiles and does not
 
 ### Optical / bolometric model variants
 
-The package currently exposes 29 base CSM-density/ejecta scenarios. These are
+The package currently exposes 35 base CSM-density/ejecta scenarios. These are
 the physical configurations listed below, before adding output-specific wrapper
 suffixes. Each base scenario has the same optical wrapper family:
 
@@ -204,14 +204,14 @@ References for the underlying physics include Rybicki & Lightman (1979),
 Chevalier & Fransson (1994, ApJ, 420, 268), and Margalit, Quataert & Ho
 (2022, ApJ, 928, 122).
 
-### Available base CSM-density/ejecta scenarios (29 total)
+### Available base CSM-density/ejecta scenarios (35 total)
 
 These are the unsuffixed physical configurations. Each base scenario has
 generated optical, nickel, radio, and X-ray wrapper variants, so the public
-model function count is larger than 29: 29 base scenarios times six wrapper
+model function count is larger than 35: 35 base scenarios times six wrapper
 forms (`{name}`, `{name}_bolometric`, `{name}_nickel`,
 `{name}_nickel_bolometric`, `{name}_radio`, `{name}_xray`), plus the generic
-`csm_xray` helper, for 175 public callables.
+`csm_xray` helper, for 211 public callables.
 
 | Base model | CSM / outer material | Inner explosion/ejecta |
 |---|---|---|
@@ -244,6 +244,12 @@ forms (`{name}`, `{name}_bolometric`, `{name}_nickel`,
 | `static_spline_csm_bpl` | finite static spline density profile | broken power-law SN ejecta |
 | `generic_spline_csm_bpl` | homologous eight-node spline density profile | broken power-law SN ejecta |
 | `generic_spline12_csm_bpl` | homologous twelve-node spline density profile | broken power-law SN ejecta |
+| `static_pspline24_csm_bpl` | finite static 24-node p-spline density profile | broken power-law SN ejecta |
+| `generic_pspline24_csm_bpl` | homologous 24-node p-spline density profile | broken power-law SN ejecta |
+| `static_pspline48_csm_bpl` | finite static 48-node p-spline density profile | broken power-law SN ejecta |
+| `generic_pspline48_csm_bpl` | homologous 48-node p-spline density profile | broken power-law SN ejecta |
+| `static_pspline96_csm_bpl` | finite static 96-node p-spline density profile | broken power-law SN ejecta |
+| `generic_pspline96_csm_bpl` | homologous 96-node p-spline density profile | broken power-law SN ejecta |
 
 ### Finite power-law CSM shell models
 
@@ -314,10 +320,13 @@ volume filling factor:
 ```python
 from redback_csm.analysis import (
     generic_spline_csm_mass_from_params,
+    pspline_csm_mass_from_params,
     sample_geometry_corrected_mass,
 )
 
 m_spherical = generic_spline_csm_mass_from_params(best_fit_parameters)
+# For p-spline fits, use:
+# m_spherical = pspline_csm_mass_from_params(best_fit_parameters, profile="generic")
 mass_samples = sample_geometry_corrected_mass(
     m_spherical,
     covering_fraction={"kind": "uniform", "min": 0.1, "max": 1.0},
@@ -330,10 +339,20 @@ mass_samples = sample_geometry_corrected_mass(
 For fast data-driven CSM reconstruction, the package includes finite spline CSM
 models and a small least-squares helper. The public model wrappers are
 `static_spline_csm_bpl`, `generic_spline_csm_bpl`, and
-`generic_spline12_csm_bpl`; the MLE helper can also be used with more nodes in
-custom scripts. The included MLE examples are bolometric. The helper only
-requires a one-dimensional scalar data vector, so multiband fitting would need a
-custom wrapper that flattens all bands into one residual vector.
+`generic_spline12_csm_bpl`. For redback-native p-spline inference, use the
+`static_pspline{24,48,96}_csm_bpl` or `generic_pspline{24,48,96}_csm_bpl`
+families. These sample an anchor density, an initial log-density slope, and
+bounded second differences (`d2_log_rho_*`) instead of independent density
+nodes. The smoothness is therefore part of the prior transform used by nested
+samplers, not a post-hoc penalty. The generated p-spline priors are
+deliberately conservative: `dlog_rho_0` is limited to `[-1, 1]` and each
+`d2_log_rho_*` term uses a truncated Gaussian with `sigma=0.1` on `[-0.4, 0.4]`.
+Reconstructed log-density nodes are also clipped to the broad physical support
+`-30 <= log10(rho) <= -5` in cgs units. The MLE helper can still be used with
+more nodes in custom scripts. The included MLE examples are
+bolometric. The helper only requires a one-dimensional scalar data vector, so
+multiband fitting would need a custom wrapper that flattens all bands into one
+residual vector.
 
 ```python
 from redback_csm.spline_mle import (
@@ -518,6 +537,32 @@ result = redback.fit_model(
     model="wind_bpl_bolometric",
     sampler="dynesty",
     nlive=500,
+)
+```
+
+For p-spline CSM inference with redback, use one of the packaged p-spline
+wrappers. These are usually a better nested-sampling target than fitting
+independent `log_rho_*` nodes:
+
+```python
+priors = redback.priors.get_priors("generic_pspline24_csm_bpl_bolometric")
+
+# Optional event-specific tightening. The d2_log_rho_* priors control
+# roughness; the generated defaults are already fairly smooth, but these
+# bounds are usually worth tightening for a specific transient.
+priors["log_r_inner"].minimum = 13.0
+priors["log_r_inner"].maximum = 15.0
+priors["log_r_outer"].minimum = 15.0
+priors["log_r_outer"].maximum = 17.5
+priors["interval_sn"].minimum = 30.0
+priors["interval_sn"].maximum = 3000.0
+
+result = redback.fit_model(
+    transient=bolometric_transient,
+    prior=priors,
+    model="generic_pspline24_csm_bpl_bolometric",
+    sampler="dynesty",
+    nlive=1000,
 )
 ```
 

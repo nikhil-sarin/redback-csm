@@ -14,6 +14,7 @@ import numpy as np
 from redback_csm.core import (
     create_static_spline_csm_density,
     create_generic_spline_csm_density,
+    pspline_log_rho_nodes,
     solar_mass,
 )
 
@@ -195,6 +196,55 @@ def generic_spline_csm_mass_from_params(
         filling_factor=filling_factor,
         return_cgs=return_cgs,
     )
+
+
+def collect_pspline_log_rho_nodes(params: Mapping[str, float]):
+    """Reconstruct log-density nodes from p-spline coefficient parameters."""
+    curvature_indices = sorted(
+        int(key.rsplit("_", 1)[1])
+        for key in params
+        if key.startswith("d2_log_rho_") and key.rsplit("_", 1)[1].isdigit()
+    )
+    if not curvature_indices:
+        raise ValueError("no d2_log_rho_* p-spline curvature parameters were found")
+    d2_nodes = np.asarray(
+        [params[f"d2_log_rho_{idx}"] for idx in curvature_indices], dtype=float
+    )
+    return pspline_log_rho_nodes(params["log_rho_0"], params["dlog_rho_0"], d2_nodes)
+
+
+def pspline_csm_mass_from_params(
+    params: Mapping[str, float],
+    profile="generic",
+    n_points=1000,
+    covering_fraction=1.0,
+    filling_factor=1.0,
+    return_cgs=False,
+):
+    """Mass helper for dictionaries containing p-spline CSM parameters."""
+    log_rho_nodes = collect_pspline_log_rho_nodes(params)
+    if profile == "generic":
+        return generic_spline_csm_mass(
+            log_r_inner=params["log_r_inner"],
+            log_r_outer=params["log_r_outer"],
+            log_rho_nodes=log_rho_nodes,
+            interval_sn=params.get("interval_sn", 10.0 * 365.25),
+            n_points=n_points,
+            covering_fraction=covering_fraction,
+            filling_factor=filling_factor,
+            return_cgs=return_cgs,
+        )
+    if profile == "static":
+        return spline_csm_mass(
+            log_r_inner=params["log_r_inner"],
+            log_r_outer=params["log_r_outer"],
+            log_rho_nodes=log_rho_nodes,
+            n_points=n_points,
+            covering_fraction=covering_fraction,
+            filling_factor=filling_factor,
+            return_cgs=return_cgs,
+        )
+    raise ValueError("profile must be 'generic' or 'static'")
 
 
 def geometry_corrected_mass(

@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 
 from redback_csm.models import (
+    generic_pspline24_csm_bpl_bolometric,
+    generic_pspline96_csm_bpl_bolometric,
     homologous_powerlaw_csm_bpl_bolometric,
     static_powerlaw_csm_bpl_bolometric,
     wind_bpl_bolometric,
@@ -81,6 +83,46 @@ def test_homologous_powerlaw_simple_smoke():
         m_csm=1.0,
         mode="simple",
     )
+    _assert_lightcurve(lbol, time.size)
+
+
+def test_generic_pspline24_simple_smoke():
+    time = np.array([5.0, 20.0, 60.0])
+    kwargs = dict(
+        log_r_inner=13.5,
+        log_r_outer=16.0,
+        log_rho_0=-13.0,
+        dlog_rho_0=-0.05,
+        interval_sn=300.0,
+        delta_sn=1.0,
+        nn_sn=10.0,
+        mej_sn=5.0,
+        esn=1.0,
+        eff=0.5,
+        mode="simple",
+    )
+    kwargs.update({f"d2_log_rho_{idx}": 0.0 for idx in range(22)})
+    lbol = generic_pspline24_csm_bpl_bolometric(time=time, **kwargs)
+    _assert_lightcurve(lbol, time.size)
+
+
+def test_generic_pspline96_simple_smoke():
+    time = np.array([5.0, 20.0, 60.0])
+    kwargs = dict(
+        log_r_inner=13.5,
+        log_r_outer=16.0,
+        log_rho_0=-13.0,
+        dlog_rho_0=-0.02,
+        interval_sn=300.0,
+        delta_sn=1.0,
+        nn_sn=10.0,
+        mej_sn=5.0,
+        esn=1.0,
+        eff=0.5,
+        mode="simple",
+    )
+    kwargs.update({f"d2_log_rho_{idx}": 0.0 for idx in range(94)})
+    lbol = generic_pspline96_csm_bpl_bolometric(time=time, **kwargs)
     _assert_lightcurve(lbol, time.size)
 
 

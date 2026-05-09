@@ -1,11 +1,11 @@
 Available Models
 ================
 
-The package exposes 29 base CSM-density/ejecta scenarios. These are the
+The package exposes 35 base CSM-density/ejecta scenarios. These are the
 unsuffixed physical configurations before adding output-specific wrappers. Each
 base scenario has generated optical, nickel, radio, and X-ray wrapper variants,
-so the public callable model count is larger than 29: 29 base scenarios times
-six wrapper forms, plus the generic ``csm_xray`` helper, for 175 public
+so the public callable model count is larger than 35: 35 base scenarios times
+six wrapper forms, plus the generic ``csm_xray`` helper, for 211 public
 callables. The optical wrapper family is:
 
 .. list-table::
@@ -22,7 +22,7 @@ callables. The optical wrapper family is:
    * - ``{name}_nickel``
      - CSM + radioactive nickel/cobalt decay, multiband
 
-The 29 base names are:
+The 35 base names are:
 ``wind_exponential``, ``wind_bpl``, ``exponential_wind``, ``bpl_wind``,
 ``exponential_exponential``, ``exponential_bpl``, ``bpl_bpl``,
 ``bpl_exponential``, ``boxwind_exponential``, ``boxwind_bpl``,
@@ -35,7 +35,10 @@ The 29 base names are:
 ``static_powerlaw_csm_bpl``, ``homologous_powerlaw_csm_exponential``,
 ``homologous_powerlaw_csm_bpl``, ``generic_4shell_csm_bpl``,
 ``generic_8shell_csm_bpl``, ``static_spline_csm_bpl``,
-``generic_spline_csm_bpl``, and ``generic_spline12_csm_bpl``.
+``generic_spline_csm_bpl``, ``generic_spline12_csm_bpl``,
+``static_pspline24_csm_bpl``, ``generic_pspline24_csm_bpl``,
+``static_pspline48_csm_bpl``, ``generic_pspline48_csm_bpl``,
+``static_pspline96_csm_bpl``, and ``generic_pspline96_csm_bpl``.
 
 Shared Runtime Options
 ----------------------
@@ -251,6 +254,18 @@ fully arbitrary density table would be too awkward for inference.
     Higher-node penalised-spline reconstructions can be run through the MLE
     utilities described below.
 
+**static_pspline{24,48,96}_csm_bpl** / **generic_pspline{24,48,96}_csm_bpl**
+    Redback-native p-spline CSM models. Instead of sampling each
+    density node independently, these sample ``log_rho_0``, ``dlog_rho_0``,
+    and bounded second differences ``d2_log_rho_*``. Smoothness is therefore
+    built into the prior transform used by nested samplers. The generated
+    defaults use ``dlog_rho_0`` on ``[-1, 1]`` and truncated-Gaussian
+    ``d2_log_rho_*`` terms with ``sigma=0.1`` on ``[-0.4, 0.4]``. The
+    reconstructed log-density nodes are clipped to the broad physical support
+    ``-30 <= log10(rho) <= -5`` in cgs units. The ``generic`` variant is
+    homologous and also samples ``interval_sn``; the ``static`` variant is a
+    static density snapshot.
+
 The public wrappers have generated priors for the exposed optical, radio, and
 X-ray variants. For high-node reconstructions, use a smoothness penalty or
 informative priors; the individual nodes should not be interpreted as discrete
@@ -277,17 +292,21 @@ should be scaled by an assumed covering fraction and filling factor rather than
 interpreted as a unique total mass.
 
 ``redback_csm.analysis`` provides helpers for this bookkeeping, including
-``csm_mass_from_density_grid``, ``generic_spline_csm_mass_from_params``, and
-``sample_geometry_corrected_mass``. For example:
+``csm_mass_from_density_grid``, ``generic_spline_csm_mass_from_params``,
+``pspline_csm_mass_from_params``, and ``sample_geometry_corrected_mass``. For
+example:
 
 .. code-block:: python
 
    from redback_csm.analysis import (
        generic_spline_csm_mass_from_params,
+       pspline_csm_mass_from_params,
        sample_geometry_corrected_mass,
    )
 
    m_spherical = generic_spline_csm_mass_from_params(best_fit_parameters)
+   # For p-spline fits:
+   # m_spherical = pspline_csm_mass_from_params(best_fit_parameters, profile="generic")
    mass_samples = sample_geometry_corrected_mass(
        m_spherical,
        covering_fraction={"kind": "uniform", "min": 0.1, "max": 1.0},
