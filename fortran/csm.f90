@@ -853,6 +853,7 @@ end subroutine lightcurve_wind_bpl
    integer:: n, m3_log_counter, n_store_seen
    real(8):: dt,ku,kr,km, t_end_run
    real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs
+   real(8):: tau_ahead, tau_therm, therm_floor, therm_factor, escape_factor
    real(8):: simple_t_last_store, simple_l_last_store, simple_r_last_store
    real(8):: simple_dlogt, simple_rell, simple_relr
    real(8) :: r_ph, L_ph
@@ -933,6 +934,17 @@ end subroutine lightcurve_wind_bpl
     case (1)
      eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
      eta_rs = reverse_shock_radiative_efficiency(r,t,u,op,eff_global)
+     if (diffusion_enabled) then
+      tau_ahead = shell_optical_depth(r, t)
+      tau_therm = 7d0
+      therm_floor = 0.25d0
+      therm_factor = therm_floor + (1d0 - therm_floor) / &
+                    (1d0 + (tau_therm / max(tau_ahead, 1d-30))**12)
+      escape_factor = 1d0 - exp(-min((tau_ahead / 0.10d0)**2, 80d0))
+      therm_factor = therm_factor * escape_factor
+      eta_fs = eta_fs * therm_factor
+      eta_rs = eta_rs * therm_factor
+     end if
      lum_fs = eta_fs*lum_fs
      lum_rs = eta_rs*lum_rs
     case default
@@ -1184,16 +1196,24 @@ end subroutine lightcurve_wind_bpl
              + mdj/(tj+tarray(i)) &
              + mdj*(op(2)%vwind/rarray(i)-1d0/(tj+tarray(i)))
      else
-      tj   = op(2)%t_grid(j  )
-      tjp  = op(2)%t_grid(j+1)
-      mdj  = op(2)%mdot(j  )
-      mdjp = op(2)%mdot(j+1)
-      tau(i) = tau(i) &
-             + mdjp/(tjp+tarray(i))&
-             + (mdj*(tjp+tarray(i))-mdjp*(tj+tarray(i)))&
-              /(tjp-tj)*(op(2)%vwind/rarray(i)-1d0/(tjp+tarray(i)))&
-             +(mdjp-mdj)/(tjp-tj)&
-              *log((tjp+tarray(i))*op(2)%vwind/rarray(i))
+     tj   = op(2)%t_grid(j  )
+     tjp  = op(2)%t_grid(j+1)
+     mdj  = op(2)%mdot(j  )
+     mdjp = op(2)%mdot(j+1)
+      if(tjp-tj>1d-99)then
+       tau(i) = tau(i) &
+              + mdjp/(tjp+tarray(i))&
+              + (mdj*(tjp+tarray(i))-mdjp*(tj+tarray(i)))&
+               /(tjp-tj)*(op(2)%vwind/rarray(i)-1d0/(tjp+tarray(i)))&
+              +(mdjp-mdj)/(tjp-tj)&
+               *log((tjp+tarray(i))*op(2)%vwind/rarray(i))
+      else
+       ! A duplicate wind-history point represents a discontinuous jump rather
+       ! than a finite radial interval.  It contributes no optical-depth width
+       ! by itself; finite neighbouring intervals are handled by the loop above
+       ! or by the scan index on the next timestep.
+       tau(i) = tau(i)
+      end if
      end if
     end if
     tau(i) = tau(i)/(4d0*pi*op(2)%vwind**2)
@@ -1219,12 +1239,14 @@ end subroutine lightcurve_wind_bpl
     tau(i) = query_tau_to_edge(rarray(i), tarray(i), op(2), 1d0)
    end select
    tau(i) = kappa*tau(i)
+   if(.not.(tau(i)==tau(i)) .or. abs(tau(i)) > 1d250)cycle
 
    tdiff = tau(i)*rarray(i)/clight
    tadv  = rarray(i)/varray(i)
+   if(.not.(tdiff==tdiff) .or. .not.(tadv==tadv))cycle
    if(tdiff<=0d0.or.tadv<=0d0)cycle
    tloss = 1d0/(1d0/tdiff+1d0/tadv)
-   if(tloss<=0d0)cycle
+   if(.not.(tloss==tloss) .or. tloss<=0d0)cycle
    do j = i+1, size(tarray)
     dldiff = exp((tarray(i+1)-tarray(j))/tloss)&
            - exp((tarray(i  )-tarray(j))/tloss)
