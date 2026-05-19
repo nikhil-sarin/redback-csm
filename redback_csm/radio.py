@@ -30,6 +30,7 @@ def synchrotron_flux_density(
     p,
     frequency,
     luminosity_distance_cm,
+    radius_cgs=None,
 ):
     """
     Compute synchrotron radio flux density from a CSM-interaction shock.
@@ -45,6 +46,9 @@ def synchrotron_flux_density(
         Shock velocity in cm/s (from lc.vshell).
     rho_csm_cgs : array_like
         Upstream CSM mass density at the shock in g/cm^3.
+    radius_cgs : array_like, optional
+        Shock radius in cm. If omitted, the function falls back to
+        ``vshell_cgs * time`` for backwards compatibility.
     redshift : float
         Source redshift z.
     logepsb : float
@@ -83,10 +87,10 @@ def synchrotron_flux_density(
         freq_obs = _np.full_like(time_days, float(frequency))
     freq_src = freq_obs * (1.0 + z)          # Hz, rest frame
 
-    # Shock radius (use directly from Fortran rph; vshell * t is a cross-check)
-    # Here we re-derive from vshell * t_src for self-consistency with the
-    # density calculation, which also uses rph.  The caller can pass either.
-    r_s = vshell * t_src_s                   # cm  (= rph approximately)
+    if radius_cgs is None:
+        r_s = vshell * t_src_s
+    else:
+        r_s = _np.asarray(radius_cgs, dtype=float)
 
     # Magnetic field energy density: u_B = eps_B * rho * v^2
     u_b = eps_b * rho * vshell ** 2          # erg/cm^3

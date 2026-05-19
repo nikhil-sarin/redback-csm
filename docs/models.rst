@@ -67,7 +67,9 @@ Output convention:
 - ``lbol`` is the main observable luminosity
 - ``lbol_shock`` is the shock-powered luminosity
 - ``lbol_diffuse`` is the diffusion / transport luminosity when available
-- ``rph`` is the historical field name, but currently stores the shell radius by convention
+- ``rshock`` is the forward-shock / shell radius
+- ``rph`` is retained for backwards compatibility; in one-zone mode it is the
+  same as ``rshock``, while in transport mode it is the radiation photosphere
 
 JAX static CSM backend
 ----------------------
@@ -102,10 +104,11 @@ Radio and X-ray variants
 
 Each base CSM scenario also has matching ``_radio`` and ``_xray``
 wrappers. The radio wrappers compute synchrotron emission from the CSM
-interaction shock. The X-ray wrappers compute an approximate thermal
-bremsstrahlung diagnostic using the same shock trajectory and upstream CSM
-density. The X-ray calculation is a fast post-processor, not a resolved cooling
-layer or spectral-fitting model.
+interaction shock using the explicit shock radius ``rshock``, the shock
+velocity, and the upstream CSM density. The X-ray wrappers compute an
+approximate thermal bremsstrahlung diagnostic using the same shock trajectory
+and upstream CSM density. The X-ray calculation is a fast post-processor, not a
+resolved cooling layer or spectral-fitting model.
 
 Common X-ray controls include ``logepsx``, ``e_min_kev``, ``e_max_kev``,
 ``output_format``, ``n_h_host``, ``n_h_mw``, ``absorb_csm``,

@@ -404,7 +404,8 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
              - lbol: Bolometric luminosity (transport for transport, shock×eff for simple)
              - lbol_shock: Shock luminosity (instantaneous kinetic energy deposition)
              - lbol_diffuse: Diffuse luminosity (transport for transport, None otherwise)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -453,6 +454,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -492,6 +494,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
             "lbol_rs",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -504,6 +507,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
     outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -529,7 +533,8 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -573,6 +578,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -595,6 +601,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
             "lbol_rs",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -607,6 +614,7 @@ def _get_lc_wind_bpl(mdot, vwind, delta, nn, mexp, eexp, eff, **kwargs):
     outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -629,7 +637,8 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -672,6 +681,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -694,6 +704,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
             "lbol_rs",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -706,6 +717,7 @@ def _get_lc_exponential_wind(mexp, eexp, mdot, vwind, eff, **kwargs):
     outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -730,7 +742,8 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -772,6 +785,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -792,6 +806,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -802,6 +817,7 @@ def _get_lc_bpl_wind(delta, nn, mexp, eexp, mdot, vwind, eff, **kwargs):
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -828,7 +844,8 @@ def _get_lc_exponential_exponential(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -867,6 +884,7 @@ def _get_lc_exponential_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -887,6 +905,7 @@ def _get_lc_exponential_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -897,6 +916,7 @@ def _get_lc_exponential_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -926,7 +946,8 @@ def _get_lc_exponential_bpl(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -987,6 +1008,7 @@ def _get_lc_exponential_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1007,6 +1029,7 @@ def _get_lc_exponential_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1017,6 +1040,7 @@ def _get_lc_exponential_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1058,7 +1082,8 @@ def _get_lc_bpl_bpl(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -1118,6 +1143,7 @@ def _get_lc_bpl_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1138,6 +1164,7 @@ def _get_lc_bpl_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1148,6 +1175,7 @@ def _get_lc_bpl_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1179,7 +1207,8 @@ def _get_lc_bpl_exponential(
              - lbol: Bolometric luminosity (diffuse if kappa provided, else shock)
              - lbol_shock: Shock luminosity (instantaneous energy deposition)
              - lbol_diffuse: Diffuse luminosity (None if kappa not provided)
-             - rph: Shell radius (historical field name)
+             - rph: Photospheric radius (same as rshock in one-zone mode)
+             - rshock: Forward-shock/shell radius
              - temperature: Temperature
              - vshell: Shell velocity
              - shell_mass: Shell mass
@@ -1232,6 +1261,7 @@ def _get_lc_bpl_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1252,6 +1282,7 @@ def _get_lc_bpl_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1262,6 +1293,7 @@ def _get_lc_bpl_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1310,6 +1342,7 @@ def _get_lc_boxwind_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1329,6 +1362,7 @@ def _get_lc_boxwind_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1339,6 +1373,7 @@ def _get_lc_boxwind_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1391,6 +1426,7 @@ def _get_lc_boxwind_bpl(
     lbol_fs = _get_csm().lc_mod.lfs.copy()
     lbol_rs = _get_csm().lc_mod.lrs.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1415,6 +1451,7 @@ def _get_lc_boxwind_bpl(
             "lbol_rs",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1427,6 +1464,7 @@ def _get_lc_boxwind_bpl(
     outs.lbol_rs = lbol_rs
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1491,6 +1529,7 @@ def _get_lc_gausswind_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1510,6 +1549,7 @@ def _get_lc_gausswind_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1520,6 +1560,7 @@ def _get_lc_gausswind_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1591,6 +1632,7 @@ def _get_lc_gausswind_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1610,6 +1652,7 @@ def _get_lc_gausswind_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1620,6 +1663,7 @@ def _get_lc_gausswind_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1715,6 +1759,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1734,6 +1779,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1744,6 +1790,7 @@ def _get_lc_triple_powerlaw_wind_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1824,6 +1871,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1843,6 +1891,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1853,6 +1902,7 @@ def _get_lc_triple_powerlaw_wind_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -1930,6 +1980,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -1949,6 +2000,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -1959,6 +2011,7 @@ def _get_lc_exponential_triple_powerlaw_wind(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -2051,6 +2104,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2070,6 +2124,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -2080,6 +2135,7 @@ def _get_lc_bpl_triple_powerlaw_wind(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -2193,6 +2249,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2212,6 +2269,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -2222,6 +2280,7 @@ def _get_lc_smooth_triple_powerlaw_wind_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -2320,6 +2379,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2339,6 +2399,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -2349,6 +2410,7 @@ def _get_lc_smooth_triple_powerlaw_wind_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -2468,6 +2530,7 @@ def _get_lc_multi_eruption_bpl_sn(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2487,6 +2550,7 @@ def _get_lc_multi_eruption_bpl_sn(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -2497,6 +2561,7 @@ def _get_lc_multi_eruption_bpl_sn(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -2580,6 +2645,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2599,6 +2665,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -2609,6 +2676,7 @@ def _get_lc_multi_eruption_exponential_sn(eruption_list, interval, mej, esn, **k
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -2704,6 +2772,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -2723,6 +2792,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -2733,6 +2803,7 @@ def _get_lc_multi_eruption_arbitrary_sn(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -3333,6 +3404,7 @@ def _get_lc_generic_csm_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3352,6 +3424,7 @@ def _get_lc_generic_csm_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -3362,6 +3435,7 @@ def _get_lc_generic_csm_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -3493,6 +3567,7 @@ def _get_lc_generic_csm_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3512,6 +3587,7 @@ def _get_lc_generic_csm_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -3522,6 +3598,7 @@ def _get_lc_generic_csm_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -3562,6 +3639,7 @@ def _get_lc_static_powerlaw_csm_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3581,6 +3659,7 @@ def _get_lc_static_powerlaw_csm_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -3591,6 +3670,7 @@ def _get_lc_static_powerlaw_csm_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -3644,6 +3724,7 @@ def _get_lc_static_powerlaw_csm_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3663,6 +3744,7 @@ def _get_lc_static_powerlaw_csm_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -3673,6 +3755,7 @@ def _get_lc_static_powerlaw_csm_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -3734,6 +3817,7 @@ def _call_static_bpl_from_arrays(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3753,6 +3837,7 @@ def _call_static_bpl_from_arrays(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -3763,6 +3848,7 @@ def _call_static_bpl_from_arrays(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -3815,6 +3901,7 @@ def _get_lc_homologous_powerlaw_csm_exponential(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3834,6 +3921,7 @@ def _get_lc_homologous_powerlaw_csm_exponential(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -3844,6 +3932,7 @@ def _get_lc_homologous_powerlaw_csm_exponential(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -3909,6 +3998,7 @@ def _get_lc_homologous_powerlaw_csm_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -3928,6 +4018,7 @@ def _get_lc_homologous_powerlaw_csm_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -3938,6 +4029,7 @@ def _get_lc_homologous_powerlaw_csm_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -4256,6 +4348,7 @@ def _run_generic_spline_csm_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -4275,6 +4368,7 @@ def _run_generic_spline_csm_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -4285,6 +4379,7 @@ def _run_generic_spline_csm_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -4424,6 +4519,7 @@ def _get_lc_generic_4shell_csm_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -4443,6 +4539,7 @@ def _get_lc_generic_4shell_csm_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -4453,6 +4550,7 @@ def _get_lc_generic_4shell_csm_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -4666,6 +4764,7 @@ def _get_lc_generic_8shell_csm_bpl(
     time_array = _get_csm().lc_mod.tarray.copy()
     lbol_shock = _get_csm().lc_mod.larray.copy()
     rph = _get_csm().lc_mod.rpharray.copy()
+    rshock = _get_csm().lc_mod.rfsarray.copy()
     vshell = _get_csm().lc_mod.varray.copy()
     shell_mass = _get_csm().lc_mod.marray.copy()
     temperature = _get_csm().lc_mod.temparray.copy()
@@ -4685,6 +4784,7 @@ def _get_lc_generic_8shell_csm_bpl(
             "lbol_shock",
             "lbol_diffuse",
             "rph",
+            "rshock",
             "temperature",
             "vshell",
             "shell_mass",
@@ -4695,6 +4795,7 @@ def _get_lc_generic_8shell_csm_bpl(
     outs.lbol_shock = lbol_shock
     outs.lbol_diffuse = lbol_diffuse
     outs.rph = rph
+    outs.rshock = rshock
     outs.temperature = temperature
     outs.vshell = vshell
     outs.shell_mass = shell_mass
@@ -6622,7 +6723,9 @@ def _get_rho_csm_at_shock(csm_model, lc, **kwargs):
     csm_model : str
         CSM model name (key in _DISPATCH).
     lc : namedtuple
-        Output from _call_csm — must have lc.rph (shock radius in cm) and lc.time (s).
+        Output from _call_csm. New outputs provide lc.rshock explicitly; older
+        outputs fall back to lc.rph, which historically meant the shell radius
+        in simple mode.
     **kwargs
         All model parameters (same dict that was passed to _call_csm, before popping).
 
@@ -6631,7 +6734,7 @@ def _get_rho_csm_at_shock(csm_model, lc, **kwargs):
     rho : ndarray, shape (len(lc.time),)
         Upstream density in g/cm^3.
     """
-    r_sh = lc.rph                     # shock radius, cm, same grid as lc.time
+    r_sh = getattr(lc, "rshock", lc.rph)
 
     density_type = _CSM_DENSITY_TYPE.get(csm_model)
     if density_type is None:
@@ -6723,6 +6826,7 @@ def _call_csm_radio(csm_model, redshift, logepsb, logepse, p, frequency,
         p=p,
         frequency=frequency,
         luminosity_distance_cm=luminosity_distance_cm,
+        radius_cgs=getattr(lc, "rshock", lc.rph),
     )
     return lc.time / DAY, flux_mJy
 
@@ -6766,7 +6870,7 @@ def _call_csm_xray(csm_model, redshift, logepsx, luminosity_distance_cm,
     n_h_csm = None
     if absorb_csm:
         n_h_csm = local_csm_column_density(
-            lc.rph, rho, column_factor=float(csm_column_factor)
+            getattr(lc, "rshock", lc.rph), rho, column_factor=float(csm_column_factor)
         )
 
     xray = thermal_bremsstrahlung_xray(
@@ -6785,7 +6889,7 @@ def _call_csm_xray(csm_model, redshift, logepsx, luminosity_distance_cm,
         n_h_mw=n_h_mw,
         n_h_csm=n_h_csm,
         rho_csm_cgs=rho,
-        radius_cgs=lc.rph,
+        radius_cgs=getattr(lc, "rshock", lc.rph),
         mu=mu,
         mu_e=mu_e,
         mu_i=mu_i,

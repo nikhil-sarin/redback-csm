@@ -92,7 +92,9 @@ Current output convention:
 - `lbol` is the main observable luminosity
 - `lbol_shock` is the shock-powered luminosity
 - `lbol_diffuse` is the diffusion / transport luminosity when available
-- `rph` is the historical output field name, but currently stores the shell radius by convention
+- `rshock` is the forward-shock / shell radius
+- `rph` is retained for backwards compatibility; in one-zone mode it is the
+  same as `rshock`, while in transport mode it is the radiation photosphere
 
 ### Broken power-law ejecta cutoff
 
@@ -144,8 +146,10 @@ not every arbitrary CSM constructor supported by the Fortran backend.
 ### Radio synchrotron model variants
 
 Each base CSM scenario also has a `{name}_radio` function that computes
-synchrotron radio emission from the CSM-interaction shock using the
-Chevalier (1998) formalism with self-absorption. These take additional parameters:
+synchrotron radio emission from the CSM-interaction shock using the explicit
+shock radius `rshock`, the shock velocity, and the upstream CSM density. The
+radio model follows the Chevalier (1998) formalism with self-absorption. These
+take additional parameters:
 
 | Parameter | Description |
 |---|---|
@@ -159,11 +163,11 @@ Output is flux density in mJy.
 ### X-ray thermal bremsstrahlung model variants
 
 Each base CSM scenario also has a matching `{name}_xray` function. The
-X-ray layer is a fast post-processor: it uses the CSM shock evolution and
-upstream density, sets the post-shock plasma temperature from the strong-shock
-velocity, estimates the shocked-CSM emission measure, and emits a thermal
-free-free spectrum. The free-free luminosity is capped by the shock power by
-default.
+X-ray layer is a fast post-processor: it uses the same shock radius `rshock`,
+shock velocity, and upstream density as the radio layer, sets the post-shock
+plasma temperature from the strong-shock velocity, estimates the shocked-CSM
+emission measure, and emits a thermal free-free spectrum. The free-free
+luminosity is capped by the shock power by default.
 
 | Parameter | Description |
 |---|---|

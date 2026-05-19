@@ -46,6 +46,27 @@ def test_wind_bpl_simple_and_legacy_diffusion_smoke():
     _assert_lightcurve(diffuse, time.size)
 
 
+def test_low_level_csm_output_exposes_shock_radius():
+    from redback_csm.core import _call_csm
+
+    lc = _call_csm(
+        "wind_bpl",
+        mdot=1.0e-3,
+        vwind=100.0,
+        delta=0.5,
+        nn=10.0,
+        mexp=5.0,
+        eexp=1.0,
+        eff=0.5,
+        mode="simple",
+    )
+
+    assert hasattr(lc, "rshock")
+    assert lc.rshock.shape == lc.rph.shape
+    assert np.all(np.isfinite(lc.rshock))
+    assert np.allclose(lc.rshock, lc.rph)
+
+
 def test_static_powerlaw_transport_smoke():
     time = np.array([3.0, 10.0, 30.0])
     lbol = static_powerlaw_csm_bpl_bolometric(
