@@ -1,3 +1,4 @@
+[![arXiv](https://img.shields.io/badge/arXiv-2308.12806-00ff00.svg)](https://arxiv.org/abs/2605.19571)
 # redback-csm
 
 Fortran-based circumstellar matter (CSM) interaction models for the
@@ -15,8 +16,8 @@ library and can be used for Bayesian inference in the same way as built-in model
 
 If you use this package please cite:
 
-- **Sarin & Hirai (in prep)** — the paper describing the CSM interaction models
-- **Sarin et al. 2024** — the redback paper
+- **Sarin & Hirai 2026** — the paper describing the CSM interaction models (https://arxiv.org/abs/2605.19571)
+- **Sarin et al. 2024** — the redback paper (https://arxiv.org/abs/2308.12806)
 - Other relevant papers describing the underlying physics and numerical methods will be cited in the main paper.
 
 ## Models
