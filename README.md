@@ -1,4 +1,4 @@
-[![arXiv](https://img.shields.io/badge/arXiv-2308.12806-00ff00.svg)](https://arxiv.org/abs/2605.19571)
+[![arXiv](https://img.shields.io/badge/arXiv-2605.19571-00ff00.svg)](https://arxiv.org/abs/2605.19571)
 # redback-csm
 
 Fortran-based circumstellar matter (CSM) interaction models for the
