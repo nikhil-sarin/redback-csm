@@ -206,7 +206,12 @@ def _generated_prior(model_name):
         or model_name.endswith("_radio")
         or model_name.endswith("_xray")
     )
-    if is_multiband and "redshift" in priors and "temperature_floor" not in priors:
+    if (
+        is_multiband
+        and "nickel" in model_name
+        and "redshift" in priors
+        and "temperature_floor" not in priors
+    ):
         priors["temperature_floor"] = _prior_for_parameter("temperature_floor")
 
     has_bpl_ejecta = any(name in priors for name in ("delta", "delta_sn", "delta_out"))

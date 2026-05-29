@@ -36,6 +36,15 @@ def test_prior_provider_multiband():
     prior = get_prior("wind_bpl")
     assert prior is not None
     assert "redshift" in prior
+    assert "temperature_floor" not in prior
+
+
+def test_prior_provider_nickel_multiband_temperature_floor():
+    from redback_csm.prior_provider import get_prior
+
+    prior = get_prior("wind_bpl_nickel")
+    assert prior is not None
+    assert "redshift" in prior
     assert "temperature_floor" in prior
 
 

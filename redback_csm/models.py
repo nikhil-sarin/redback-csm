@@ -16,13 +16,11 @@ when the package is installed, via the redback.model.modules entry point.
 Citation: Sarin & Hirai (in prep); Sarin et al. 2024 (redback)
 """
 
+redback_model_type = "supernova"
+
 import inspect as _inspect
 import os as _os
 import collections as _collections
-
-_os.environ.setdefault("MPLCONFIGDIR", "/tmp/redback_csm_mpl_cache")
-_os.environ.setdefault("XDG_CACHE_HOME", "/tmp/redback_csm_xdg_cache")
-_os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/redback_csm_numba_cache")
 
 import numpy as _np
 from scipy.interpolate import interp1d as _interp1d
