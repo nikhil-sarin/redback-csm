@@ -33,8 +33,10 @@ Citation
 
 If you use this package please cite:
 
-- **Sarin & Hirai (in prep)** — the paper describing the CSM interaction models
-- **Sarin et al. 2024** — the redback paper (JOSS)
+- **Sarin & Hirai 2026** — the paper describing the CSM interaction models
+  (`arXiv:2605.19571 <https://arxiv.org/abs/2605.19571>`_)
+- **Sarin et al. 2024** — the redback paper
+  (`arXiv:2308.12806 <https://arxiv.org/abs/2308.12806>`_)
 
 Indices and tables
 ==================

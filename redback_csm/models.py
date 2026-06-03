@@ -13,7 +13,7 @@ Each CSM physical scenario is exposed as a small wrapper family:
 All functions are registered in redback.model_library.all_models_dict automatically
 when the package is installed, via the redback.model.modules entry point.
 
-Citation: Sarin & Hirai (in prep); Sarin et al. 2024 (redback)
+Citation: Sarin & Hirai 2026 (arXiv:2605.19571); Sarin et al. 2024 (redback)
 """
 
 redback_model_type = "supernova"
@@ -93,7 +93,7 @@ BASE_MODEL_NAMES = (
 
 __all__ = []
 
-CITATION = "Sarin & Hirai (in prep); Sarin et al. 2024"
+CITATION = "Sarin & Hirai 2026 (arXiv:2605.19571); Sarin et al. 2024"
 
 # ---------------------------------------------------------------------------
 # Private implementation helpers
