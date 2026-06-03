@@ -12,6 +12,9 @@ public API throughout — no custom model wrappers needed.
 
 Run:
     python examples/05_simulation_and_inference.py
+
+The script generates synthetic bolometric data in memory. It does not download
+or read a transient catalogue file.
 """
 
 import numpy as np
@@ -225,8 +228,10 @@ result = redback.fit_model(
     transient,
     model=model_for_redback,
     prior=priors,
-    sampler="pymultinest", # change to different sampler if you prefer
-    nlive=1000,
+    # dynesty ships with standard bilby/redback installs, making this example
+    # easier for new users to run.
+    sampler="dynesty",
+    nlive=200,
     plot=False,
     injection_parameters=TRUE_PARAMS,
     clean=True
@@ -245,7 +250,7 @@ print("Saved: variable_wind_corner.png")
 # ---------------------------------------------------------------------------
 result.plot_lightcurve(filename="variable_wind_lightcurve.png", model=model_for_redback,
                        show=False)
-print("Saved: variable_wind_corner.png")
+print("Saved: variable_wind_lightcurve.png")
 
 # ---------------------------------------------------------------------------
 # Figure 5: Posterior predictions — mass-loss history + lightcurve fit

@@ -23,7 +23,7 @@ setup(
     extras_require={
         'jax': ['jax'],
         'dev': ['pytest', 'matplotlib'],
-        'docs': ['sphinx'],
+        'docs': ['sphinx>=7', 'sphinx-rtd-theme>=2'],
     },
     entry_points={
         'redback.model.modules': [

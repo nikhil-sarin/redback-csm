@@ -514,12 +514,40 @@ lx = wind_bpl_xray(
 After installation, the CSM wrappers are registered with redback's model
 library and their priors are generated automatically from the model signatures.
 For a multiband fit, use the unsuffixed model name and the matching unsuffixed
-prior:
+prior. The example below generates a tiny synthetic transient in memory, so it
+does not require any catalogue downloads or local data files:
 
 ```python
+import numpy as np
 import redback
 
-transient = redback.transient.Supernova.from_open_access_catalogue("SN2010jl")
+from redback_csm.models import wind_bpl
+
+time = np.geomspace(2.0, 120.0, 20)
+true_parameters = dict(
+    redshift=0.02,
+    mdot=1e-3,
+    vwind=100.0,
+    delta=0.5,
+    nn=12.0,
+    mexp=5.0,
+    eexp=1.0,
+    eff=0.5,
+    temperature_floor=3000.0,
+    bands="sdssr",
+    output_format="magnitude",
+)
+mag = wind_bpl(time=time, **true_parameters)
+mag_err = np.full_like(mag, 0.1)
+
+transient = redback.transient.Supernova(
+    name="synthetic_csm_demo",
+    data_mode="magnitude",
+    time=time,
+    magnitude=mag,
+    magnitude_err=mag_err,
+    bands=np.array(["sdssr"] * len(time)),
+)
 priors = redback.priors.get_priors("wind_bpl")
 
 result = redback.fit_model(
@@ -532,14 +560,43 @@ result = redback.fit_model(
 ```
 
 For bolometric luminosity data, use the bolometric wrapper and matching
-bolometric prior instead:
+bolometric prior instead. Redback's luminosity transient stores luminosity in
+units of `1e50 erg/s`, so wrap the model by the same factor:
 
 ```python
+import numpy as np
+import redback
+
+from redback_csm.models import wind_bpl_bolometric
+
+time = np.geomspace(2.0, 120.0, 20)
+lbol = wind_bpl_bolometric(
+    time=time,
+    mdot=1e-3,
+    vwind=100.0,
+    delta=0.5,
+    nn=12.0,
+    mexp=5.0,
+    eexp=1.0,
+    eff=0.5,
+    kappa=0.34,
+)
+transient = redback.transient.Supernova(
+    name="synthetic_csm_bolometric_demo",
+    data_mode="luminosity",
+    time_rest_frame=time,
+    Lum50=lbol / 1e50,
+    Lum50_err=0.1 * lbol / 1e50,
+)
 priors = redback.priors.get_priors("wind_bpl_bolometric")
+
+def model_lum50(time, **kwargs):
+    return wind_bpl_bolometric(time=time, **kwargs) / 1e50
+
 result = redback.fit_model(
-    transient=bolometric_transient,
+    transient=transient,
     prior=priors,
-    model="wind_bpl_bolometric",
+    model=model_lum50,
     sampler="dynesty",
     nlive=500,
 )
@@ -550,6 +607,12 @@ wrappers. These are usually a better nested-sampling target than fitting
 independent `log_rho_*` nodes:
 
 ```python
+# Reuse the synthetic luminosity transient from the bolometric example above,
+# or replace this with your own redback.transient.Supernova luminosity object.
+bolometric_transient = transient
+
+from redback_csm.models import generic_pspline24_csm_bpl_bolometric
+
 priors = redback.priors.get_priors("generic_pspline24_csm_bpl_bolometric")
 
 # Optional event-specific tightening. The d2_log_rho_* priors control
@@ -562,10 +625,13 @@ priors["log_r_outer"].maximum = 17.5
 priors["interval_sn"].minimum = 30.0
 priors["interval_sn"].maximum = 3000.0
 
+def pspline_model_lum50(time, **kwargs):
+    return generic_pspline24_csm_bpl_bolometric(time=time, **kwargs) / 1e50
+
 result = redback.fit_model(
     transient=bolometric_transient,
     prior=priors,
-    model="generic_pspline24_csm_bpl_bolometric",
+    model=pspline_model_lum50,
     sampler="dynesty",
     nlive=1000,
 )
