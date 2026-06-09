@@ -555,6 +555,10 @@ result = redback.fit_model(
     transient=transient,
     prior=priors,
     model="wind_bpl",
+    model_kwargs={
+        "output_format": "magnitude",
+        "bands": np.array(["sdssr"] * len(time)),
+    },
     sampler="dynesty",
     nlive=500,
 )
