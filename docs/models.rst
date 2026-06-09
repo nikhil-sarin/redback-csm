@@ -82,8 +82,10 @@ yet a general replacement for the arbitrary-CSM Fortran implementation.
 
 .. code-block:: python
 
+   import numpy as np
    from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve
 
+   time_days = np.geomspace(1.0, 300.0, 200)
    lbol = get_static_powerlaw_csm_bpl_lightcurve(
        time=time_days,
        eta=-2.0,
@@ -380,8 +382,10 @@ Example with transport mode:
 
 .. code-block:: python
 
+   import numpy as np
    from redback_csm.models import wind_bpl_bolometric
 
+   time = np.geomspace(1.0, 300.0, 200)
    lbol = wind_bpl_bolometric(
        time=time,
        mdot=1e-3,

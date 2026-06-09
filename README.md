@@ -121,8 +121,10 @@ This release includes a JAX-native prototype for fast inference with static
 finite power-law CSM shells and BPL ejecta:
 
 ```python
+import numpy as np
 from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve
 
+time_days = np.geomspace(1.0, 300.0, 200)
 lbol = get_static_powerlaw_csm_bpl_lightcurve(
     time=time_days,
     eta=-2.0,
@@ -306,7 +308,7 @@ from redback_csm.explore import csm_lightcurve_from_density
 r   = np.geomspace(1e13, 1e17, 500)  # cm
 rho = 5e16 / r**2                    # g/cm^3  (r^-2 wind)
 
-fig = csm_lightcurve_from_density(
+fig, lc = csm_lightcurve_from_density(
     radius=r, density=rho,
     t_ref=365.0,       # days — sets r = v * t_ref
     sn_profile='bpl',
@@ -557,7 +559,7 @@ result = redback.fit_model(
     model="wind_bpl",
     model_kwargs={
         "output_format": "magnitude",
-        "bands": np.array(["sdssr"] * len(time)),
+        "bands": transient.bands,
     },
     sampler="dynesty",
     nlive=500,
