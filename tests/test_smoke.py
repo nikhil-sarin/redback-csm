@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from redback_csm.models import (
+    generic_csm_bpl,
     generic_pspline24_csm_bpl_bolometric,
     generic_pspline96_csm_bpl_bolometric,
     homologous_powerlaw_csm_bpl_bolometric,
@@ -145,6 +146,43 @@ def test_generic_pspline96_simple_smoke():
     kwargs.update({f"d2_log_rho_{idx}": 0.0 for idx in range(94)})
     lbol = generic_pspline96_csm_bpl_bolometric(time=time, **kwargs)
     _assert_lightcurve(lbol, time.size)
+
+
+def test_generic_csm_bpl_flux_density_uses_temperature_floor():
+    time = np.linspace(1.0, 300.0, 32)
+    kwargs = dict(
+        redshift=0.166,
+        base_density=6.89097955e-05,
+        base_index=-3.14752479,
+        shell1_radius=0.0,
+        shell1_width=0.0,
+        shell1_density=0.0,
+        shell2_radius=0.0,
+        shell2_width=0.0,
+        shell2_density=0.0,
+        shell3_radius=0.0,
+        shell3_width=0.0,
+        shell3_density=0.0,
+        interval_sn=8.36509818,
+        delta_sn=1.07327481,
+        nn_sn=7.57092105,
+        mej_sn=79.9611478,
+        esn=11.0384479,
+        eff=0.780317595,
+        vej_max_ratio=4.39666448,
+        kappa=0.136293163,
+        shell_density=0.0,
+        output_format="flux_density",
+        frequency=1.0e15,
+        bands="ztfg",
+    )
+
+    cold = generic_csm_bpl(time, temperature_floor=168.679970, **kwargs)
+    warm = generic_csm_bpl(time, temperature_floor=3000.0, **kwargs)
+
+    _assert_lightcurve(cold, time.size)
+    _assert_lightcurve(warm, time.size)
+    assert warm[-1] > cold[-1]
 
 
 def test_nickel_radio_and_xray_wrappers_smoke():

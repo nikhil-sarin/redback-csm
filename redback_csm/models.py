@@ -33,6 +33,7 @@ from redback.utils import lambda_to_nu as _lambda_to_nu
 import redback.sed as _sed
 import redback.photosphere as _photosphere
 import redback.interaction_processes as _interaction_processes
+from redback.constants import sigma_sb as _SIGMA_SB
 from redback.transient_models.supernova_models import (
     _nickelcobalt_engine as _nickelcobalt_engine,
 )
@@ -115,6 +116,25 @@ def _csm_rph_temp_impl(time, csm_model, **kwargs):
     rph = _interp1d(t_days, lc.rph, bounds_error=False, fill_value=0.0)(time)
     temp = _interp1d(t_days, lc.temperature, bounds_error=False, fill_value=1e3)(time)
     return lbol, rph, temp
+
+
+def _apply_temperature_floor(lbol, rph, temp, temperature_floor=None):
+    """Apply a blackbody temperature floor while preserving bolometric luminosity."""
+    if temperature_floor is None:
+        return rph, temp
+
+    temperature_floor = float(temperature_floor)
+    if temperature_floor <= 0.0:
+        return rph, temp
+
+    lbol = _np.asarray(lbol, dtype=float)
+    rph = _np.asarray(rph, dtype=float).copy()
+    temp = _np.asarray(temp, dtype=float).copy()
+    mask = (lbol > 0.0) & _np.isfinite(lbol) & (temp < temperature_floor)
+    if _np.any(mask):
+        temp[mask] = temperature_floor
+        rph[mask] = _np.sqrt(lbol[mask] / (4.0 * _np.pi * _SIGMA_SB * temperature_floor**4))
+    return rph, temp
 
 
 def _nickel_ejecta_mass_energy(kwargs):
@@ -383,7 +403,10 @@ def _multiband_csm_flux_density(time, redshift, csm_model, csm_kwargs, dl):
     frequency, time_src = _calc_kcorrected_properties(
         frequency=frequency, redshift=redshift, time=time
     )
-    _, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
+    lbol, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
+    rph, temp = _apply_temperature_floor(
+        lbol, rph, temp, csm_kwargs.get("temperature_floor")
+    )
     sed_1 = _sed.Blackbody(
         temperature=temp, r_photosphere=rph, frequency=frequency, luminosity_distance=dl
     )
@@ -422,7 +445,10 @@ def _multiband_csm(time, redshift, csm_model, csm_kwargs, dl):
         redshift=redshift,
         time=time_observer_frame,
     )
-    _, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
+    lbol, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
+    rph, temp = _apply_temperature_floor(
+        lbol, rph, temp, csm_kwargs.get("temperature_floor")
+    )
     sed_1 = _sed.Blackbody(
         temperature=temp,
         r_photosphere=rph,
