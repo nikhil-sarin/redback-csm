@@ -35,7 +35,7 @@ for mdot, color in [(1e-4, "royalblue"), (1e-3, "darkorange"), (1e-2, "crimson")
         redshift=redshift,
         mdot=mdot, vwind=100.0,
         delta=0.5, nn=12.0, mexp=5.0, eexp=1.0, eff=0.5,
-        temperature_floor=3000.0,
+        temperature_floor=3000.0, kappa=0.1,
         frequency=np.full_like(time, freq_r),
         output_format="flux_density",
     )
