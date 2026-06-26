@@ -6778,7 +6778,7 @@ def _get_rho_csm_at_shock(csm_model, lc, **kwargs):
 
 
 def _call_csm_radio(csm_model, redshift, logepsb, logepse, p, frequency,
-                    luminosity_distance_cm, **kwargs):
+                    luminosity_distance_cm, time_days=None, **kwargs):
     """
     Run the CSM Fortran model, compute the upstream density at the shock, and
     return synchrotron flux density in mJy on the Fortran time grid.
@@ -6816,19 +6816,33 @@ def _call_csm_radio(csm_model, redshift, logepsb, logepse, p, frequency,
 
     rho = _get_rho_csm_at_shock(csm_model, lc, **kwargs_density)
 
+    t_model_src = lc.time / DAY
+    if time_days is None:
+        t_eval_obs = t_model_src * (1.0 + redshift)
+        vshell = lc.vshell
+        rho_eval = rho
+        radius = getattr(lc, "rshock", lc.rph)
+    else:
+        t_eval_obs = np.asarray(time_days, dtype=float)
+        t_eval_src = t_eval_obs / (1.0 + redshift)
+        vshell = np.interp(t_eval_src, t_model_src, lc.vshell, left=0.0, right=0.0)
+        rho_eval = np.interp(t_eval_src, t_model_src, rho, left=0.0, right=0.0)
+        radius_model = getattr(lc, "rshock", lc.rph)
+        radius = np.interp(t_eval_src, t_model_src, radius_model, left=0.0, right=0.0)
+
     flux_mJy = synchrotron_flux_density(
-        time_days=lc.time / DAY,
-        vshell_cgs=lc.vshell,
-        rho_csm_cgs=rho,
+        time_days=t_eval_obs,
+        vshell_cgs=vshell,
+        rho_csm_cgs=rho_eval,
         redshift=redshift,
         logepsb=logepsb,
         logepse=logepse,
         p=p,
         frequency=frequency,
         luminosity_distance_cm=luminosity_distance_cm,
-        radius_cgs=getattr(lc, "rshock", lc.rph),
+        radius_cgs=radius,
     )
-    return lc.time / DAY, flux_mJy
+    return t_eval_obs, flux_mJy
 
 
 def _call_csm_xray(csm_model, redshift, logepsx, luminosity_distance_cm,

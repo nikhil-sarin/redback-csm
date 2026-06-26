@@ -228,6 +228,28 @@ def test_nickel_radio_and_xray_wrappers_smoke():
     _assert_lightcurve(xray, time.size)
 
 
+def test_radio_wrapper_accepts_per_point_frequency_array():
+    time = np.linspace(5.0, 100.0, 10)
+    frequency = np.linspace(3.0e9, 10.0e9, time.size)
+    radio = wind_bpl_radio(
+        time=time,
+        redshift=0.02,
+        logepsb=-2.0,
+        logepse=-1.0,
+        p=3.0,
+        frequency=frequency,
+        mdot=1.0e-3,
+        vwind=100.0,
+        delta=0.5,
+        nn=10.0,
+        mexp=5.0,
+        eexp=1.0,
+        eff=0.5,
+    )
+
+    _assert_lightcurve(radio, time.size)
+
+
 @pytest.mark.skipif(importlib.util.find_spec("jax") is None, reason="jax is not installed")
 def test_jax_static_powerlaw_smoke():
     from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve

@@ -1756,6 +1756,7 @@ def _csm_radio_impl(time, redshift, csm_model, csm_kwargs):
         p=p,
         frequency=frequency,
         luminosity_distance_cm=dl,
+        time_days=time,
         **csm_kwargs,
     )
     return _interp1d(t_grid, flux_grid, bounds_error=False, fill_value=0.0)(time)
