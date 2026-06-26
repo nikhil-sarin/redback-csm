@@ -17,6 +17,7 @@ examples/18_jax_vs_fortran_transport.py
 examples/19_runtime_summary.py
 *.png
 examples/runtime_summary.csv
+examples/photometry_phase_extinction_demo/
 .idea/
 *.tmp_runtime
 *.tex

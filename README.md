@@ -566,6 +566,30 @@ result = redback.fit_model(
 )
 ```
 
+For observed multiband photometry in MJD, use Redback's phase/extinction
+wrapper rather than adding phase or dust parameters by hand. The CSM model is
+passed as the plugin base model:
+
+```python
+result = redback.fit_model(
+    transient=transient,  # use_phase_model=True and time_mjd populated
+    prior=priors,         # include t0 and av_host
+    model="t0_supernova_extinction",
+    model_kwargs={
+        "base_model": "wind_bpl",
+        "output_format": "magnitude",
+        "bands": transient.bands,
+        "kappa": 0.1,
+        "temperature_floor": 3500.0,
+        "av_mw": 0.02,
+    },
+)
+```
+
+See `examples/09_redback_photometry_phase_extinction.py` for a complete
+`ztfg`/`ztfr`/`sdssu` simulation and recovery that samples both `t0` and
+`av_host`.
+
 For bolometric luminosity data, use the bolometric wrapper and matching
 bolometric prior instead. Redback's luminosity transient stores luminosity in
 units of `1e50 erg/s`, so wrap the model by the same factor:
