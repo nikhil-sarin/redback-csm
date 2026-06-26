@@ -2321,3 +2321,8 @@ for _radio_name, _radio_func in list(globals().items()):
 __all__.extend(name for name in _XRAY_MODEL_NAMES if name not in __all__)
 if "csm_xray" not in __all__:
     __all__.append("csm_xray")
+
+
+def __dir__():
+    """Expose only public model wrappers to redback's plugin scanner."""
+    return sorted(__all__)

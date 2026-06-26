@@ -30,6 +30,16 @@ def test_prior_provider_known_model():
     assert "redshift" not in prior
 
 
+def test_models_dir_hides_private_plugin_helpers():
+    import redback_csm.models as models
+
+    names = set(dir(models))
+    assert "wind_bpl" in names
+    assert "wind_bpl_bolometric" in names
+    assert "_nickelcobalt_engine" not in names
+    assert "_apply_temperature_floor" not in names
+
+
 def test_prior_provider_multiband():
     from redback_csm.prior_provider import get_prior
 
