@@ -836,10 +836,10 @@ end subroutine lightcurve_wind_bpl
   r = u*t*1.2d0
   m = 1d0
   erad = 0d0
-  call configure_runtime(1,eff,kappa)
+  call configure_runtime(5,eff,kappa)
 
   call do_main_loop
-  call finalize_outputs(1,kappa)
+  call finalize_outputs(5,kappa)
 
  end subroutine lightcurve_static_exponential
 
