@@ -258,3 +258,54 @@ def test_diffused_csm_nickel_matches_public_wrapper_outside_cusp():
     jx = np.asarray(simple_csm_nickel_bolometric(t, _params(p, kappa=0.1), 0.1, 0.03).lbol)
     # bounded by the published Fortran discretisation (2% output rows, 1% Euler steps)
     assert np.max(np.abs(jx - ref)) / ref.max() < 3e-2
+
+
+# ------------------------------------------------------------------ photosphere
+
+
+def test_jax_photosphere_is_tau_two_thirds_radius_then_shell():
+    p = CASES["wind_compact"]
+    res = _jax(p, np.geomspace(1.0, 200.0, 60), kappa=0.34)
+    r_ph = np.asarray(res.r_photosphere)
+    r_sh = np.asarray(res.r_shock)
+    tau = np.asarray(res.tau_ahead)
+    assert np.all(r_ph >= r_sh)
+    thin = tau <= 2.0 / 3.0
+    np.testing.assert_array_equal(r_ph[thin], r_sh[thin])
+    thick = tau > 2.0 / 3.0
+    assert thick.any() and np.all(r_ph[thick] > r_sh[thick])
+    # analytic check for the wind profile: tau(r) = k (1/r - 1/r_out) r_in^2 ...
+    rho_in = p["m_csm"] * MSUN / (4 * np.pi * p["r_inner"] ** 2 * (p["r_outer"] - p["r_inner"]))
+    k = 0.34 * rho_in * p["r_inner"] ** 2
+    expect = 1.0 / (1.0 / p["r_outer"] + (2.0 / 3.0) / k)
+    np.testing.assert_allclose(r_ph[thick], np.maximum(expect, r_sh[thick]), rtol=1e-10)
+
+
+def test_jax_photosphere_matches_fortran():
+    core = pytest.importorskip("redback_csm.core")
+    p = CASES["mid_extended"]
+    try:
+        lc, rph = core._call_csm_with_csm_photosphere("static_powerlaw_csm_bpl", mode="simple", kappa=0.34, **p)
+    except ImportError:
+        pytest.skip("Fortran extension not built")
+    t = lc.time / DAY
+    sel = (t > 1.0) & (t < 200.0)
+    res = _jax(p, t[sel], n_steps=4096, kappa=0.34)
+    te = float(res.t_emerge)
+    away = np.abs(t[sel] / te - 1) > 0.02  # Fortran and JAX shell radii differ slightly at emergence
+    np.testing.assert_allclose(np.asarray(res.r_photosphere)[away], rph[sel][away], rtol=1e-2)
+
+
+def test_photosphere_temperature_floor_preserves_luminosity():
+    from jax_csm import photosphere_temperature
+
+    lbol = np.array([1e44, 1e43, 1e41, 0.0])
+    r = np.array([1e15, 1e15, 1e16, 1e15])
+    rr, tt = photosphere_temperature(lbol, r, temperature_floor=3000.0)
+    rr, tt = np.asarray(rr), np.asarray(tt)
+    ok = lbol > 0
+    np.testing.assert_allclose(4 * np.pi * 5.670374419e-5 * rr[ok] ** 2 * tt[ok] ** 4, lbol[ok], rtol=1e-12)
+    assert tt[2] == 3000.0 and rr[2] < r[2]
+    assert tt[3] == 0.0
+    rr0, tt0 = photosphere_temperature(lbol, r, temperature_floor=0.0)
+    assert np.asarray(tt0)[2] < 3000.0

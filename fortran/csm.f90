@@ -15,6 +15,9 @@ use csm_transport, only: dimless_state_type, dimless_comoving_transport_step, &
 
  real(8),allocatable,dimension(:),public:: tarray, Larray, temparray, rarray, varray, marray, ldiff, lfs, lrs
  real(8),allocatable,dimension(:),public:: rfsarray, rpharray, etraparray, tleakarray, tauarray_transport
+ ! rphcsmarray: radius where tau through the CSM ahead of the shell reaches 2/3 (simple mode
+ ! with kappa); equals rpharray otherwise (shell radius in simple mode, transport photosphere).
+ real(8),allocatable,dimension(:),public:: rphcsmarray
  public:: lightcurve_wind_exponential, lightcurve_wind_bpl, &
           lightcurve_bpl_wind, lightcurve_exponential_wind, &
           lightcurve_wind_explosion, lightcurve_explosion_wind, &
@@ -26,7 +29,7 @@ use csm_transport, only: dimless_state_type, dimless_comoving_transport_step, &
           set_efficiency_mode, set_run_mode, set_transport_parameters, &
           set_bpl_cutoff_ratio, get_dimless_state_debug
 
- private:: finalize_outputs, do_main_loop
+ private:: finalize_outputs, do_main_loop, compute_csm_photosphere
  private:: get_diffuse_lc
  private
 integer,parameter:: ll=200000, n_skip_initial_outputs=10
@@ -113,6 +116,7 @@ contains
   if(run_mode == 1)then
    if(present(kappa))then
     call get_diffuse_lc(csm_type,kappa)
+    call compute_csm_photosphere(kappa)
     temparray = temperature(ldiff,rarray)
     call drop_initial_output_rows(n_skip_initial_outputs)
    elseif(allocated(ldiff))then
@@ -120,6 +124,18 @@ contains
    end if
   end if
  end subroutine finalize_outputs
+
+ subroutine compute_csm_photosphere(kappa)
+! Simple mode with kappa: tau = 2/3 radius in the CSM ahead of the stored shell radius.
+  use get_vals, only: op, query_csm_photosphere_radius_fast
+  real(8),intent(in):: kappa
+  integer:: i
+
+  if(.not.allocated(tarray))return
+  do i = 1, size(tarray)
+   rphcsmarray(i) = max(query_csm_photosphere_radius_fast(rarray(i),tarray(i),op(2),kappa), rarray(i))
+  end do
+ end subroutine compute_csm_photosphere
 
  subroutine drop_initial_output_rows(n_drop)
   integer,intent(in):: n_drop
@@ -145,6 +161,7 @@ contains
   allocate(tmp(n_new)); tmp = etraparray(n_drop+1:n_old); call move_alloc(tmp,etraparray)
   allocate(tmp(n_new)); tmp = tleakarray(n_drop+1:n_old); call move_alloc(tmp,tleakarray)
   allocate(tmp(n_new)); tmp = tauarray_transport(n_drop+1:n_old); call move_alloc(tmp,tauarray_transport)
+  allocate(tmp(n_new)); tmp = rphcsmarray(n_drop+1:n_old); call move_alloc(tmp,rphcsmarray)
  end subroutine drop_initial_output_rows
 
  subroutine lightcurve_wind_exponential(Mdotinput, tinput, vwindinput, Mexp, Eexp, eff, kappa)
@@ -1104,10 +1121,11 @@ end subroutine lightcurve_wind_bpl
   if(allocated(etraparray))deallocate(etraparray)
   if(allocated(tleakarray))deallocate(tleakarray)
   if(allocated(tauarray_transport))deallocate(tauarray_transport)
+  if(allocated(rphcsmarray))deallocate(rphcsmarray)
   allocate(tarray(n))
   allocate(larray, temparray, rarray, varray, marray, ldiff, lfs, lrs, &
            rfsarray, rpharray, etraparray, tleakarray, tauarray_transport, &
-           mold=tarray)
+           rphcsmarray, mold=tarray)
 
   tarray(1:n) = t_array(1:n)
   larray(1:n) = l_array(1:n)
@@ -1119,6 +1137,7 @@ end subroutine lightcurve_wind_bpl
   ldiff(1:n) = ld_array(1:n)
   rfsarray(1:n) = rfs_array(1:n)
   rpharray(1:n) = rph_array(1:n)
+  rphcsmarray(1:n) = rph_array(1:n)
   etraparray(1:n) = etrap_array(1:n)
   tleakarray(1:n) = tleak_array(1:n)
   tauarray_transport(1:n) = tau_array_transport(1:n)

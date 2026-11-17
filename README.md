@@ -60,6 +60,9 @@ emission. The nickel mass is always computed from the SN ejecta mass
 finite CSM shell mass when that mass is defined by the CSM constructor. There
 is no separate CSM-mass parameter for the nickel component; for unusual cases
 you can override only the total Arnett diffusion mass with `mej_arnett`.
+Note that redback's own `csm_nickel` uses only the optically thick part of the
+CSM (tau > 2/3) in the diffusion mass; for an optically thick shell the two
+agree closely.
 
 Priors are generated programmatically from the model signatures, so the package
 does not need a separate `.prior` file for every callable wrapper. This covers
@@ -80,6 +83,8 @@ keywords controlling the transport treatment:
 | `transport_wind_age` | Effective outer wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use their last tabulated age; one-point steady winds use `100 yr`. This supplies the finite outer edge required by the transport solver and is ignored in simple mode. |
 | `transport_r_inner` / `r_inner` | Alternative direct inner cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_inner` takes precedence. |
 | `transport_r_outer` / `r_outer` | Alternative direct outer cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_outer` takes precedence. |
+| `photosphere_mode` | Multiband wrappers only. `'legacy'` (default) or `'csm'`; see [Photosphere for multiband output](#photosphere-for-multiband-output). |
+| `temperature_floor` | Multiband wrappers only. Blackbody temperature floor in K; below it the photosphere shrinks so that L is preserved. Defaults: none for CSM-only legacy, 3000 K for `_nickel` and for `photosphere_mode='csm'`. |
 | `efficiency_mode` | Optional shock-efficiency mode. Default is `0`, which applies the user-supplied constant `eff` to both shocks; `1` applies the free-free-limited time-dependent efficiency to both forward and reverse shocks. |
 
 Transport mode requires a finite CSM support. Static CSM constructors already
@@ -97,6 +102,38 @@ Current output convention:
 - `rshock` is the forward-shock / shell radius
 - `rph` is retained for backwards compatibility; in one-zone mode it is the
   same as `rshock`, while in transport mode it is the radiation photosphere
+
+### Photosphere for multiband output
+
+The multiband (`{name}`, `{name}_nickel`) wrappers turn the bolometric
+luminosity into a blackbody, which needs a photospheric radius.
+
+- `photosphere_mode='legacy'` (default, unchanged): CSM-only wrappers use the
+  shell radius `rph` and the Fortran blackbody temperature; `_nickel` wrappers
+  use redback's `TemperatureFloor`, i.e. `R = vej * t` with
+  `vej = sqrt(2 E / M_ej)` until the temperature reaches the floor. Neither
+  follows the photosphere while the shock is still buried in optically thick
+  CSM, and `vej * t` ignores the deceleration of the shell.
+- `photosphere_mode='csm'`: the photosphere is the radius where the optical
+  depth through the CSM ahead of the shell reaches 2/3 (the fixed CSM
+  photosphere of Chatzopoulos, Wheeler & Vinko 2012), and becomes the shell
+  radius once the CSM ahead is optically thin (e.g. after the shock leaves a
+  finite shell). It is computed in the Fortran for every CSM density model,
+  with the same `kappa` and density profile as the diffusion, and is the same
+  for the CSM-only and `_nickel` wrappers. The temperature is
+  `(L / 4 pi sigma R^2)^(1/4)` with the total luminosity, and the
+  `temperature_floor` (default 3000 K) handles late-time recombination while
+  preserving L. Simple mode requires `kappa`; transport mode uses the transport
+  photosphere.
+
+```python
+mag = static_powerlaw_csm_bpl_nickel(
+    time=time_obs, redshift=0.05, eta=-2.0, r_inner=1e14, r_outer=1e15,
+    delta_sn=1.0, nn_sn=10.0, mej_sn=10.0, esn=2.0, eff=0.5, m_csm=3.0,
+    f_nickel=0.05, kappa=0.34, kappa_gamma=0.1,
+    photosphere_mode='csm', bands='lsstg', output_format='magnitude',
+)
+```
 
 ### Broken power-law ejecta cutoff
 
@@ -117,35 +154,40 @@ case the wrapper converts it to `vej_max_ratio`.
 
 ### JAX static CSM prototype
 
-This release includes a JAX-native prototype for fast inference with static
-finite power-law CSM shells and BPL ejecta:
+The `jax_csm` package provides JAX-native (JIT- and `vmap`-compatible) versions
+of the static finite power-law CSM shell with BPL ejecta.
 
 ```python
 import numpy as np
-from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve
+from jax_csm import StaticPowerlawBPLParams, solve_simple_static_bpl, simple_csm_nickel_bolometric
 
-time_days = np.geomspace(1.0, 300.0, 200)
-lbol = get_static_powerlaw_csm_bpl_lightcurve(
-    time=time_days,
-    eta=-2.0,
-    r_inner=5e2 * 6.957e10,
-    r_outer=5e3 * 6.957e10,
-    delta_sn=1.0,
-    nn_sn=10.0,
-    mej_sn=5.0,
-    esn=1.0,
-    eff=1.0,
-    m_csm=1.0,
-    mode="simple",
+params = StaticPowerlawBPLParams(
+    eta=-2.0, r_inner=1e14, r_outer=1e15, delta_sn=1.0, nn_sn=10.0,
+    mej_sn=10.0, esn=2.0, eff=0.5, m_csm=3.0, kappa=0.34,
 )
+time_days = np.geomspace(1.0, 300.0, 200)
+res = solve_simple_static_bpl(time_days, params, n_steps=4096, t_max_days=300.0, diffusion=True)
+res.lbol, res.lbol_shock, res.r_shock, res.v_shock, res.r_photosphere, res.t_emerge
+
+total = simple_csm_nickel_bolometric(time_days, params, f_nickel=0.05, kappa_gamma=0.1, n_steps=4096)
 ```
 
-`mode="simple"` shares the current static-shell mass normalization and finite
-BPL ejecta cutoff convention with the Fortran backend. `mode="transport"` uses
-the same dimensionless diffusion setup as the Fortran static power-law/BPL
-transport path, including breakout-reservoir leakage and homologous
-post-emergence cooling. It is still scoped to static finite power-law CSMs,
-not every arbitrary CSM constructor supported by the Fortran backend.
+- `solve_simple_static_bpl` integrates the same thin-shell equations as the
+  Fortran simple mode (RK4 in dimensionless variables). With `diffusion=False`
+  `lbol` is the shock luminosity `eff * (L_fs + L_rs)`; with `diffusion=True` it
+  is the diffused luminosity that the Fortran simple mode returns when `kappa`
+  is supplied. Near shock emergence that prescription rises logarithmically, so
+  the value right at emergence depends on the time resolution in any
+  implementation. About 2048 steps (no diffusion) or 4096 steps (diffusion)
+  give sub-percent accuracy elsewhere. Fix `t_max_days` when results must not
+  depend on the latest requested epoch.
+- `nickel_diffused_luminosity` / `simple_csm_nickel_bolometric` reproduce the
+  `_nickel_bolometric` prescription (Arnett diffusion with gamma-ray leakage).
+- `r_photosphere` is the `photosphere_mode='csm'` radius;
+  `jax_csm.photosphere_temperature` applies the same temperature floor.
+- `solve_static_powerlaw_bpl(..., mode="simple")` uses the new solver;
+  `mode="simple_legacy"` keeps the previous implementation; `mode="transport"`
+  is the dimensionless transport solver for static power-law shells.
 
 ### Radio synchrotron model variants
 

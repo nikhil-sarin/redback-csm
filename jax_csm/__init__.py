@@ -9,6 +9,7 @@ from .model import (
 from .simple_shock import SimpleShockResult, solve_simple_static_bpl
 from .nickel import nickel_diffused_luminosity, nickel_heating
 from .csm_nickel import CSMNickelResult, simple_csm_nickel_bolometric
+from .photosphere import photosphere_temperature
 
 __all__ = [
     "StaticPowerlawBPLParams",
@@ -23,4 +24,5 @@ __all__ = [
     "nickel_heating",
     "CSMNickelResult",
     "simple_csm_nickel_bolometric",
+    "photosphere_temperature",
 ]

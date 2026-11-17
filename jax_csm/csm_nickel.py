@@ -32,6 +32,7 @@ class CSMNickelResult(NamedTuple):
     lbol_nickel: jnp.ndarray
     r_shock: jnp.ndarray
     v_shock: jnp.ndarray
+    r_photosphere: jnp.ndarray  # max(r_shock, tau = 2/3 radius in the CSM ahead), before any floor
     t_emerge: jnp.ndarray
 
 
@@ -46,4 +47,5 @@ def simple_csm_nickel_bolometric(time_days, params, f_nickel, kappa_gamma, mej_a
         time_days, f_nickel, params.mej_sn, params.esn, params.m_csm, params.kappa, kappa_gamma,
         mej_arnett=mej_arnett, vej=vej, quadrature=nickel_quadrature,
     )
-    return CSMNickelResult(time_days, csm.lbol + lni, csm.lbol, lni, csm.r_shock, csm.v_shock, csm.t_emerge)
+    return CSMNickelResult(time_days, csm.lbol + lni, csm.lbol, lni, csm.r_shock, csm.v_shock,
+                           csm.r_photosphere, csm.t_emerge)

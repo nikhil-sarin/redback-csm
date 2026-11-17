@@ -6305,6 +6305,22 @@ def _call_csm(csm_model, **kwargs):
     return func(*args, **kwargs)
 
 
+def _call_csm_with_csm_photosphere(csm_model, **kwargs):
+    """
+    Run _call_csm and also return the CSM photosphere radius on the output rows.
+
+    In simple mode with ``kappa`` this is the radius where the optical depth
+    through the CSM ahead of the shell reaches 2/3 (never below the shell
+    radius).  In transport mode it is the transport photosphere (``lc.rph``).
+    In simple mode without ``kappa`` it is the shell radius.
+    """
+    lc = _call_csm(csm_model, **kwargs)
+    r_ph = np.array(_get_csm().lc_mod.rphcsmarray, dtype=float, copy=True)
+    if r_ph.shape != np.shape(lc.time):
+        raise RuntimeError("CSM photosphere rows do not match the light-curve rows")
+    return lc, r_ph
+
+
 # ---------------------------------------------------------------------------
 # Radio / synchrotron support
 # ---------------------------------------------------------------------------

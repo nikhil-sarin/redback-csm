@@ -17,6 +17,15 @@
   (`get_diffuse_lc`), in continuous form. Close to shock emergence this
   prescription rises logarithmically, so the value right at emergence depends
   on the time resolution.
+- Multiband wrappers accept `photosphere_mode='csm'` (default `'legacy'`,
+  unchanged): the photosphere is the radius where the optical depth through the
+  CSM ahead of the shell reaches 2/3, and the shell radius once that CSM is
+  optically thin, with T = (L / 4 pi sigma R^2)^(1/4) and a 3000 K floor by
+  default. The CSM-only and `_nickel` wrappers use the same radius. The Fortran
+  computes it for every CSM model (new output `rphcsmarray`). Existing outputs
+  are unchanged.
+- `jax_csm` results now include `r_photosphere` (the same definition), and
+  `jax_csm.photosphere_temperature` applies the temperature floor.
 - Added `jax_csm.nickel.nickel_diffused_luminosity` (the Arnett diffusion term
   of the `*_nickel_bolometric` models) and
   `jax_csm.csm_nickel.simple_csm_nickel_bolometric` (diffused CSM + nickel).

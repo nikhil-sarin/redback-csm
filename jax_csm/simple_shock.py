@@ -65,6 +65,7 @@ class SimpleShockResult(NamedTuple):
     v_shock: jnp.ndarray       # cm/s
     shell_mass: jnp.ndarray    # g
     tau_ahead: jnp.ndarray     # optical depth (params.kappa) from r_shock to r_outer
+    r_photosphere: jnp.ndarray # cm, max(r_shock, radius where tau through the CSM ahead = 2/3)
     t_collide: jnp.ndarray     # days, scalar
     t_emerge: jnp.ndarray      # days, scalar (inf if the shell never leaves r_outer)
 
@@ -147,6 +148,20 @@ def _rk4(y, tau, h, emerged, f):
     k3 = f(y + 0.5 * h * k2, tau + 0.5 * h, emerged)
     k4 = f(y + h * k3, tau + h, emerged)
     return y + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+
+def _tau23_radius_dimless(x, x_out, eta, k_tau):
+    """max(x, x_ph) with tau(x_ph) = 2/3 through the static CSM ahead of x (analytic)."""
+    p = eta + 1.0
+    near = jnp.abs(p) < 1e-10
+    p_safe = jnp.where(near, 1.0, p)
+    target = (2.0 / 3.0) / jnp.maximum(k_tau, 1e-300)
+    x_log = x_out * jnp.exp(-target)
+    arg = x_out**p_safe - p_safe * target
+    x_pow = jnp.where(arg > 0.0, jnp.maximum(arg, 1e-300) ** (1.0 / p_safe), 0.0)
+    x_ph = jnp.where(near, x_log, x_pow)
+    thick = _tau_ahead_dimless(jnp.maximum(x, 1.0), x_out, eta, k_tau) > 2.0 / 3.0
+    return jnp.where(thick, jnp.maximum(x_ph, x), x)
 
 
 def _tau_ahead_dimless(x, x_out, eta, k_tau):
@@ -323,7 +338,10 @@ def solve_simple_static_bpl(time_days, params, n_steps=2048, t_max_days=None, fi
     r_q = jnp.where(before, sc.v_max * t_req, x_q * params.r_inner)  # pre-collision: ejecta edge
     v_q = jnp.where(before, sc.v_max, w_q * sc.v_max)
     lshock = lfs_q + lrs_q
-    tau_ahead = jnp.where(before, 0.0, _tau_ahead_dimless(x_q, sc.x_out, eta, k_tau.astype(jnp.float64)))
+    k64 = k_tau.astype(jnp.float64)
+    tau_ahead = jnp.where(before, 0.0, _tau_ahead_dimless(x_q, sc.x_out, eta, k64))
+    x_shell = r_q / params.r_inner  # ejecta edge before collision
+    r_ph = _tau23_radius_dimless(x_shell, sc.x_out, eta, k64) * params.r_inner
     lbol = jnp.where(before, 0.0, acc.astype(jnp.float64) * sc.l_scale) if diffusion else lshock
     return SimpleShockResult(
         time=time_days,
@@ -335,6 +353,7 @@ def solve_simple_static_bpl(time_days, params, n_steps=2048, t_max_days=None, fi
         v_shock=v_q,
         shell_mass=mu_q * sc.m_scale,
         tau_ahead=tau_ahead,
+        r_photosphere=r_ph,
         t_collide=sc.t_c / DAY,
         t_emerge=jnp.asarray(tau_e, jnp.float64) * sc.t_c / DAY,
     )
