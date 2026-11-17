@@ -6,6 +6,8 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 
+from .simple_shock import SimpleShockResult, solve_simple_static_bpl  # noqa: E402
+
 DAY = 86400.0
 CLIGHT = 2.99792458e10
 SOLAR_MASS = 1.98847e33
@@ -937,15 +939,42 @@ def solve_static_powerlaw_bpl(
 ):
     """Evaluate a JAX-native static-power-law CSM light curve.
 
-    ``mode='simple'`` returns the instantaneous radiative shock luminosity.
+    ``mode='simple'`` returns the instantaneous radiative shock luminosity
+    eff * (L_fs + L_rs), as the Fortran simple mode without ``kappa``
+    (see ``jax_csm.simple_shock``).
+    ``radius``/``velocity`` are the thin-shell shock radius/velocity.  For the
+    simple path ``n_steps`` is the number of RK4 steps (2048 is converged to
+    ~1e-3 of peak; the historical default of 16384 is accepted but unnecessary).
+
+    ``mode='simple_legacy'`` is the original simple path, kept only to document
+    the corrections: it seeded the shell with u = 0.9 v_max and
+    m = 1e-4 (M_ej + M_csm) Msun (too massive; the shell decelerated too slowly
+    for ~days), and froze u, m after shock emergence (ballistic), which
+    overestimated the post-emergence reverse-shock luminosity by up to ~2x.
+
     ``mode='transport'`` evolves a finite-volume radiation grid over the full
     static shell, then homologously expands that grid after shock emergence.
-    The hydrodynamics and density normalizations are shared by both modes and
-    match the current static finite-shell convention.
     """
     time_days = jnp.asarray(time_days, dtype=jnp.float64)
     if mode == "transport":
         return _solve_dimless_transport_static_bpl(time_days, params, n_steps=n_steps, n_zones=n_zones)
+    if mode == "simple":
+        res = solve_simple_static_bpl(time_days, params, n_steps=n_steps)
+        rho_inner = _static_powerlaw_rho_inner(params)
+        tau = _tau_static_powerlaw(params, rho_inner, res.r_shock)
+        return StaticPowerlawBPLResult(
+            time=time_days * DAY,
+            lbol=res.lbol,
+            lbol_shock=res.lbol,
+            radius=res.r_shock,
+            velocity=res.v_shock,
+            shell_mass=res.shell_mass,
+            internal_energy=jnp.zeros_like(res.lbol),
+            optical_depth=tau,
+            t_leak=jnp.ones_like(res.lbol),
+        )
+    if mode != "simple_legacy":
+        raise ValueError(f"mode must be 'simple', 'transport' or 'simple_legacy', got {mode!r}")
 
     rho_inner = _static_powerlaw_rho_inner(params)
     v_t, v_max, rho0_4pi = _bpl_coefficients(params)

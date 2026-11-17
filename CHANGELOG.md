@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- JAX `mode="simple"` (static power-law CSM + BPL ejecta) now uses a new
+  solver, `jax_csm.simple_shock.solve_simple_static_bpl`, that follows the
+  Fortran simple mode. The previous path is kept as `mode="simple_legacy"`;
+  it started from a heavy seed shell (u = 0.9 v_max,
+  m = 1e-4 (M_ej + M_csm) Msun), which biased the first days after collision,
+  and froze the shell after it left the CSM, which made the tail too bright.
+  JAX simple-mode results change accordingly. The new path uses 1.989e33 g per
+  Msun like the Fortran wrapper and returns `r_shock`, `v_shock`, `lbol_fs`,
+  `lbol_rs`, `tau_ahead` and `t_emerge`. The shock radius is not a
+  photospheric radius.
+- `solve_simple_static_bpl(..., diffusion=True)` adds the simple-mode diffusion
+  through the unshocked CSM that the Fortran applies when `kappa` is passed
+  (`get_diffuse_lc`), in continuous form. Close to shock emergence this
+  prescription rises logarithmically, so the value right at emergence depends
+  on the time resolution.
+- Added `jax_csm.nickel.nickel_diffused_luminosity` (the Arnett diffusion term
+  of the `*_nickel_bolometric` models) and
+  `jax_csm.csm_nickel.simple_csm_nickel_bolometric` (diffused CSM + nickel).
+
 - Fixed radio models returning the same flux for every frequency at a shared
   epoch when a per-point `frequency` array contained repeated times.
 - Fixed radio and X-ray post-processing for homologously expanding CSM
