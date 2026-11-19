@@ -605,4 +605,45 @@ function v_explosion(r,t,op)
   r_ph = rhi
  end function query_csm_photosphere_radius
 
+ function query_csm_photosphere_radius_fast(r_shell,t,op_in,kappa) result(r_ph)
+! Radius where the optical depth through the CSM ahead of r_shell reaches 2/3,
+! from a single inward log-trapezoid sweep (outer edge capped at 1e4 r_shell,
+! as in query_tau_to_edge).  Returns r_shell when tau(r_shell) <= 2/3.
+  type(outflow_parameters),intent(in):: op_in
+  real(8),intent(in):: r_shell,t,kappa
+  real(8):: r_ph
+  integer,parameter:: nseg = 256
+  real(8):: rr(0:nseg), rho(0:nseg), tau(0:nseg)
+  real(8):: r0, rout, ratio, frac
+  integer:: i
+
+  r0 = max(r_shell,1d0)
+  r_ph = r0
+  if(kappa<=0d0)return
+  rout = query_csm_outer_edge(t,op_in)
+  if(.not.(rout>r0))return
+  if(rout>r0*1d4)rout = r0*1d4
+
+  ratio = (rout/r0)**(1d0/dble(nseg))
+  rr(0) = r0
+  do i = 1, nseg
+   rr(i) = rr(i-1)*ratio
+  end do
+  rr(nseg) = rout
+  do i = 0, nseg
+   rho(i) = max(query_csm_density(rr(i),t,op_in),0d0)
+  end do
+  tau(nseg) = 0d0
+  do i = nseg-1, 0, -1
+   tau(i) = tau(i+1) + 0.5d0*kappa*(rho(i)+rho(i+1))*(rr(i+1)-rr(i))
+  end do
+  if(tau(0)<=2d0/3d0)return
+
+  do i = nseg-1, 0, -1
+   if(tau(i)>2d0/3d0)exit
+  end do
+  frac = (tau(i)-2d0/3d0)/max(tau(i)-tau(i+1),1d-300)
+  r_ph = rr(i) + min(max(frac,0d0),1d0)*(rr(i+1)-rr(i))
+ end function query_csm_photosphere_radius_fast
+
 end module get_vals

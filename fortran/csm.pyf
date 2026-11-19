@@ -19,6 +19,7 @@ python module csm ! in
             real(kind=8), public,allocatable,dimension(:) :: etraparray
             real(kind=8), public,allocatable,dimension(:) :: tleakarray
             real(kind=8), public,allocatable,dimension(:) :: tauarray_transport
+            real(kind=8), public,allocatable,dimension(:) :: rphcsmarray
             integer, private,parameter,optional :: ll=10000
             real(kind=8), private,dimension(10000) :: t_array
             real(kind=8), private,dimension(10000) :: l_array
