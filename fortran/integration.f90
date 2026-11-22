@@ -10,6 +10,96 @@ module integration
 
 contains
 
+ subroutine static_shell_rhs(t, y, dy, exterior)
+  ! No scan-index side effects: rejected RK stages may visit earlier radii.
+  real(8), intent(in) :: t, y(3)
+  real(8), intent(out) :: dy(3)
+  logical, intent(in) :: exterior
+  real(8) :: a, b, vi, ri, ro, radius
+  radius = y(1)
+  vi = v_in(radius,t,op(1))
+  a = rho4pir2_in(radius,t,op(1))
+  b = 0d0
+  if (.not.exterior) then
+   ! Continue the interior density to locate the outer-edge event without
+   ! integrating across its discontinuity.
+   b = 4d0*pi*radius**2*static_profile_density_at_r( &
+        min(radius,op(2)%r_grid_static(size(op(2)%r_grid_static))),op(2))
+  end if
+  ri = max(vi-y(2),0d0)
+  ro = max(y(2),0d0)
+  dy = [y(2), (a*ri**2-b*ro**2)/y(3), a*ri+b*ro]
+ end subroutine static_shell_rhs
+
+ subroutine static_shell_rk4(t, y, h, z, exterior)
+  real(8), intent(in) :: t, y(3), h
+  real(8), intent(out) :: z(3)
+  logical, intent(in) :: exterior
+  real(8) :: k1(3), k2(3), k3(3), k4(3)
+  call static_shell_rhs(t,y,k1,exterior)
+  call static_shell_rhs(t+h/2d0,y+h*k1/2d0,k2,exterior)
+  call static_shell_rhs(t+h/2d0,y+h*k2/2d0,k3,exterior)
+  call static_shell_rhs(t+h,y+h*k3,k4,exterior)
+  z = y+h*(k1+2d0*k2+2d0*k3+k4)/6d0
+ end subroutine static_shell_rk4
+
+ subroutine advance_static_shell(t, r, u, m, h_next, t_end, at_edge, exterior)
+  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+  real(8), intent(inout) :: t, r, u, m, h_next
+  real(8), intent(in) :: t_end
+  logical, intent(out) :: at_edge
+  logical, intent(in) :: exterior
+  real(8) :: y(3), full(3), half(3), z(3), scale(3), h, err, edge, lo, hi, trial
+  integer :: j
+  y = [r,u,m]
+  h = min(h_next,0.005d0*t,t_end-t)
+  edge = op(2)%r_grid_static(size(op(2)%r_grid_static))
+  if (.not.exterior) h=min(h,0.05d0*max(edge-r,0d0)/u+1d-6*t)
+  if (exterior .and. r<1.2d0*edge) h=min(h,0.001d0*t)
+  at_edge = .false.
+  do
+   call static_shell_rk4(t,y,h,full,exterior)
+   call static_shell_rk4(t,y,h/2d0,half,exterior)
+   call static_shell_rk4(t+h/2d0,half,h/2d0,z,exterior)
+   scale = 1d-8*max(abs(y),abs(z)) + [1d0,1d-2,1d0]
+   err = maxval(abs(z-full)/scale)/15d0
+   if (all(ieee_is_finite(z)) .and. ieee_is_finite(err)) then
+    if (err <= 1d0 .and. z(3)>0d0 .and. z(2)>0d0) exit
+   else
+    err = 1d10
+   end if
+   h = h*max(0.1d0,0.8d0*max(err,1d0)**(-0.2d0))
+   if (t+h==t) then
+    h_next=0d0
+    return
+   end if
+  end do
+  if (.not.exterior .and. z(1)>=edge) then
+   lo = 0d0
+   hi = h
+   do j=1,50
+    trial = (lo+hi)/2d0
+    call static_shell_rk4(t,y,trial/2d0,half,exterior)
+    call static_shell_rk4(t+trial/2d0,half,trial/2d0,z,exterior)
+    if (z(1)<edge) then
+     lo=trial
+    else
+     hi=trial
+    end if
+   end do
+   h=(lo+hi)/2d0
+   call static_shell_rk4(t,y,h/2d0,half,exterior)
+   call static_shell_rk4(t+h/2d0,half,h/2d0,z,exterior)
+   z(1)=edge
+   at_edge=.true.
+  end if
+  t=t+h
+  r=z(1)
+  u=z(2)
+  m=z(3)
+  h_next=h*min(2d0,max(0.5d0,0.9d0*max(err,1d-12)**(-0.2d0)))
+ end subroutine advance_static_shell
+
  subroutine shell_rhs_and_luminosity(u, r, m, t, op, du_dt, dr_dt, dm_dt, lum_fs, lum_rs)
   ! Evaluate shell dynamics and raw shock powers with one set of density/velocity calls.
   type(outflow_parameters),intent(inout):: op(1:2)

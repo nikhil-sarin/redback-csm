@@ -118,7 +118,7 @@ contains
     call get_diffuse_lc(csm_type,kappa)
     call compute_csm_photosphere(kappa)
     temparray = temperature(ldiff,rarray)
-    call drop_initial_output_rows(n_skip_initial_outputs)
+    if(csm_type/=5) call drop_initial_output_rows(n_skip_initial_outputs)
    elseif(allocated(ldiff))then
     deallocate(ldiff)
    end if
@@ -876,7 +876,8 @@ end subroutine lightcurve_wind_bpl
    real(8) :: r_ph, L_ph
    character(len=32) :: m3_debug_env
    integer :: m3_debug_status
-   logical :: mode3_debug, simple_dense_output
+   logical :: mode3_debug, simple_dense_output, static_adaptive, static_at_edge, static_exterior
+   real(8) :: static_h, contact_time, edge_velocity, a_contact, b_contact, seed_dt
 
   call reset_dimless_state(dl_state_global)
    if(run_mode == 3)then
@@ -930,6 +931,37 @@ end subroutine lightcurve_wind_bpl
   tau_array_transport = 0d0
   i_array = 0
   n = 0
+  static_adaptive = run_mode==1 .and. associated(op(2)%r_grid_static)
+  if (static_adaptive) static_adaptive=op(2)%rho_static(1)>0d0
+  if (static_adaptive) static_adaptive=op(1)%bpl_vmax>0d0 .or. op(1)%exp_v0>0d0
+  static_at_edge = .false.
+  static_exterior = .false.
+  if (static_adaptive) then
+   edge_velocity=op(1)%bpl_vmax
+   if (edge_velocity<=0d0) edge_velocity=20d0*op(1)%exp_v0
+   ! A finite BPL edge (or the existing 20*v0 exponential cutoff) reaches
+   ! the CSM in free flight. Do not integrate a fictitious 1 g shell in vacuum.
+   r=op(2)%r_grid_static(1)
+   contact_time=r/edge_velocity
+   t=contact_time
+   a_contact=rho4pir2_in(r,nearest(t,1d0),op(1))
+   b_contact=4d0*pi*r*r*static_profile_density_at_r(r,op(2))
+   u=edge_velocity*sqrt(a_contact)/(sqrt(a_contact)+sqrt(b_contact))
+   seed_dt=1d-8*contact_time
+   m=max((a_contact*(edge_velocity-u)+b_contact*u)*seed_dt,1d0)
+   ! Preserve an explicit dark/contact boundary for user-time interpolation.
+   n=1
+   t_array(n)=contact_time
+   l_array(n)=0d0
+   r_array(n)=r
+   rfs_array(n)=r
+   rph_array(n)=r
+   v_array(n)=u
+   m_array(n)=m
+   t=contact_time+seed_dt
+   r=r+u*seed_dt
+   static_h=seed_dt
+  end if
   n_store_seen = 0
   simple_t_last_store = -1d0
   simple_l_last_store = 0d0
@@ -999,10 +1031,44 @@ end subroutine lightcurve_wind_bpl
     if (t + dt > t_end_run) dt = t_end_run - t
    if (.not.(dt>0d0.and.dt<huge(1d0))) exit
    else if(run_mode == 1)then
-    dt = 0.01d0*min(abs(u/ku),abs(r/kr),abs(m/km))
+    if (static_adaptive) then
+     dt=min(static_h,t_end_run-t)
+     if (dt<=0d0) exit
+    else
+     dt = 0.01d0*min(abs(u/ku),abs(r/kr),abs(m/km))
+    end if
    end if
 
-   if (run_mode /= 3) then
+   if (static_adaptive) then
+    if (static_at_edge) then
+     ! Separate left and right event values instead of interpolating a
+     ! forward-shock drop across an ordinary output interval.
+     t=nearest(t,1d0)
+     r=nearest(r,1d0)
+     static_at_edge=.false.
+     static_exterior=.true.
+    else
+     call advance_static_shell(t,r,u,m,static_h,t_end_run,static_at_edge,static_exterior)
+    end if
+    call shell_rhs_and_luminosity(u,r,m,t,op,ku,kr,km,lum_fs,lum_rs)
+    if (shock_efficiency_mode==1) then
+     eta_fs=forward_shock_radiative_efficiency(r,t,u,op,eff_global)
+     eta_rs=reverse_shock_radiative_efficiency(r,t,u,op,eff_global)
+     if (diffusion_enabled) then
+      tau_ahead=shell_optical_depth(r,t)
+      therm_factor=(0.25d0+0.75d0/(1d0+(7d0/max(tau_ahead,1d-30))**12)) * &
+                   (1d0-exp(-min((tau_ahead/0.10d0)**2,80d0)))
+      eta_fs=eta_fs*therm_factor
+      eta_rs=eta_rs*therm_factor
+     end if
+     lum_fs=eta_fs*lum_fs
+     lum_rs=eta_rs*lum_rs
+    else
+     lum_fs=eff_global*lum_fs
+     lum_rs=eff_global*lum_rs
+    end if
+    lum_heat=lum_fs+lum_rs
+   else if (run_mode /= 3) then
     u = u + dt*ku
     r = r + dt*kr
     m = m + dt*km
@@ -1012,7 +1078,7 @@ end subroutine lightcurve_wind_bpl
      erad = 0d0
     end if
 
-   if (run_mode /= 3) t = t + dt
+   if (run_mode /= 3 .and. .not.static_adaptive) t = t + dt
 
    if (run_mode == 3 .and. diffusion_enabled) then
     m3_log_counter = m3_log_counter + 1
@@ -1033,15 +1099,16 @@ end subroutine lightcurve_wind_bpl
    end if
 
 ! Store output arrays
-   if((run_mode == 1 .and. t>1d4) .or. (run_mode == 3 .and. t>t_start))then
+   if(static_adaptive .or. (run_mode == 1 .and. t>1d4) .or. (run_mode == 3 .and. t>t_start))then
     if (n >= 1) then
      if (run_mode == 3) then
       if (t <= t_array(n) + 1d-6) cycle
-     else
+     else if (.not.static_adaptive) then
       if (t <= t_array(n) * (1.0d0 + 1.0d-10)) cycle
      end if
     end if
-    if (run_mode == 1 .and. diffusion_enabled .and. .not.simple_dense_output .and. n >= 1 .and. t < t_end_run) then
+    if (run_mode == 1 .and. diffusion_enabled .and. .not.simple_dense_output .and. .not.static_adaptive &
+        .and. n >= 1 .and. t < t_end_run) then
      simple_dlogt = abs(log(max(t, 1d-99) / max(simple_t_last_store, 1d-99)))
      simple_rell = abs(lum_heat - simple_l_last_store) / max(max(abs(lum_heat), abs(simple_l_last_store)), 1d-99)
      simple_relr = abs(r - simple_r_last_store) / max(max(abs(r), abs(simple_r_last_store)), 1d-99)
@@ -1162,7 +1229,7 @@ end subroutine lightcurve_wind_bpl
   integer,intent(in):: csm_type
   real(8),intent(in):: kappa
   integer:: i,j,k,n
-  real(8):: dldiff, tp, tadv, tloss, tdiff, mdj, mdjp,tj,tjp
+  real(8):: dldiff, tp, tadv, tloss, tdiff, mdj, mdjp,tj,tjp, source_lum, radius_mid, velocity_mid
   real(8),allocatable,dimension(:):: tauprep, tau
 
   select case(csm_type)
@@ -1175,6 +1242,7 @@ end subroutine lightcurve_wind_bpl
   ldiff = 0d0
 
   do i = 1, size(tarray)-1
+   source_lum=larray(i)
    select case(csm_type)
   case(1)
     j = i_array(i)
@@ -1257,13 +1325,20 @@ end subroutine lightcurve_wind_bpl
     tau(i) = op(2)%Mej/(8d0*pi*(op(2)%exp_v0*tp)**2)&
              *exp(-rarray(i)/(op(2)%exp_v0*tp))
    case(5)
-    tau(i) = query_tau_to_edge(rarray(i), tarray(i), op(2), 1d0)
+    radius_mid=(rarray(i)+rarray(i+1))/2d0
+    velocity_mid=(varray(i)+varray(i+1))/2d0
+    tau(i) = query_tau_to_edge(radius_mid, (tarray(i)+tarray(i+1))/2d0, op(2), 1d0)
+    source_lum=(larray(i)+larray(i+1))/2d0
    end select
    tau(i) = kappa*tau(i)
    if(.not.(tau(i)==tau(i)) .or. abs(tau(i)) > 1d250)cycle
 
    tdiff = tau(i)*rarray(i)/clight
    tadv  = rarray(i)/varray(i)
+   if (csm_type==5) then
+    tdiff=tau(i)*radius_mid/clight
+    tadv=radius_mid/velocity_mid
+   end if
    if(.not.(tdiff==tdiff) .or. .not.(tadv==tadv))cycle
    if(tdiff<=0d0.or.tadv<=0d0)cycle
    tloss = 1d0/(1d0/tdiff+1d0/tadv)
@@ -1271,7 +1346,7 @@ end subroutine lightcurve_wind_bpl
    do j = i+1, size(tarray)
     dldiff = exp((tarray(i+1)-tarray(j))/tloss)&
            - exp((tarray(i  )-tarray(j))/tloss)
-    ldiff(j) = ldiff(j)+larray(i)*dldiff*tloss/tdiff
+    ldiff(j) = ldiff(j)+source_lum*dldiff*tloss/tdiff
     if(tarray(j)>tarray(i+1)+max(tdiff,tadv)*50d0)exit
    end do
   end do
