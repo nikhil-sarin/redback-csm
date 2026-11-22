@@ -230,11 +230,13 @@ def _jaxd(p, t_days, n_steps=2048, kappa=0.34, t_max=300.0):
                                    t_max_days=t_max, diffusion=True)
 
 
-def test_diffusion_thin_limit_recovers_shock_luminosity():
+def test_legacy_diffusion_thin_limit_recovers_shock_luminosity():
+    from jax_csm import solve_simple_static_bpl
     p = CASES["wind_compact"]
     te = float(_jax(p, np.array([300.0])).t_emerge)
     t = np.concatenate([np.geomspace(1.0, 0.98 * te, 30), [1.05 * te, 2 * te]])
-    d = _jaxd(p, t, kappa=1e-7)
+    d = solve_simple_static_bpl(t, _params(p, kappa=1e-7), diffusion=True,
+                                diffusion_escape='legacy', t_max_days=300.)
     s = _jax(p, t)
     assert np.max(np.abs(np.asarray(d.lbol[:30]) / np.asarray(s.lbol[:30]) - 1)) < 1e-3
     # post-emergence shock power is not added (Fortran: tau_ahead = 0 -> skipped)

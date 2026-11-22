@@ -2,7 +2,7 @@ module lc_mod
 
  use constants,only:pi,year,clight,intpol,temperature
  use csm_runtime, only: diffusion_enabled, eff_global, erad, &
-                        shock_efficiency_mode, &
+                        shock_efficiency_mode, diffusion_escape_mode, &
                         configure_runtime, reset_diffusion_state, &
                         shell_optical_depth, photosphere_radius, &
                         solve_diffusion_step, &
@@ -26,16 +26,13 @@ use csm_transport, only: dimless_state_type, dimless_comoving_transport_step, &
           lightcurve_explosion_bpl, lightcurve_bpl_exponential, &
           lightcurve_exponential_explosion, lightcurve_explosion_exponential, &
           lightcurve_static_bpl, lightcurve_static_exponential, &
-          set_efficiency_mode, set_run_mode, set_transport_parameters, &
+          set_efficiency_mode, set_run_mode, set_transport_parameters, set_diffusion_escape_mode, &
           set_bpl_cutoff_ratio, get_dimless_state_debug
 
  private:: finalize_outputs, do_main_loop, compute_csm_photosphere
  private:: get_diffuse_lc
  private
 integer,parameter:: ll=200000, n_skip_initial_outputs=10
- real(8),parameter:: simple_store_min_dlogt=2d-2
- real(8),parameter:: simple_store_min_rell=2d-2
- real(8),parameter:: simple_store_min_relr=1d-2
  real(8),dimension(ll):: t_array, L_array, ld_array, r_array, v_array, m_array, fs_array, rs_array
  real(8),dimension(ll):: rfs_array, rph_array, etrap_array, tleak_array, tau_array_transport
  integer,dimension(ll):: i_array
@@ -46,13 +43,18 @@ integer,parameter:: ll=200000, n_skip_initial_outputs=10
  integer :: run_mode = 1
 
  ! Transport mode parameters
- integer :: n_rad_zones_global = 20
+ integer :: n_rad_zones_global = 160
  real(8) :: opacity_const_global = 0.34d0
 
  ! Mode 3 persistent state (survives across dimless_comoving_transport_step calls)
  type(dimless_state_type) :: dl_state_global
 
 contains
+
+ subroutine set_diffusion_escape_mode(mode)
+  integer,intent(in):: mode
+  diffusion_escape_mode=mode
+ end subroutine set_diffusion_escape_mode
 
  subroutine set_efficiency_mode(mode)
   integer,intent(in):: mode
@@ -118,7 +120,6 @@ contains
     call get_diffuse_lc(csm_type,kappa)
     call compute_csm_photosphere(kappa)
     temparray = temperature(ldiff,rarray)
-    if(csm_type/=5) call drop_initial_output_rows(n_skip_initial_outputs)
    elseif(allocated(ldiff))then
     deallocate(ldiff)
    end if
@@ -137,32 +138,6 @@ contains
   end do
  end subroutine compute_csm_photosphere
 
- subroutine drop_initial_output_rows(n_drop)
-  integer,intent(in):: n_drop
-  integer:: n_old, n_new
-  real(8),allocatable,dimension(:):: tmp
-
-  if(.not.allocated(tarray))return
-  n_old = size(tarray)
-  if(n_drop <= 0 .or. n_old <= n_drop)return
-  n_new = n_old - n_drop
-
-  allocate(tmp(n_new)); tmp = tarray(n_drop+1:n_old); call move_alloc(tmp,tarray)
-  allocate(tmp(n_new)); tmp = larray(n_drop+1:n_old); call move_alloc(tmp,larray)
-  allocate(tmp(n_new)); tmp = lfs(n_drop+1:n_old); call move_alloc(tmp,lfs)
-  allocate(tmp(n_new)); tmp = lrs(n_drop+1:n_old); call move_alloc(tmp,lrs)
-  allocate(tmp(n_new)); tmp = temparray(n_drop+1:n_old); call move_alloc(tmp,temparray)
-  allocate(tmp(n_new)); tmp = rarray(n_drop+1:n_old); call move_alloc(tmp,rarray)
-  allocate(tmp(n_new)); tmp = varray(n_drop+1:n_old); call move_alloc(tmp,varray)
-  allocate(tmp(n_new)); tmp = marray(n_drop+1:n_old); call move_alloc(tmp,marray)
-  allocate(tmp(n_new)); tmp = ldiff(n_drop+1:n_old); call move_alloc(tmp,ldiff)
-  allocate(tmp(n_new)); tmp = rfsarray(n_drop+1:n_old); call move_alloc(tmp,rfsarray)
-  allocate(tmp(n_new)); tmp = rpharray(n_drop+1:n_old); call move_alloc(tmp,rpharray)
-  allocate(tmp(n_new)); tmp = etraparray(n_drop+1:n_old); call move_alloc(tmp,etraparray)
-  allocate(tmp(n_new)); tmp = tleakarray(n_drop+1:n_old); call move_alloc(tmp,tleakarray)
-  allocate(tmp(n_new)); tmp = tauarray_transport(n_drop+1:n_old); call move_alloc(tmp,tauarray_transport)
-  allocate(tmp(n_new)); tmp = rphcsmarray(n_drop+1:n_old); call move_alloc(tmp,rphcsmarray)
- end subroutine drop_initial_output_rows
 
  subroutine lightcurve_wind_exponential(Mdotinput, tinput, vwindinput, Mexp, Eexp, eff, kappa)
 
@@ -870,14 +845,12 @@ end subroutine lightcurve_wind_bpl
    integer:: n, m3_log_counter, n_store_seen
    real(8):: dt,ku,kr,km, t_end_run
    real(8):: lum_fs, lum_rs, lum_heat, lum_store, r_store, eta_fs, eta_rs
-   real(8):: tau_ahead, tau_therm, therm_floor, therm_factor, escape_factor
-   real(8):: simple_t_last_store, simple_l_last_store, simple_r_last_store
-   real(8):: simple_dlogt, simple_rell, simple_relr
+   real(8):: tau_ahead, therm_factor
    real(8) :: r_ph, L_ph
    character(len=32) :: m3_debug_env
    integer :: m3_debug_status
-   logical :: mode3_debug, simple_dense_output, static_adaptive, static_at_edge, static_exterior
-   real(8) :: static_h, contact_time, edge_velocity, a_contact, b_contact, seed_dt
+   logical :: mode3_debug, simple_adaptive, simple_at_edge, simple_exterior
+   real(8) :: simple_h, seed_dt
 
   call reset_dimless_state(dl_state_global)
    if(run_mode == 3)then
@@ -896,15 +869,6 @@ end subroutine lightcurve_wind_bpl
   if (m3_debug_status == 0) then
    mode3_debug = len_trim(m3_debug_env) > 0 .and. m3_debug_env(1:1) /= '0' .and. m3_debug_env(1:1) /= 'f' .and. &
                  m3_debug_env(1:1) /= 'F' .and. m3_debug_env(1:1) /= 'n' .and. m3_debug_env(1:1) /= 'N'
-  end if
-  simple_dense_output = .false.
-  m3_debug_env = ''
-  m3_debug_status = 1
-  call get_environment_variable('REDBACK_CSM_SIMPLE_DENSE_OUTPUT', m3_debug_env, status=m3_debug_status)
-  if (m3_debug_status == 0) then
-   simple_dense_output = len_trim(m3_debug_env) > 0 .and. m3_debug_env(1:1) /= '0' .and. &
-                         m3_debug_env(1:1) /= 'f' .and. m3_debug_env(1:1) /= 'F' .and. &
-                         m3_debug_env(1:1) /= 'n' .and. m3_debug_env(1:1) /= 'N'
   end if
 
   if (run_mode == 3) then
@@ -931,41 +895,26 @@ end subroutine lightcurve_wind_bpl
   tau_array_transport = 0d0
   i_array = 0
   n = 0
-  static_adaptive = run_mode==1 .and. associated(op(2)%r_grid_static)
-  if (static_adaptive) static_adaptive=op(2)%rho_static(1)>0d0
-  if (static_adaptive) static_adaptive=op(1)%bpl_vmax>0d0 .or. op(1)%exp_v0>0d0
-  static_at_edge = .false.
-  static_exterior = .false.
-  if (static_adaptive) then
-   edge_velocity=op(1)%bpl_vmax
-   if (edge_velocity<=0d0) edge_velocity=20d0*op(1)%exp_v0
-   ! A finite BPL edge (or the existing 20*v0 exponential cutoff) reaches
-   ! the CSM in free flight. Do not integrate a fictitious 1 g shell in vacuum.
-   r=op(2)%r_grid_static(1)
-   contact_time=r/edge_velocity
-   t=contact_time
-   a_contact=rho4pir2_in(r,nearest(t,1d0),op(1))
-   b_contact=4d0*pi*r*r*static_profile_density_at_r(r,op(2))
-   u=edge_velocity*sqrt(a_contact)/(sqrt(a_contact)+sqrt(b_contact))
-   seed_dt=1d-8*contact_time
-   m=max((a_contact*(edge_velocity-u)+b_contact*u)*seed_dt,1d0)
+  simple_adaptive = run_mode==1
+  simple_at_edge = .false.
+  simple_exterior = .false.
+  if (simple_adaptive) then
+   call initialize_simple_shell(t,r,u,m,simple_h,t_end_run)
+   seed_dt=simple_h
    ! Preserve an explicit dark/contact boundary for user-time interpolation.
    n=1
-   t_array(n)=contact_time
+   t_array(n)=t
    l_array(n)=0d0
    r_array(n)=r
    rfs_array(n)=r
    rph_array(n)=r
    v_array(n)=u
    m_array(n)=m
-   t=contact_time+seed_dt
+   t=t+seed_dt
    r=r+u*seed_dt
-   static_h=seed_dt
+   simple_h=seed_dt
   end if
   n_store_seen = 0
-  simple_t_last_store = -1d0
-  simple_l_last_store = 0d0
-  simple_r_last_store = 0d0
   do while (t<=t_end_run)
 
 ! Evolve shell properties
@@ -977,30 +926,6 @@ end subroutine lightcurve_wind_bpl
     lum_fs = dl_state_global%lum_heat_fs_cgs
     lum_rs = dl_state_global%lum_heat_rs_cgs
     lum_heat = dl_state_global%lum_heat_total_cgs
-   else
-    call shell_rhs_and_luminosity(u, r, m, t, op, ku, kr, km, lum_fs, lum_rs)
-    select case (shock_efficiency_mode)
-    case (1)
-     eta_fs = forward_shock_radiative_efficiency(r,t,u,op,eff_global)
-     eta_rs = reverse_shock_radiative_efficiency(r,t,u,op,eff_global)
-     if (diffusion_enabled) then
-      tau_ahead = shell_optical_depth(r, t)
-      tau_therm = 7d0
-      therm_floor = 0.25d0
-      therm_factor = therm_floor + (1d0 - therm_floor) / &
-                    (1d0 + (tau_therm / max(tau_ahead, 1d-30))**12)
-      escape_factor = 1d0 - exp(-min((tau_ahead / 0.10d0)**2, 80d0))
-      therm_factor = therm_factor * escape_factor
-      eta_fs = eta_fs * therm_factor
-      eta_rs = eta_rs * therm_factor
-     end if
-     lum_fs = eta_fs*lum_fs
-     lum_rs = eta_rs*lum_rs
-    case default
-     lum_fs = eff_global*lum_fs
-     lum_rs = eff_global*lum_rs
-    end select
-    lum_heat = lum_fs + lum_rs
    end if
 
 ! Adaptively adjust time stepping so that shell changes are resolved to ~1%
@@ -1031,24 +956,20 @@ end subroutine lightcurve_wind_bpl
     if (t + dt > t_end_run) dt = t_end_run - t
    if (.not.(dt>0d0.and.dt<huge(1d0))) exit
    else if(run_mode == 1)then
-    if (static_adaptive) then
-     dt=min(static_h,t_end_run-t)
+     dt=min(simple_h,t_end_run-t)
      if (dt<=0d0) exit
-    else
-     dt = 0.01d0*min(abs(u/ku),abs(r/kr),abs(m/km))
-    end if
    end if
 
-   if (static_adaptive) then
-    if (static_at_edge) then
+   if (simple_adaptive) then
+    if (simple_at_edge) then
      ! Separate left and right event values instead of interpolating a
      ! forward-shock drop across an ordinary output interval.
      t=nearest(t,1d0)
-     r=nearest(r,1d0)
-     static_at_edge=.false.
-     static_exterior=.true.
+     r=nearest(simple_outer_edge(t),1d0)
+     simple_at_edge=.false.
+     simple_exterior=.true.
     else
-     call advance_static_shell(t,r,u,m,static_h,t_end_run,static_at_edge,static_exterior)
+     call advance_simple_shell(t,r,u,m,simple_h,t_end_run,simple_at_edge,simple_exterior)
     end if
     call shell_rhs_and_luminosity(u,r,m,t,op,ku,kr,km,lum_fs,lum_rs)
     if (shock_efficiency_mode==1) then
@@ -1068,17 +989,12 @@ end subroutine lightcurve_wind_bpl
      lum_rs=eff_global*lum_rs
     end if
     lum_heat=lum_fs+lum_rs
-   else if (run_mode /= 3) then
-    u = u + dt*ku
-    r = r + dt*kr
-    m = m + dt*km
    end if
 
     if(run_mode == 1 .or. .not.diffusion_enabled)then
      erad = 0d0
     end if
 
-   if (run_mode /= 3 .and. .not.static_adaptive) t = t + dt
 
    if (run_mode == 3 .and. diffusion_enabled) then
     m3_log_counter = m3_log_counter + 1
@@ -1091,6 +1007,10 @@ end subroutine lightcurve_wind_bpl
     u = dl_state_global%v_sh_cgs
     m = max(dl_state_global%m_sh_cgs, 1d-30)
     t = dl_state_global%t_cgs
+    call update_dimless_shock_luminosities(dl_state_global)
+    lum_fs=dl_state_global%lum_heat_fs_cgs
+    lum_rs=dl_state_global%lum_heat_rs_cgs
+    lum_heat=dl_state_global%lum_heat_total_cgs
     if (mode3_debug .and. (m3_log_counter <= 25 .or. mod(m3_log_counter, 200) == 0)) then
      write(*,'(A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,ES12.5,1X,A,1X,L1)') &
           'M3_LOOP_POST t=', t, 'L=', L_ph, 'r=', r, 'm=', m, 'cool=', dl_state_global%in_cooling_phase
@@ -1099,22 +1019,13 @@ end subroutine lightcurve_wind_bpl
    end if
 
 ! Store output arrays
-   if(static_adaptive .or. (run_mode == 1 .and. t>1d4) .or. (run_mode == 3 .and. t>t_start))then
+   if(simple_adaptive .or. (run_mode == 1 .and. t>1d4) .or. (run_mode == 3 .and. t>t_start))then
     if (n >= 1) then
      if (run_mode == 3) then
       if (t <= t_array(n) + 1d-6) cycle
-     else if (.not.static_adaptive) then
+     else if (.not.simple_adaptive) then
       if (t <= t_array(n) * (1.0d0 + 1.0d-10)) cycle
      end if
-    end if
-    if (run_mode == 1 .and. diffusion_enabled .and. .not.simple_dense_output .and. .not.static_adaptive &
-        .and. n >= 1 .and. t < t_end_run) then
-     simple_dlogt = abs(log(max(t, 1d-99) / max(simple_t_last_store, 1d-99)))
-     simple_rell = abs(lum_heat - simple_l_last_store) / max(max(abs(lum_heat), abs(simple_l_last_store)), 1d-99)
-     simple_relr = abs(r - simple_r_last_store) / max(max(abs(r), abs(simple_r_last_store)), 1d-99)
-     if (simple_dlogt < simple_store_min_dlogt .and. &
-         simple_rell < simple_store_min_rell .and. &
-         simple_relr < simple_store_min_relr) cycle
     end if
     if (run_mode == 3) then
      n_store_seen = n_store_seen + 1
@@ -1165,11 +1076,6 @@ end subroutine lightcurve_wind_bpl
     r_array(n) = r_store
     m_array(n) = m
     v_array(n) = u
-    if (run_mode == 1 .and. diffusion_enabled) then
-     simple_t_last_store = t
-     simple_l_last_store = lum_heat
-     simple_r_last_store = r
-    end if
    end if
 
   end do
@@ -1221,137 +1127,42 @@ end subroutine lightcurve_wind_bpl
  end subroutine do_main_loop
 
  subroutine get_diffuse_lc(csm_type,kappa)
-! purpose: To compute the light curve with diffusion effects in simplified form
-
-  use constants,only:intpol
-  use get_vals
-
+! Integrate the injection-time escape kernel on every accepted dynamics step.
   integer,intent(in):: csm_type
   real(8),intent(in):: kappa
-  integer:: i,j,k,n
-  real(8):: dldiff, tp, tadv, tloss, tdiff, mdj, mdjp,tj,tjp, source_lum, radius_mid, velocity_mid
-  real(8),allocatable,dimension(:):: tauprep, tau
-
-  select case(csm_type)
-  case(1)
-   call get_tauprep_explosion(tauprep)
-  end select
-
+  integer:: i,j
+  real(8):: ta,tb,dt,rm,vm,tau,td,adv,loss,x,g,slope,lbar,emitted,decay
   if(allocated(ldiff))deallocate(ldiff)
-  allocate(tau,ldiff,mold=larray)
-  ldiff = 0d0
-
-  do i = 1, size(tarray)-1
-   source_lum=larray(i)
-   select case(csm_type)
-  case(1)
-    j = i_array(i)
-    tp = tarray(i) + op(2)%delay
-    tau(i) = intpol(rarray(i)/tp,op(2)%v_grid(j:j+1),tauprep(j:j+1))/tp**2
-   case(2)
-    j = i_array(i)
-    n = size(op(2)%t_grid)
-    if(j==n)then
-     tau(i) = op(2)%mdot(n)*op(2)%vwind/rarray(i)
-    else
-     tau(i) = 0d0
-     do k = n-1, j+1, -1
-      if(op(2)%t_grid(k+1)-op(2)%t_grid(k)>1d-99)then
-       tau(i) = tau(i) &
-              + (op(2)%mdot(k+1)-op(2)%mdot(k))&
-               /(op(2)%t_grid(k+1)-op(2)%t_grid(k))&
-               *log((op(2)%t_grid(k+1)+tarray(i))&
-                   /(op(2)%t_grid(k  )+tarray(i)))
-      else
-       tau(i) = tau(i) &
-              + (op(2)%mdot(k+1)-op(2)%mdot(k))&
-               /(op(2)%t_grid(k)+tarray(i))
-      end if
-     end do
-
-     if(j==1.and.rarray(i)/op(2)%vwind-tarray(i)<op(2)%t_grid(1))then
-      tj   = op(2)%t_grid(1)
-      tjp  = op(2)%t_grid(2)
-      mdj  = op(2)%mdot(1)
-      mdjp = op(2)%mdot(2)
-      if(tjp-tj>1d-99)then
-       tau(i) = tau(i) &
-              + (mdjp-mdj)/(tjp-tj)&
-               *log((tjp+tarray(i))/(tj+tarray(i)))
-      else
-       tau(i) = tau(i) + (mdjp-mdj)/(tj+tarray(i))
-      end if
-      tau(i) = tau(i) &
-             + mdj/(tj+tarray(i)) &
-             + mdj*(op(2)%vwind/rarray(i)-1d0/(tj+tarray(i)))
-     else
-     tj   = op(2)%t_grid(j  )
-     tjp  = op(2)%t_grid(j+1)
-     mdj  = op(2)%mdot(j  )
-     mdjp = op(2)%mdot(j+1)
-      if(tjp-tj>1d-99)then
-       tau(i) = tau(i) &
-              + mdjp/(tjp+tarray(i))&
-              + (mdj*(tjp+tarray(i))-mdjp*(tj+tarray(i)))&
-               /(tjp-tj)*(op(2)%vwind/rarray(i)-1d0/(tjp+tarray(i)))&
-              +(mdjp-mdj)/(tjp-tj)&
-               *log((tjp+tarray(i))*op(2)%vwind/rarray(i))
-      else
-       ! A duplicate wind-history point represents a discontinuous jump rather
-       ! than a finite radial interval.  It contributes no optical-depth width
-       ! by itself; finite neighbouring intervals are handled by the loop above
-       ! or by the scan index on the next timestep.
-       tau(i) = tau(i)
-      end if
-     end if
-    end if
-    tau(i) = tau(i)/(4d0*pi*op(2)%vwind**2)
-   case(3)
-    tau(i) = bpl_tau_to_edge(rarray(i), tarray(i), op(2))
-    if(tau(i)<0d0)then
-     tp = tarray(i) + op(2)%delay
-     if(rarray(i)/tp>=op(2)%bpl_vt)then
-      tau(i) = op(2)%bpl_rho0*op(2)%bpl_vt/(4d0*pi*(op(2)%bpl_n-1d0)*tp**2) &
-              *(tp*op(2)%bpl_vt/rarray(i))**(op(2)%bpl_n-1d0)
-     else
-      tau(i) = op(2)%bpl_rho0*op(2)%bpl_vt/(4d0*pi*tp**2) &
-             * ( (1d0-(rarray(i)/(tp*op(2)%bpl_vt))**(1d0-op(2)%bpl_d)) &
-                 /(1d0-op(2)%bpl_d) &
-               + 1d0/(op(2)%bpl_n-1d0) )
-     end if
-    end if
-   case(4)
-    tp = tarray(i) + op(2)%delay
-    tau(i) = op(2)%Mej/(8d0*pi*(op(2)%exp_v0*tp)**2)&
-             *exp(-rarray(i)/(op(2)%exp_v0*tp))
-   case(5)
-    radius_mid=(rarray(i)+rarray(i+1))/2d0
-    velocity_mid=(varray(i)+varray(i+1))/2d0
-    tau(i) = query_tau_to_edge(radius_mid, (tarray(i)+tarray(i+1))/2d0, op(2), 1d0)
-    source_lum=(larray(i)+larray(i+1))/2d0
-   end select
-   tau(i) = kappa*tau(i)
-   if(.not.(tau(i)==tau(i)) .or. abs(tau(i)) > 1d250)cycle
-
-   tdiff = tau(i)*rarray(i)/clight
-   tadv  = rarray(i)/varray(i)
-   if (csm_type==5) then
-    tdiff=tau(i)*radius_mid/clight
-    tadv=radius_mid/velocity_mid
+  allocate(ldiff(size(larray)))
+  ldiff=0d0
+  do i=1,size(tarray)-1
+   ta=tarray(i)
+   tb=tarray(i+1)
+   dt=tb-ta
+   if(dt<=0d0)cycle
+   rm=(rarray(i)+rarray(i+1))/2d0
+   vm=(varray(i)+varray(i+1))/2d0
+   tau=shell_optical_depth(rm,(ta+tb)/2d0)
+   td=(tau+dble(diffusion_escape_mode))*rm/clight
+   adv=rm/max(vm,1d0)
+   if(td<=0d0)cycle
+   loss=td*adv/(td+adv)
+   x=dt/loss
+   if(x<1d-3)then
+    g=0.5d0-x/12d0+x**3/720d0
+    decay=x*(1d0-x/2d0+x*x/6d0-x**3/24d0)
+   else
+    g=1d0/x-1d0/(exp(min(x,700d0))-1d0)
+    decay=1d0-exp(-x)
    end if
-   if(.not.(tdiff==tdiff) .or. .not.(tadv==tadv))cycle
-   if(tdiff<=0d0.or.tadv<=0d0)cycle
-   tloss = 1d0/(1d0/tdiff+1d0/tadv)
-   if(.not.(tloss==tloss) .or. tloss<=0d0)cycle
-   do j = i+1, size(tarray)
-    dldiff = exp((tarray(i+1)-tarray(j))/tloss)&
-           - exp((tarray(i  )-tarray(j))/tloss)
-    ldiff(j) = ldiff(j)+source_lum*dldiff*tloss/tdiff
-    if(tarray(j)>tarray(i+1)+max(tdiff,tadv)*50d0)exit
+   slope=(larray(i+1)-larray(i))/dt
+   lbar=larray(i+1)-slope*dt*g
+   emitted=max(lbar,0d0)*adv/(td+adv)*decay
+   do j=i+1,size(tarray)
+    if(tarray(j)-tb>50d0*loss)exit
+    ldiff(j)=ldiff(j)+emitted*exp((tb-tarray(j))/loss)
    end do
   end do
-
-  return
  end subroutine get_diffuse_lc
 
  subroutine get_dimless_state_debug(x_sh_out, x_csm_out_val, in_cooling, nsub_val)

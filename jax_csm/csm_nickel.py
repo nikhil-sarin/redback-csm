@@ -36,13 +36,13 @@ class CSMNickelResult(NamedTuple):
     t_emerge: jnp.ndarray
 
 
-@partial(jax.jit, static_argnames=("n_steps", "nickel_quadrature", "csm_diffusion"))
+@partial(jax.jit, static_argnames=("n_steps", "nickel_quadrature", "csm_diffusion", "diffusion_escape"))
 def simple_csm_nickel_bolometric(time_days, params, f_nickel, kappa_gamma, mej_arnett=None, vej=None,
                                  n_steps=2048, t_max_days=None, nickel_quadrature="reference",
-                                 csm_diffusion=True):
+                                 csm_diffusion=True, diffusion_escape="finite"):
     time_days = jnp.asarray(time_days, jnp.float64)
     csm = solve_simple_static_bpl(time_days, params, n_steps=n_steps, t_max_days=t_max_days,
-                                  diffusion=csm_diffusion)
+                                  diffusion=csm_diffusion, diffusion_escape=diffusion_escape)
     lni = nickel_diffused_luminosity(
         time_days, f_nickel, params.mej_sn, params.esn, params.m_csm, params.kappa, kappa_gamma,
         mej_arnett=mej_arnett, vej=vej, quadrature=nickel_quadrature,

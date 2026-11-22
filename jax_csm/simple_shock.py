@@ -174,9 +174,9 @@ def _tau_ahead_dimless(x, x_out, eta, k_tau):
     return jnp.where(x < x_out, k_tau * jnp.maximum(integ, 0.0), 0.0)
 
 
-@partial(jax.jit, static_argnames=("n_steps", "dtype", "diffusion"))
+@partial(jax.jit, static_argnames=("n_steps", "dtype", "diffusion", "diffusion_escape"))
 def solve_simple_static_bpl(time_days, params, n_steps=2048, t_max_days=None, first_step=1e-7,
-                            dtype=jnp.float64, diffusion=False):
+                            dtype=jnp.float64, diffusion=False, diffusion_escape="finite"):
     """Simple-mode static power-law CSM + BPL ejecta, matched to the Fortran reference.
 
     Parameters
@@ -196,18 +196,19 @@ def solve_simple_static_bpl(time_days, params, n_steps=2048, t_max_days=None, fi
 
             L_d(t) = int_{t_c}^{t} L_sh(t') [1/t_diff(t')] exp(-(t - t')/t_loss(t')) dt'
 
-        with t_diff = tau_ahead r/c, tau_ahead = kappa int_r^{r_out} rho dr,
+        with t_diff = (1 + tau_ahead) r/c, tau_ahead = kappa int_r^{r_out} rho dr,
         t_adv = r/u, 1/t_loss = 1/t_diff + 1/t_adv.  A fraction t_adv/(t_diff + t_adv)
         of each parcel's energy escapes; the rest is lost adiabatically.  Shock power
-        produced after the shell leaves r_outer (tau_ahead = 0) is not added, as in Fortran.
+        produced after the shell leaves r_outer also escapes on the light-crossing time.
         The integral is accumulated inside the RK4 scan with L linear and t_diff, t_adv
         interval-averaged on each step, evaluated directly at the requested epochs.
 
-        Note: as the shock approaches r_outer, t_diff ~ 2 (t_e - t), so the continuous
-        prescription has a logarithmic cusp at t_e (finite energy, unbounded peak).  Any
-        discretisation (Fortran's ~2% output rows included) truncates it at a
-        resolution-dependent height.
+    diffusion_escape : 'finite' (default) or 'legacy'. The finite option retains
+        a light-crossing time at zero optical depth. Legacy uses tau*r/c and
+        excludes post-emergence heating; its continuum value is singular at emergence.
     """
+    if diffusion_escape not in ("finite", "legacy"):
+        raise ValueError("diffusion_escape must be 'finite' or 'legacy'")
     time_days = jnp.asarray(time_days, jnp.float64)
     sc = _scales(params)
     eta = jnp.asarray(params.eta, jnp.float64)
@@ -231,7 +232,7 @@ def solve_simple_static_bpl(time_days, params, n_steps=2048, t_max_days=None, fi
 
     def diff_times(y):
         x, w = y[0], y[1]
-        td = _tau_ahead_dimless(x, scd.x_out, etad, k_tau) * x * beta
+        td = (_tau_ahead_dimless(x, scd.x_out, etad, k_tau) + (diffusion_escape == "finite")) * x * beta
         ta = x / jnp.maximum(w, cast(1e-30))
         return td, ta
 
@@ -298,7 +299,11 @@ def solve_simple_static_bpl(time_days, params, n_steps=2048, t_max_days=None, fi
             lb = jnp.where(crossed, lfs_m + lrs_m, lfs + lrs)
             yb = jnp.where(crossed, y_mid, y_new)
             add = interval_contrib(tau0, b, l0, lb, y, yb)
-            acc = acc + jnp.where(emerged, 0.0, add)
+            if diffusion_escape == "finite":
+                after = interval_contrib(tau_mid, tau0+h, lrs_p, lfs+lrs, y_mid, y_new)
+                acc = acc + add + jnp.where(crossed, after, 0.0)
+            else:
+                acc = acc + jnp.where(emerged, 0.0, add)
         return (y_new, emerged_new, tau_e_new, acc), (node, crossed, cross_rows, frac)
 
     acc0 = jnp.zeros(tq.shape, dtype)

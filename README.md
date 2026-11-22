@@ -78,7 +78,8 @@ keywords controlling the transport treatment:
 | `mode='simple'` | Default thin-shell calculation. If `kappa` is provided, this uses the legacy post-processed diffusion light curve. |
 | `mode='transport'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
 | `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In transport mode, defaults to `0.34` if not supplied. |
-| `n_rad_zones` | Number of radiation/transport zones in transport mode. Python model calls promote values below 40 to 40 because the transport boundary layer is under-resolved below that. Higher values reduce numerical roughness but increase runtime. |
+| `n_rad_zones` | Transport resolution (default 160, minimum 40). Check convergence for your parameters; the dark phase can require substantially more zones than the bright phase. Higher resolution increases runtime. |
+| `diffusion_escape` | Simple-mode diffusion prescription: `"finite"` (default) uses `(1 + tau) R / c`; `"legacy"` uses `tau R / c`, which has an emergence singularity for a sharply truncated shell. |
 | `transport_wind_inner_age` | Effective inner wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use the larger of their first tabulated age and `1 yr`; one-point steady winds use `1 yr`. This creates the finite inner cavity needed by the nondimensional transport setup and is ignored in simple mode. |
 | `transport_wind_age` | Effective outer wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use their last tabulated age; one-point steady winds use `100 yr`. This supplies the finite outer edge required by the transport solver and is ignored in simple mode. |
 | `transport_r_inner` / `r_inner` | Alternative direct inner cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_inner` takes precedence. |
@@ -529,7 +530,7 @@ lbol_transport = wind_bpl_bolometric(
     eff=0.5,
     mode='transport',
     kappa=0.34,
-    n_rad_zones=20,
+    n_rad_zones=160,
 )
 
 # Multiband (per-band magnitudes)

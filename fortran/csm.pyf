@@ -42,6 +42,9 @@ python module csm ! in
             subroutine set_run_mode(mode) ! in :csm:csm.f90:lc_mod
                 integer intent(in) :: mode
             end subroutine set_run_mode
+            subroutine set_diffusion_escape_mode(mode)
+                integer intent(in) :: mode
+            end subroutine set_diffusion_escape_mode
             subroutine set_transport_parameters(n_zones,kappa_val) ! in :csm:csm.f90:lc_mod
                 integer, optional,intent(in) :: n_zones
                 real(kind=8), optional,intent(in) :: kappa_val

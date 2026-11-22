@@ -329,7 +329,7 @@ end function mode3_debug_enabled
   rho_edge = query_csm_density(state%R_csm_in, t_dim, op(2))
   rho_inside = query_csm_density(state%R_csm_in * (1d0 + 1d-8), t_dim, op(2))
   state%rho_csm_in = max(max(rho_edge, rho_inside), 1d-30)
-  state%rho_ej_in = max(query_ejecta_density(state%R_csm_in, t_dim, op(1)), 1d-30)
+  state%rho_ej_in = max(query_ejecta_density(state%R_csm_in, nearest(t_dim,1d0), op(1)), 1d-30)
   state%csm_powerlaw_fast = static_powerlaw_csm_slope(state%csm_eta_pow)
 
   ! q = rho_csm_in / rho_ej_in (paper Eq. 751)
@@ -352,11 +352,11 @@ end function mode3_debug_enabled
   state%R_csm_out = query_csm_outer_edge(t_dim, op(2))
   state%x_csm_out = state%R_csm_out / state%R_csm_in
 
-  ! Initial conditions: paper Eq. 756
-  state%x_sh = 1d0
-  state%w_sh = 1d0
-   state%phi_sh = 1d-6
-   state%zeta = 1d0
+  ! Negligible swept-mass limit: initially balance the two ram pressures.
+  state%w_sh = 1d0/(1d0+sqrt(state%q))
+  state%x_sh = 1d0+state%w_sh*1d-8
+   state%phi_sh = ((1d0-state%w_sh)+state%q*state%w_sh)*1d-8
+   state%zeta = 1d0+1d-8
    state%y_diff = state%y_ratio * state%zeta
    state%x_sh_dot = state%w_sh / max(state%y_ratio, 1d-30)
    state%x_ph_dot = 0d0
@@ -1023,11 +1023,10 @@ real(8) function dimless_total_radiation_energy(state) result(e_tot)
   if (Delta_x <= 0d0) return
 
   dxi = 1d0 / dble(n - 1)
-  do i = 1, n - 1
-   x_i = x_lo + state%xi_grid(i) * Delta_x
-   x_ip1 = x_lo + state%xi_grid(i+1) * Delta_x
-   e_tot = e_tot + 0.5d0 * (x_i**2 * max(state%e_grid(i), 0d0) + &
-                            x_ip1**2 * max(state%e_grid(i+1), 0d0)) * Delta_x * dxi
+  do i = 1, n
+   x_i = x_lo + max(0d0,state%xi_grid(i)-0.5d0*dxi)*Delta_x
+   x_ip1 = x_lo + min(1d0,state%xi_grid(i)+0.5d0*dxi)*Delta_x
+   e_tot = e_tot + max(state%e_grid(i),0d0)*(x_ip1**3-x_i**3)/3d0
   end do
  end function dimless_total_radiation_energy
 
@@ -1761,7 +1760,7 @@ end function shocked_shell_profile_at
 ! Cooling: x_min = x_min_cool, V(ξ) = ẋ_ph·ξ/Δx in the comoving frame
 ! Spec Section 3.3
 ! ------------------------------------------------------------------
- subroutine solve_diffusion_dimless(state, dy)
+ recursive subroutine solve_diffusion_dimless(state, dy)
   type(dimless_state_type), intent(inout) :: state
   real(8), intent(in) :: dy
 
@@ -1776,6 +1775,7 @@ end function shocked_shell_profile_at
   real(8) :: dx_bc
   real(8) :: inner_rate
   real(8) :: domain_span, collapse_span
+  real(8) :: volume, dx, sink, source_rate
   integer, save :: ibc_log_counter = 0
 
   n = state%n_zones
@@ -1860,14 +1860,16 @@ end function shocked_shell_profile_at
    end if
 
    ! Stencil coefficients (spec Section 3.3)
-   alpha_m = D_im / (x_hat_i**2 * Delta_x**2 * dxi**2)
-   alpha_p = D_ip / (x_hat_i**2 * Delta_x**2 * dxi**2)
+   dx=Delta_x*dxi
+   volume=(x_hat_ip**3-x_hat_im**3)/3d0
+   alpha_m = D_im / (volume*dx)
+   alpha_p = D_ip / (volume*dx)
 
    ! Advection: V(ξ_i)·∂e/∂ξ
     gamma_v = V_sh * (1d0 - state%xi_grid(i)) + V_ph * state%xi_grid(i)
 
    ! Check Péclet number for upwinding
-   pe_cell = abs(gamma_v) * dxi / max(alpha_m + alpha_p, 1d-60) * 2d0
+   pe_cell = 2d0*abs(gamma_v) / max(dxi*(alpha_m + alpha_p), 1d-60)
 
     if (pe_cell > 2d0 .and. gamma_v > 0d0) then
      ! PDE term is +gamma*dE/dxi, equivalent to advection speed -gamma.
@@ -1939,8 +1941,9 @@ end function shocked_shell_profile_at
    eta_ip = compute_eta_csm(x_hat_ip, state)
    D_ip = x_hat_ip**2 / max(eta_ip, 1d-30)
 
-   alpha_p = D_ip / (x_hat_i**2 * Delta_x**2 * dxi**2)
-   alpha_m = alpha_p  ! At ξ=0, left face mirrors right face for ghost elimination
+   volume=(x_hat_ip**3-x_hat_i**3)/3d0
+   alpha_p = D_ip / (volume*Delta_x*dxi)
+   source_rate=x_hat_i**2*f_ib/(max(eta_min_val,1d-30)*volume)
 
    ! Advection at ξ=0: V(0) = ẋ_sh/Δx
     gamma_v = V_sh
@@ -1949,18 +1952,17 @@ end function shocked_shell_profile_at
    state%work_c(1) = -theta * dy * (alpha_m + alpha_p)
    state%work_b(1) = 1d0 + theta * dy * (alpha_m + alpha_p)
 
-   ! Ghost relation: e_0 = e_2 + 2*Delta_x*dxi*f_ib.
-   ! The known boundary-gradient contribution enters the RHS once because
-   ! theta + (1-theta) = 1 for a time-local boundary flux.
-   inner_rate = alpha_m + alpha_p
-   if (gamma_v > 0d0) inner_rate = inner_rate + gamma_v / dxi
+   ! The prescribed flux enters the inner half-volume once; the coordinate
+   ! advection uses the same known boundary gradient.
+   inner_rate = alpha_p
+   source_rate=source_rate-gamma_v*Delta_x*f_ib
 
     state%work_c(1) = -theta * dy * inner_rate
     state%work_b(1) = 1d0 + theta * dy * inner_rate
 
     state%work_rhs(1) = state%work_old_e(1) &
         + omt * dy * inner_rate * (state%work_old_e(2) - state%work_old_e(1)) &
-        + dy * 2d0 * alpha_m * Delta_x * dxi * f_ib
+        + dy * source_rate
   else
    ! Cooling phase: zero flux at inner boundary (spec Section 4.1)
    ! Ghost point: e_0 = e_2 (symmetry, G = 0)
@@ -1969,8 +1971,9 @@ end function shocked_shell_profile_at
    eta_ip = compute_eta_csm(x_hat_ip, state)
    D_ip = x_hat_ip**2 / max(eta_ip, 1d-30) * state%R_in_R0
 
-   alpha_p = D_ip / (x_hat_i**2 * Delta_x**2 * dxi**2)
-   alpha_m = alpha_p
+   volume=(x_hat_ip**3-x_hat_i**3)/3d0
+   alpha_p = D_ip / (volume*Delta_x*dxi)
+   alpha_m = 0d0
 
    ! V(0) = 0 because the inner cooling coordinate is fixed.
     gamma_v = V_sh
@@ -1999,21 +2002,34 @@ end function shocked_shell_profile_at
           * state%R_in_R0**2
   end if
 
-  ! Algebraic Eddington surface closure:
-  !   e_N = f_ob * (e_N - e_{N-1}) / dx
-  ! -> (dx - f_ob) e_N + f_ob e_{N-1} = 0.
-  ! This matches the Appendix-A boundary-row treatment and avoids evolving a
-  ! ghost surface reservoir outside the finite CSM support.
+  ! Evolve the outer half control-volume with the physical Robin surface
+  ! flux. An algebraic first-order surface row discarded this cell's energy.
   dx_bc = Delta_x * dxi
-  state%work_a(n) = f_ob
-  state%work_b(n) = dx_bc - f_ob
+  x_hat_im=state%x_ph-0.5d0*dx_bc
+  volume=(state%x_ph**3-x_hat_im**3)/3d0
+  D_im=x_hat_im**2/max(compute_eta_csm(x_hat_im,state),1d-30)
+  D_ip=state%x_ph**2/max(compute_eta_csm(state%x_ph,state),1d-30)
+  if(state%in_cooling_phase)then
+   D_im=D_im*state%R_in_R0
+   D_ip=D_ip*state%R_in_R0
+  end if
+  alpha_m=D_im/(volume*dx_bc)
+  sink=-D_ip/(volume*f_ob)-V_ph*Delta_x/f_ob
+  state%work_a(n) = -theta*dy*alpha_m
+  state%work_b(n) = 1d0+theta*dy*(alpha_m+sink)
   state%work_c(n) = 0d0
-  state%work_rhs(n) = 0d0
+  state%work_rhs(n) = state%work_old_e(n)+omt*dy*(alpha_m*state%work_old_e(n-1) &
+                        -(alpha_m+sink)*state%work_old_e(n))
 
   ! Solve tridiagonal system
   call tridag(state%work_a, state%work_b, state%work_c, state%work_rhs, &
               state%work_sol, state%work_gam, n)
-  state%e_grid = min(max(state%work_sol, 0d0), 1d6)
+  if(theta<1d0.and.minval(state%work_sol)<-1d-12*max(maxval(abs(state%work_old_e)),1d-100))then
+   state%rannacher_left=1
+   call solve_diffusion_dimless(state,dy)
+   return
+  end if
+  state%e_grid = max(state%work_sol, 0d0)
 
   ! Diagnostic: track solution growth
   if (mode3_debug_enabled() .and. .not. state%in_cooling_phase) then
@@ -2023,10 +2039,6 @@ end function shocked_shell_profile_at
     ' rhs1=', state%work_rhs(1), ' b1=', state%work_b(1)
   end if
 
-  ! Fallback if solve collapses
-  if (sum(state%e_grid(1:n)) <= 0d0 .and. sum(max(state%work_old_e(1:n), 0d0)) > 0d0) then
-   state%e_grid = min(max(state%work_old_e, 0d0), 1d6)
-  end if
  end subroutine solve_diffusion_dimless
 
 ! ------------------------------------------------------------------

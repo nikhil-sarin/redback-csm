@@ -52,13 +52,15 @@ keywords controlling diffusion / transport:
    * - Keyword
      - Meaning
    * - ``mode='simple'``
-     - Default thin-shell calculation. If ``kappa`` is supplied, this uses the legacy post-processed diffusion light curve.
+     - Default thin-shell calculation. If ``kappa`` is supplied, this uses the post-processed diffusion light curve on all accepted integration steps.
    * - ``mode='transport'``
      - Use the newer transport solver for the observed luminosity while keeping the same shell dynamics.
    * - ``kappa``
      - Opacity in ``cm^2 g^-1``. Optional in simple mode. In transport mode it defaults to ``0.34`` if omitted.
    * - ``n_rad_zones``
-     - Number of transport zones used in transport mode. Python model calls promote values below 40 to 40 because the transport boundary layer is under-resolved below that. Larger values reduce numerical roughness at higher runtime cost.
+     - Transport resolution: default 160, minimum 40. Check convergence for the chosen parameters, especially during the dark phase. Larger values increase runtime.
+   * - ``diffusion_escape``
+     - Simple-mode kernel: ``'finite'`` (default) uses ``(1 + tau) R / c``; ``'legacy'`` uses ``tau R / c``. The finite prescription includes a light-crossing time and post-emergence reverse-shock heating. This is a physical closure change, not just a numerical correction; see :doc:`numerical_accuracy`.
    * - ``efficiency_mode``
      - Optional alternate shock-efficiency mode. Default ``0`` keeps the user-supplied constant ``eff`` for both shocks.
 

@@ -1,103 +1,110 @@
 Numerical accuracy audit
 ========================
 
-Scope of the correction
------------------------
+Dynamics and finite support
+---------------------------
 
-The simple-mode static-shell solver now uses explicit free-flight contact,
-the negligible-seed-mass limit, step-doubled RK4 with error control, and an
-outer-edge event. Shock powers and shell properties refer to the same time.
-Both sides of the forward-shock discontinuity are retained. Diffusion uses
-all accepted integration steps and midpoint source coefficients, rather than
-the former thinned history and left-endpoint coefficients. Static contact
-rows are no longer removed by the legacy initial-row filter.
+All Fortran simple-mode drivers use step-doubled RK4 with error control,
+rather than forward Euler. Detached static and homologous shells have explicit
+contact and outer-edge events and a negligible initial swept mass. A central
+wind instead starts at its launch radius. Shock powers and shell properties
+refer to the same time, and both sides of an emergence discontinuity are stored.
+Diffusion integrates every accepted step, independently of output thinning.
 
-This path applies to positive-density inner boundaries with a finite BPL
-ejecta edge, or the existing effective exponential edge at 20 scale velocities.
-It includes the static power-law, spline, and p-spline wrappers. Static grids
-starting with zero density and untruncated BPL ejecta still use the legacy
-path. Moving CSM and transport dynamics are not changed by this patch.
+Gridded homologous snapshots now have finite support: their density is zero
+outside the supplied velocity grid. Previously the endpoint density was
+extended beyond that grid. Profile lookup supports rejected RK steps and
+non-monotone queries. Infinite analytic winds retain their wind boundary
+convention. Exponential ejecta use the existing effective maximum velocity
+of twenty exponential scale velocities.
 
-Independent tests
------------------
+Finite escape time: a model change
+---------------------------------
 
-``tests/static_shell_reference.py`` integrates the dimensionless equations
-with SciPy Radau, relative tolerance ``1e-11``, event location at emergence,
-and dimensionless seed masses ``1e-9`` and ``1e-10``. The two seeds agree
-to better than the ``2e-6`` relative test threshold. The diffusion reference
-uses adaptive quadrature of the original injection-time kernel evaluated
-on the Radau dense solution, not a Fortran or JAX output history.
+The simple-mode diffusion kernel assigns each injection epoch an escape time.
+The old ``tau R / c`` prescription goes to zero at a sharp CSM edge. With
+nonzero heating there, the integral at emergence is logarithmically divergent;
+a smaller numerical timestep cannot resolve it to a finite peak.
 
-The benchmark has CSM slope -2, radii 1e14--1e15 cm, 0.5 solar masses of
+The default ``diffusion_escape='finite'`` uses ``(1 + tau) R / c``. This
+retains a light-crossing time in the optically thin limit and includes ongoing
+reverse-shock heating after forward-shock emergence. It is an explicit escape
+closure, not a solution of optically thin radiative transfer or an opacity
+floor. It removes the singularity without smoothing the density or shock event.
+
+``diffusion_escape='legacy'`` retains the old kernel for comparison, including
+its singular limit; it does not restore the old Euler dynamics. The finite
+option is available in the Fortran Python wrappers and standalone JAX simple
+solver. Existing fits can change, particularly near contact/emergence and for
+optically thin CSM. These corrections are not bitwise-compatible performance
+optimizations. Re-evaluate likelihoods before reusing previous inference results.
+
+Independent references
+----------------------
+
+``tests/static_shell_reference.py`` independently integrates the shell equations
+using SciPy Radau at relative tolerance ``1e-11``. Dimensionless seed masses
+``1e-9`` and ``1e-10`` agree within ``2e-6`` in the reference regression.
+Adaptive quadrature of the kernel on the Radau dense solution supplies the
+diffusion reference, rather than either production solver's output rows.
+
+The static benchmark uses slope -2, radii 1e14--1e15 cm, 0.5 solar masses of
 CSM, 10 solar masses of ejecta, 1e51 erg, BPL indices 1 and 10, cutoff ratio
-3, efficiency 0.5, and opacity 0.34 cm2/g. Reference contact and emergence
-are approximately 1.017047 and 28.455431 days.
+3, efficiency 0.5, and opacity 0.34 cm2/g. Contact and emergence occur at
+approximately 1.017047 and 28.455431 days. Tests require shock-power errors
+below 0.1% and diffused errors below 0.3% at specified epochs, including
+emergence-adjacent tests for the finite kernel. JAX refinement is checked
+against the same reference, including exactly at emergence.
 
-The regression tests require relative shock-power errors below 0.1% and
-diffused errors below 0.3% at specified epochs outside the immediate
-emergence cusp. They also scan 301 consecutive floating-point energies
-for the static BPL driver. This is a tested benchmark, not a claim of
-uniform accuracy across the entire prior space.
+Additional tests cover a homologously expanding power-law shell, an analytic
+four-Gaussian homologous profile, and floating-point energy perturbations for
+static exponential, static spline, homologous spline, and multiple-shell
+drivers. The analytic four-shell reference is independent of the production
+sampled density grid. ULP smoothness alone is not an accuracy test.
 
-Reproduce the wider diagnostic scan with::
+In the extended 31-point energy scan, static and homologous power-law/spline
+curves vary by less than 1e-10 mag; the four-shell case retains a bounded
+variation of about 3e-5 mag. No zero/finite flips occur in those tests.
 
+Transport verification
+----------------------
+
+The transport radiation operator now uses spherical nodal control volumes,
+including storage in the outer half-cell, and the corrected grid-advection
+Peclet criterion. The old algebraic outer boundary omitted that storage.
+Crank--Nicolson steps producing significant negative energy are retried with
+backward Euler instead of clipping those modes. Shock powers are evaluated at
+the output time rather than the preceding timestep.
+
+``tests/transport_probe.f90`` exercises the actual Fortran PDE against a
+spherical diffusion eigenmode with a Robin surface boundary. Tests verify
+second-order spatial convergence and the energy balance of an injected flux
+with a closed outer boundary. The full static benchmark's transport shock
+power agrees with Radau within ``1e-4`` at 2, 5, 10, and 20 days.
+
+A separate 80/160/320/640-zone lightcurve test checks radiation convergence
+through interaction and cooling. For this benchmark, 160 versus 640 zones
+agrees within 1% at the tested bright-phase epochs, and within 0.3% of the
+peak luminosity across all tested epochs. Relative differences during the
+nearly dark phase are larger. The default is therefore 160 zones; the minimum
+40 remains a coarse option, not a general accuracy guarantee. Arbitrary sharp
+profiles require their own resolution checks. These tests do not independently
+validate the physical cooling-handoff assumptions or every prior combination.
+
+The JAX transport operator also passes the analytic eigenmode test. This is
+not a claim of full Fortran/JAX transport lightcurve parity: the cooling
+handoffs remain different, and sizeable post-emergence differences persist.
+The independent end-to-end JAX accuracy tests in this change concern its
+simple-mode solver, not its transport cooling prescription.
+
+Reproduction
+------------
+
+Build the Fortran extension, then run::
+
+    python -m pytest tests
     python -m tests.numerical_audit
 
-In the audit, the original static solver shifted contact between 1.017061
-and 1.029174 days and produced adjacent-energy changes of 0.427 mag in
-diffused luminosity at 1.05 days. The corrected static BPL, exponential,
-and spline scans had ranges below 1e-10 mag in the 31-point extended scan.
-Warm calls for those examples took approximately 6 ms locally; this is
-not a portable runtime guarantee.
-
-Outstanding issues
-------------------
-
-* The homologous power-law, homologous spline, and generic four-shell
-  diagnostic cases still had ranges of approximately 0.0078, 0.282, and
-  0.0036 mag respectively under ULP perturbations. They retain the old
-  integrator, initialization, and output-dependent diffusion. Do not infer
-  their convergence from the corrected static tests.
-* The gridded homologous density evaluator extends endpoint densities
-  outside its grid, whereas the static evaluator returns zero. Consequently
-  a finite snapshot is not currently a finite-support homologous shell in
-  the dynamics. This boundary convention must be resolved explicitly before
-  applying static-style contact/emergence events to those drivers.
-* Transport shock power differed from Radau by approximately 0.15--0.47%
-  at 2, 5, 10, and 20 days. Radiation at 10 days changed from 5.799e42 to
-  5.508e42 to 5.333e42 erg/s for 40, 80, and 160 zones. These are resolution
-  diagnostics, not independent verification of the radiation PDE. Relative
-  changes in the almost-dark phase were substantially larger.
-
-The emergence cusp is also a model issue
----------------------------------------
-
-The existing kernel assigns a diffusion timescale to each injection epoch.
-As the remaining optical depth vanishes, suppose
-``t_diff(t') ~ a (t_emerge - t')``. At observation time ``t_emerge``, its
-integrand behaves as
-``L_heat exp(-1/a) / [a (t_emerge - t')]`` when the pre-emergence heating
-is nonzero. Its integral is logarithmically divergent. A finite grid hides
-this singularity; refinement cannot give a finite, grid-independent peak
-at exactly emergence. There is no uniform numerical error bound across
-that point without changing the closure.
-
-For the corrected Fortran benchmark, comparison with adaptive quadrature
-gave magnitude differences of approximately +0.00038, +0.00130, +0.0100,
--0.0316, -0.0137, and -0.00340 at offsets -0.1, -0.01, -0.001, +0.001,
-+0.01, and +0.1 days from reference emergence. These are benchmark-specific
-errors, not general bounds. No opacity floor or smoothing prescription has
-been inserted to hide the cusp. A finite escape-time or evolving-reservoir
-closure would be a separate, explicitly documented physical model change.
-
-Combined solver validation
---------------------------
-
-PR 6 includes the Fortran correction alongside the standalone JAX simple-mode
-solver, with the independent Radau reference and
-``test_jax_simple_accuracy.py`` providing shared accuracy checks.
-Further convergence tests should include multiple integration horizons
-and emergence-adjacent epochs, and should distinguish numerical error from
-the kernel's singular continuum limit. Agreement with the legacy Fortran
-curve alone is not an accuracy criterion. The outstanding issues above are
-not resolved by combining the changes in one PR.
+The audit reports perturbation ranges and local timings, without asserting a
+portable runtime target. The radiation eigenmode test needs ``gfortran``;
+JAX tests require the optional JAX dependencies.

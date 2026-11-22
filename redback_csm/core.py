@@ -204,7 +204,7 @@ def _with_bpl_runtime_kwargs(kwargs, delta, nn, mexp, eexp):
     return kwargs
 
 
-def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
+def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=160):
     """
     Configure the shared Fortran runtime state for one wrapper call.
 
@@ -217,6 +217,10 @@ def _configure_runtime_from_kwargs(kwargs, default_n_rad_zones=40):
     mode = str(kwargs.get("mode", "simple")).lower()
     kappa = kwargs.get("kappa", None)
     efficiency_mode = int(kwargs.get("efficiency_mode", 0))
+    diffusion_escape = kwargs.get("diffusion_escape", "finite")
+    if diffusion_escape not in ("finite", "legacy"):
+        raise ValueError("diffusion_escape must be 'finite' or 'legacy'")
+    _get_csm().lc_mod.set_diffusion_escape_mode(int(diffusion_escape == "finite"))
 
     if mode == "simple":
         _get_csm().lc_mod.set_run_mode(1)
@@ -334,7 +338,7 @@ def _wind_history_to_static_grid(tgrid, mdot, vwind_cgs, mode, kwargs):
     t_outer = max(t_finite[active[-1]], t_inner * (1.0 + 1.0e-6))
     r_inner = max(vwind_cgs * t_inner, 1.0)
     r_outer = max(vwind_cgs * t_outer, r_inner * (1.0 + 1.0e-6))
-    default_points = max(96, 4 * int(kwargs.get("n_rad_zones", 40)))
+    default_points = max(96, 4 * int(kwargs.get("n_rad_zones", 160)))
     n_points = max(
         64,
         int(kwargs.get("transport_csm_n_points", kwargs.get("csm_n_points", default_points))),
@@ -384,7 +388,7 @@ def _get_last_transport_diagnostics():
 
 
 def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
-                             n_rad_zones=40, **kwargs):
+                             n_rad_zones=160, **kwargs):
     """
     Calculate the light curve for a fixed mass-loss wind with an exponential profile explosion.
     i.e., windy CSM with a supernova.
@@ -397,7 +401,7 @@ def _get_lc_wind_exponential(mdot, vwind, mexp, eexp, eff=None, mode='simple',
                 For simple mode: fraction of kinetic energy that radiates.
                 For transport mode: still passed through to the Fortran interaction model.
     :param mode: 'simple' (thin shell only) or 'transport' (thin shell + transport solver)
-    :param n_rad_zones: Number of radiation grid zones (for transport mode only, default 40)
+    :param n_rad_zones: Number of radiation grid zones (for transport mode only, default 160)
     :param kappa: (optional) Opacity in cm²/g for photon diffusion calculation.
                   Common values: 0.34 (electron scattering), 0.1 (lower bound)
     :return: Named tuple with fields:

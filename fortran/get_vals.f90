@@ -40,6 +40,23 @@ module get_vals
 
 contains
 
+ integer function profile_interval(x, grid) result(i)
+  ! Binary search is safe for rejected/nonmonotone Runge-Kutta stages.
+  real(8), intent(in) :: x, grid(:)
+  integer :: lo, hi, mid
+  lo=1
+  hi=size(grid)
+  do while(hi-lo>1)
+   mid=(lo+hi)/2
+   if(grid(mid)<=x)then
+    lo=mid
+   else
+    hi=mid
+   end if
+  end do
+  i=min(lo,max(1,size(grid)-1))
+ end function profile_interval
+
  subroutine set_global_bpl_vmax_ratio(ratio)
   real(8),intent(in):: ratio
   global_bpl_vmax_ratio = ratio
@@ -81,7 +98,8 @@ contains
   tauprep(n) = 0d0
   do i = n-1, 1, -1
    tauprep(i) = tauprep(i+1) &
-              + op(2)%rho_expl(i+1)*(op(2)%v_grid(i+1)-op(2)%v_grid(i))
+              + 0.5d0*(op(2)%rho_expl(i)+op(2)%rho_expl(i+1)) &
+               *(op(2)%v_grid(i+1)-op(2)%v_grid(i))
   end do
   tauprep = op(2)%t_ref**3*tauprep
 
@@ -187,34 +205,26 @@ contains
   type(outflow_parameters),intent(inout):: op
   real(8),intent(in):: r,t
   real(8):: rho_explosion, tp
-  integer:: i,n, is,ie,increment
+  integer:: i,n, increment
   ! op%v_grid : grid of velocity to describe the ejecta density distribution
   ! op%rho_expl : density distribution as a function of v at t_ref
   ! op%t_ref : reference time when density distribution was recorded
   tp = t+op%delay
   n = size(op%v_grid)
 
-  ! Specify scan range
-  if(op%scan_i>0)then
-   is = op%scan_i  ! start from previous cell
-   ie = n-1
-   increment = 1   ! shell only moves outwards into outer outflow
-  else
-   is = -op%scan_i ! start from previous cell
-   ie = 1
-   increment = -1  ! shell only retreates inwards into inner outflow
-  end if
-
-  if(r<=op%v_grid(1)*tp)then
+  increment=1
+  if(op%scan_i<0)increment=-1
+  if(r<op%v_grid(1)*tp.or.r>op%v_grid(n)*tp)then
+   rho_explosion=0d0
+   return
+  elseif(r<=op%v_grid(1)*tp)then
    op%scan_i = increment
    rho_explosion = op%rho_expl(1)
   elseif(r>=op%v_grid(n)*tp)then
    op%scan_i = n*increment
    rho_explosion = op%rho_expl(n)
   else
-   do i = is, ie, increment
-    if(op%v_grid(i)*tp<=r.and.op%v_grid(i+1)*tp>r)exit
-   end do
+   i=profile_interval(r/tp,op%v_grid)
    op%scan_i = i*increment
    rho_explosion = intpol(r/tp,op%v_grid(i:i+1),op%rho_expl(i:i+1))
   end if
@@ -227,22 +237,14 @@ contains
   type(outflow_parameters),intent(inout):: op
   real(8),intent(in):: r,t
   real(8):: rho_wind, t_wind, Mdot_wind
-  integer:: i,n, is,ie,increment
+  integer:: i,n,increment
   ! op%t_grid : grid of time before/since explosion
   ! op%mdot   : mass loss rate at corresponding times on t_grid
   t_wind = abs(r/op%vwind-t)
   n = size(op%t_grid)
 
-  ! Specify scan range
-  if(op%scan_i>0)then
-   is = op%scan_i  ! start from previous cell
-   ie = n-1
-   increment = 1   ! shell only moves outwards into outer outflow
-  else
-   is = -op%scan_i ! start from previous cell
-   ie = 1
-   increment = -1  ! shell only retreates inwards into inner outflow
-  end if
+  increment=1
+  if(op%scan_i<0)increment=-1
 
   if(t_wind<=op%t_grid(1))then
    op%scan_i = increment
@@ -251,9 +253,7 @@ contains
    op%scan_i = n*increment
    Mdot_wind = op%mdot(n)
   else
-   do i = is, ie, increment
-    if(op%t_grid(i)<=t_wind.and.op%t_grid(i+1)>t_wind)exit
-   end do
+   i=profile_interval(t_wind,op%t_grid)
    op%scan_i = i*increment
    Mdot_wind = intpol(t_wind,op%t_grid(i:i+1),op%mdot(i:i+1))
   end if
@@ -266,7 +266,7 @@ contains
   type(outflow_parameters),intent(inout):: op
   real(8),intent(in):: r,t
   real(8):: rho_static_profile, rho_here
-  integer:: i,n, is,ie,increment
+  integer:: i,n
 
   n = size(op%r_grid_static)
   if(n<=0)then
@@ -279,16 +279,6 @@ contains
    return
   end if
 
-  if(op%scan_i>0)then
-   is = op%scan_i
-   ie = n-1
-   increment = 1
-  else
-   is = max(1,-op%scan_i)
-   ie = 1
-   increment = -1
-  end if
-
   if(r<=op%r_grid_static(1))then
    op%scan_i = 1
    rho_here = op%rho_static(1)
@@ -296,9 +286,7 @@ contains
    op%scan_i = n
    rho_here = op%rho_static(n)
   else
-   do i = is, ie, increment
-    if(op%r_grid_static(i)<=r.and.op%r_grid_static(i+1)>r)exit
-   end do
+   i=profile_interval(r,op%r_grid_static)
    op%scan_i = i
    rho_here = intpol(r,op%r_grid_static(i:i+1),op%rho_static(i:i+1))
   end if
@@ -364,6 +352,7 @@ contains
   if(n<=0)return
 
   v = r/tp
+  if(v<op_in%v_grid(1).or.v>op_in%v_grid(n))return
   if(v<=op_in%v_grid(1))then
    rho_here = op_in%rho_expl(1)
   elseif(v>=op_in%v_grid(n))then
