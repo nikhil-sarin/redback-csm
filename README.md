@@ -449,7 +449,7 @@ result = problem.fit(starts, max_nfev=500)
 
 ### Requirements
 
-- Python >= 3.11
+- Python >= 3.10
 - `gfortran` (for Fortran compilation)
 - `redback >= 1.15.0`
 
@@ -460,7 +460,8 @@ result = problem.fit(starts, max_nfev=500)
 git clone https://github.com/nikhil-sarin/redback-csm
 cd redback-csm
 
-# 2. Compile the Fortran extension
+# 2. Install build tools and compile the Fortran extension
+python -m pip install 'numpy>=2,<3' meson ninja
 bash setup_fortran.sh
 
 # 3. Install

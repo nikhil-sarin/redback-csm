@@ -17,7 +17,7 @@ OUT_DIR="$SCRIPT_DIR/redback_csm"
 
 echo "Compiling Fortran CSM extension ..."
 cd "$OUT_DIR"
-python -m numpy.f2py -c \
+python -m numpy.f2py -c --backend meson \
     "$FORTRAN_DIR/csm.pyf" \
     "$FORTRAN_DIR/constants.f90" \
     "$FORTRAN_DIR/get_vals.f90" \
