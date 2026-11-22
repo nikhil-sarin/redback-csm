@@ -11,6 +11,7 @@ module csm_runtime
  real(8), public :: kappa_global = 0d0, eff_global = 1d0, erad = 0d0
  integer, public :: diffusion_type = 0, shock_efficiency_mode = 0
  logical, public :: diffusion_enabled = .false.
+ integer, public :: diffusion_escape_mode = 1 ! 1: finite escape, 0: legacy tau-only kernel
 
  real(8), allocatable, dimension(:), public :: tauprep_global
  real(8), allocatable, dimension(:) :: wind_tau_cache
@@ -117,7 +118,7 @@ contains
     end if
 
     if (j == n) then
-      tau = op(2)%mdot(n) * op(2)%vwind / max(r_shell, 1d-30)
+      tau = op(2)%mdot(n) / (4d0*pi*op(2)%vwind*max(r_shell,1d-30))
     else
      if (j == 1 .and. r_shell / op(2)%vwind - t_shell < op(2)%t_grid(1)) then
       tj = op(2)%t_grid(1)

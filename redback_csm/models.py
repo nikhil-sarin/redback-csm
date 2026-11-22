@@ -41,6 +41,7 @@ from redback.transient_models.supernova_models import (
 
 from redback_csm.core import (
     _call_csm,
+    _call_csm_with_csm_photosphere,
     _call_csm_radio,
     _call_csm_xray,
     GENERIC_CSM_DEFAULT_N_POINTS,
@@ -107,6 +108,49 @@ def _csm_bolometric_impl(time, csm_model, **kwargs):
     lc = _call_csm(csm_model, **kwargs)
     t_days = lc.time / DAY
     return _interp1d(t_days, lc.lbol, bounds_error=False, fill_value=0.0)(time)
+
+
+PHOTOSPHERE_MODES = ("legacy", "csm")
+CSM_PHOTOSPHERE_DEFAULT_TEMPERATURE_FLOOR = 3000.0
+
+
+def _pop_photosphere_mode(kwargs):
+    """
+    Read and remove the ``photosphere_mode`` keyword.
+
+    ``"legacy"`` (default) keeps the historical behaviour: CSM-only multiband
+    models use the shell radius, CSM + nickel models use redback's
+    ``TemperatureFloor`` with an undecelerated ``vej * t``.
+
+    ``"csm"`` places the photosphere where the optical depth through the CSM
+    ahead of the shell reaches 2/3, falling back to the shell radius once the
+    CSM ahead is optically thin (Chatzopoulos, Wheeler & Vinko 2012 use the
+    fixed tau = 2/3 CSM radius for the first phase).  The effective temperature
+    is ``(L / 4 pi sigma R^2)^(1/4)`` with the total luminosity, with a
+    temperature floor (default 3000 K) that preserves L.  Simple mode requires
+    ``kappa``; in transport mode the transport photosphere is used.
+    """
+    mode = str(kwargs.pop("photosphere_mode", "legacy")).lower()
+    if mode not in PHOTOSPHERE_MODES:
+        raise ValueError(f"photosphere_mode must be one of {PHOTOSPHERE_MODES}, got {mode!r}")
+    if mode == "csm" and str(kwargs.get("mode", "simple")).lower() == "simple" and kwargs.get("kappa") is None:
+        raise ValueError("photosphere_mode='csm' requires kappa in simple mode")
+    return mode
+
+
+def _csm_photosphere_rph_temp(time, lbol, lc, r_ph_rows, temperature_floor):
+    """Interpolate the CSM photosphere onto ``time`` and return (r_photosphere, temperature)."""
+    t_days = lc.time / DAY
+    rph = _np.interp(time, t_days, r_ph_rows)
+    lbol = _np.asarray(lbol, dtype=float)
+    temp = _np.zeros_like(lbol)
+    ok = (lbol > 0.0) & (rph > 0.0)
+    temp[ok] = (lbol[ok] / (4.0 * _np.pi * _SIGMA_SB * rph[ok] ** 2)) ** 0.25
+    return _apply_temperature_floor(lbol, rph, temp, temperature_floor)
+
+
+def _csm_floor(csm_kwargs):
+    return csm_kwargs.get("temperature_floor", CSM_PHOTOSPHERE_DEFAULT_TEMPERATURE_FLOOR)
 
 
 def _csm_rph_temp_impl(time, csm_model, **kwargs):
@@ -360,6 +404,22 @@ def _clean_nickel_diffusion_kwargs(kwargs):
 
 def _csm_nickel_bolometric_impl(time, csm_model, **kwargs):
     """Combined CSM shock + radioactive nickel bolometric luminosity."""
+    time = _np.asarray(time, dtype=float)
+    nickel_lbol = _diffused_nickel_impl(time, csm_model, **kwargs)
+    return _csm_bolometric_impl(time, csm_model, **kwargs) + nickel_lbol
+
+
+def _csm_nickel_bolometric_and_lc(time, csm_model, **kwargs):
+    """Combined CSM + nickel luminosity, plus the CSM light curve and CSM photosphere rows."""
+    time = _np.asarray(time, dtype=float)
+    nickel_lbol = _diffused_nickel_impl(time, csm_model, **kwargs)
+    lc, r_ph_rows = _call_csm_with_csm_photosphere(csm_model, **kwargs)
+    csm_lbol = _interp1d(lc.time / DAY, lc.lbol, bounds_error=False, fill_value=0.0)(time)
+    return csm_lbol + nickel_lbol, lc, r_ph_rows
+
+
+def _diffused_nickel_impl(time, csm_model, **kwargs):
+    """Radioactive nickel luminosity, diffused as in the CSM + nickel models."""
     import redback.constants as _rc
 
     time = _np.asarray(time, dtype=float)
@@ -395,7 +455,7 @@ def _csm_nickel_bolometric_impl(time, csm_model, **kwargs):
             **diffusion_kwargs,
         ).new_luminosity
 
-    return _csm_bolometric_impl(time, csm_model, **kwargs) + nickel_lbol
+    return nickel_lbol
 
 
 def _multiband_csm_flux_density(time, redshift, csm_model, csm_kwargs, dl):
@@ -404,10 +464,15 @@ def _multiband_csm_flux_density(time, redshift, csm_model, csm_kwargs, dl):
     frequency, time_src = _calc_kcorrected_properties(
         frequency=frequency, redshift=redshift, time=time
     )
-    lbol, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
-    rph, temp = _apply_temperature_floor(
-        lbol, rph, temp, csm_kwargs.get("temperature_floor")
-    )
+    if _pop_photosphere_mode(csm_kwargs) == "csm":
+        lc, r_ph_rows = _call_csm_with_csm_photosphere(csm_model, **csm_kwargs)
+        lbol = _interp1d(lc.time / DAY, lc.lbol, bounds_error=False, fill_value=0.0)(time_src)
+        rph, temp = _csm_photosphere_rph_temp(time_src, lbol, lc, r_ph_rows, _csm_floor(csm_kwargs))
+    else:
+        lbol, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
+        rph, temp = _apply_temperature_floor(
+            lbol, rph, temp, csm_kwargs.get("temperature_floor")
+        )
     sed_1 = _sed.Blackbody(
         temperature=temp, r_photosphere=rph, frequency=frequency, luminosity_distance=dl
     )
@@ -420,6 +485,13 @@ def _multiband_nickel_flux_density(time, redshift, csm_model, csm_kwargs, dl):
     frequency, time_src = _calc_kcorrected_properties(
         frequency=frequency, redshift=redshift, time=time
     )
+    if _pop_photosphere_mode(csm_kwargs) == "csm":
+        lbol, lc, r_ph_rows = _csm_nickel_bolometric_and_lc(time_src, csm_model, **csm_kwargs)
+        rph, temp = _csm_photosphere_rph_temp(time_src, lbol, lc, r_ph_rows, _csm_floor(csm_kwargs))
+        sed_1 = _sed.Blackbody(
+            temperature=temp, r_photosphere=rph, frequency=frequency, luminosity_distance=dl
+        )
+        return sed_1.flux_density.to(_uu.mJy).value * (1 + redshift)
     lbol = _csm_nickel_bolometric_impl(time_src, csm_model, **csm_kwargs)
     if "vej" not in csm_kwargs:
         mej_ejecta, eexp = _nickel_ejecta_mass_energy(csm_kwargs)
@@ -446,10 +518,15 @@ def _multiband_csm(time, redshift, csm_model, csm_kwargs, dl):
         redshift=redshift,
         time=time_observer_frame,
     )
-    lbol, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
-    rph, temp = _apply_temperature_floor(
-        lbol, rph, temp, csm_kwargs.get("temperature_floor")
-    )
+    if _pop_photosphere_mode(csm_kwargs) == "csm":
+        lc, r_ph_rows = _call_csm_with_csm_photosphere(csm_model, **csm_kwargs)
+        lbol = _interp1d(lc.time / DAY, lc.lbol, bounds_error=False, fill_value=0.0)(time_src)
+        rph, temp = _csm_photosphere_rph_temp(time_src, lbol, lc, r_ph_rows, _csm_floor(csm_kwargs))
+    else:
+        lbol, rph, temp = _csm_rph_temp_impl(time_src, csm_model, **csm_kwargs)
+        rph, temp = _apply_temperature_floor(
+            lbol, rph, temp, csm_kwargs.get("temperature_floor")
+        )
     sed_1 = _sed.Blackbody(
         temperature=temp,
         r_photosphere=rph,
@@ -473,15 +550,20 @@ def _multiband_nickel(time, redshift, csm_model, csm_kwargs, dl):
         redshift=redshift,
         time=time_observer_frame,
     )
-    lbol = _csm_nickel_bolometric_impl(time_src, csm_model, **csm_kwargs)
-    if "vej" not in csm_kwargs:
-        mej_ejecta, eexp = _nickel_ejecta_mass_energy(csm_kwargs)
-        csm_kwargs["vej"] = _np.sqrt(2.0 * eexp * 1e51 / (mej_ejecta * _SOLAR_MASS)) / 1e5
-    csm_kwargs.setdefault("temperature_floor", 3000.0)
-    photo = _photosphere.TemperatureFloor(time=time_src, luminosity=lbol, **csm_kwargs)
+    if _pop_photosphere_mode(csm_kwargs) == "csm":
+        lbol, lc, r_ph_rows = _csm_nickel_bolometric_and_lc(time_src, csm_model, **csm_kwargs)
+        rph, temp = _csm_photosphere_rph_temp(time_src, lbol, lc, r_ph_rows, _csm_floor(csm_kwargs))
+    else:
+        lbol = _csm_nickel_bolometric_impl(time_src, csm_model, **csm_kwargs)
+        if "vej" not in csm_kwargs:
+            mej_ejecta, eexp = _nickel_ejecta_mass_energy(csm_kwargs)
+            csm_kwargs["vej"] = _np.sqrt(2.0 * eexp * 1e51 / (mej_ejecta * _SOLAR_MASS)) / 1e5
+        csm_kwargs.setdefault("temperature_floor", 3000.0)
+        photo = _photosphere.TemperatureFloor(time=time_src, luminosity=lbol, **csm_kwargs)
+        rph, temp = photo.r_photosphere, photo.photosphere_temperature
     sed_1 = _sed.Blackbody(
-        temperature=photo.photosphere_temperature,
-        r_photosphere=photo.r_photosphere,
+        temperature=temp,
+        r_photosphere=rph,
         frequency=frequency_grid[:, None],
         luminosity_distance=dl,
     )

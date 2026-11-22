@@ -6,6 +6,8 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 
+from .simple_shock import SimpleShockResult, solve_simple_static_bpl  # noqa: E402
+
 DAY = 86400.0
 CLIGHT = 2.99792458e10
 SOLAR_MASS = 1.98847e33
@@ -334,7 +336,8 @@ def _dimless_scales(params: StaticPowerlawBPLParams):
     r_in = jnp.maximum(params.r_inner, 1.0)
     x_out = jnp.maximum(params.r_outer / r_in, 1.0001)
     rho_csm_in = jnp.maximum(rho_inner, 1.0e-30)
-    rho_ej_in = jnp.maximum(_rho_ej_4pir2(params, v_t, v_max, rho0_4pi, r_in, t_in) / (4.0 * PI * r_in**2), 1.0e-30)
+    rho_ej_in = jnp.maximum(_rho_ej_4pir2(params, v_t, v_max, rho0_4pi, r_in, jnp.nextafter(t_in,jnp.inf))
+                           / (4.0 * PI * r_in**2), 1.0e-30)
     q = rho_csm_in / rho_ej_in
     tau_csm_in = 3.0 * params.kappa * rho_csm_in * r_in
     t_diff = tau_csm_in * r_in / CLIGHT
@@ -393,7 +396,6 @@ def _photosphere_dimless(params, scales, x_start, x_ph_prev, in_cooling=False, r
     rhs = x_outer**p - p * tau_target
     x_pow = jnp.where((rhs <= 0.0) & (p > 0.0), x_inner, jnp.maximum(rhs, 1.0e-300) ** (1.0 / p))
     x_tau = jnp.where(jnp.abs(p) < 1.0e-12, x_log, x_pow)
-    thin_interaction = (~in_cooling) & (tau_cum <= tau_ph)
     shock_adjacent = jnp.minimum(x_inner + jnp.maximum(1.0e-3 * (x_outer - x_inner), 1.0e-6), x_outer)
     cached = jnp.minimum(jnp.maximum(x_ph_prev, x_inner + jnp.maximum(1.0e-3 * (x_outer - x_inner), 1.0e-6)), x_outer)
     thin_x = jnp.where(x_ph_prev > x_inner, cached, shock_adjacent)
@@ -471,7 +473,7 @@ def _shock_luminosities_dimless(params, scales, x, w, zeta, in_cooling):
 
 
 def _solve_diffusion_dimless(params, scales, e_old, dy, x_min, x_ph, x_sh, x_sh_dot, x_ph_dot, lum_heat, in_cooling,
-                             r_in_r0, x_out_cool, x_sh_se, rannacher_left):
+                             r_in_r0, x_out_cool, x_sh_se, rannacher_left, force_backward=False):
     n = e_old.shape[0]
     xi = jnp.linspace(0.0, 1.0, n, dtype=jnp.float64)
     dxi = 1.0 / jnp.maximum(n - 1, 1)
@@ -480,7 +482,9 @@ def _solve_diffusion_dimless(params, scales, e_old, dy, x_min, x_ph, x_sh, x_sh_
     theta = jnp.where((rannacher_left > 0) | in_cooling, 1.0, 0.5)
     domain_span = jnp.maximum(scales.x_out - 1.0, 1.0)
     collapse_span = jnp.maximum(2.0 * dxi * domain_span, 5.0e-2)
-    theta = jnp.where((~in_cooling) & (delta_x <= collapse_span), 1.0, theta)
+    theta = jnp.where(jnp.logical_not(in_cooling) & (delta_x <= collapse_span), 1.0, theta)
+    if force_backward:
+        theta=jnp.asarray(1.0)
     omt = 1.0 - theta
     v_sh_xi = jnp.where(in_cooling, 0.0, x_sh_dot / jnp.maximum(delta_x, 1.0e-30))
     v_ph_xi = x_ph_dot / jnp.maximum(delta_x, 1.0e-30)
@@ -495,10 +499,11 @@ def _solve_diffusion_dimless(params, scales, e_old, dy, x_min, x_ph, x_sh, x_sh_
     d_ip = x_ip**2 / jnp.maximum(eta_ip, 1.0e-30)
     d_im = jnp.where(in_cooling, d_im * r_in_r0, d_im)
     d_ip = jnp.where(in_cooling, d_ip * r_in_r0, d_ip)
-    alpha_m = d_im / jnp.maximum(x_i**2 * delta_x**2 * dxi**2, 1.0e-300)
-    alpha_p = d_ip / jnp.maximum(x_i**2 * delta_x**2 * dxi**2, 1.0e-300)
+    volume=(x_ip**3-x_im**3)/3.0
+    alpha_m = d_im / jnp.maximum(volume*delta_x*dxi, 1.0e-300)
+    alpha_p = d_ip / jnp.maximum(volume*delta_x*dxi, 1.0e-300)
     gamma = v_sh_xi * (1.0 - xi) + v_ph_xi * xi
-    pe = jnp.abs(gamma) * dxi / jnp.maximum(alpha_m + alpha_p, 1.0e-60) * 2.0
+    pe = 2.0*jnp.abs(gamma) / jnp.maximum(dxi*(alpha_m + alpha_p), 1.0e-60)
 
     a_c = alpha_m - gamma / (2.0 * dxi)
     c_c = alpha_p + gamma / (2.0 * dxi)
@@ -531,18 +536,19 @@ def _solve_diffusion_dimless(params, scales, e_old, dy, x_min, x_ph, x_sh, x_sh_
     eta_ip0 = _eta_csm_x(params, scales, x_hat_ip, in_cooling, x_out_cool, x_sh_se)
     d_ip0 = x_hat_ip**2 / jnp.maximum(eta_ip0, 1.0e-30)
     d_ip0 = jnp.where(in_cooling, d_ip0 * r_in_r0, d_ip0)
-    alpha0 = d_ip0 / jnp.maximum(x_hat_i**2 * delta_x**2 * dxi**2, 1.0e-300)
+    volume0=(x_hat_ip**3-x_hat_i**3)/3.0
+    alpha0 = d_ip0 / jnp.maximum(volume0*delta_x*dxi, 1.0e-300)
     eta_min = _eta_csm_x(params, scales, x_min, in_cooling, x_out_cool, x_sh_se)
     f_ib = lum_heat * scales.tau_csm_in * eta_min / jnp.maximum(
         4.0 * PI * x_sh**2 * scales.r_in**2 * CLIGHT * scales.u0, 1.0e-300
     )
     f_ib = jnp.where(in_cooling, 0.0, jnp.maximum(f_ib, 0.0))
-    inner_rate = 2.0 * alpha0
-    inner_rate = jnp.where((~in_cooling) & (v_sh_xi > 0.0), inner_rate + v_sh_xi / dxi, inner_rate)
+    inner_rate = alpha0
     diag = diag.at[0].set(1.0 + theta * dy * inner_rate)
     upper_full = upper_full.at[0].set(-theta * dy * inner_rate)
-    rhs_inner_int = e_old[0] + omt * dy * inner_rate * (e_old[1] - e_old[0]) + dy * 2.0 * alpha0 * delta_x * dxi * f_ib
-    rhs_inner_cool = e_old[0] + omt * dy * (2.0 * alpha0) * (e_old[1] - e_old[0])
+    source_rate=x_min**2*f_ib/(eta_min*volume0)-v_sh_xi*delta_x*f_ib
+    rhs_inner_int = e_old[0] + omt * dy * inner_rate * (e_old[1] - e_old[0]) + dy*source_rate
+    rhs_inner_cool = e_old[0] + omt * dy * alpha0 * (e_old[1] - e_old[0])
     rhs = rhs.at[0].set(jnp.where(in_cooling, rhs_inner_cool, rhs_inner_int))
 
     eta_ph = _eta_csm_x(params, scales, x_ph, in_cooling, x_out_cool, x_sh_se)
@@ -550,15 +556,26 @@ def _solve_diffusion_dimless(params, scales, e_old, dy, x_min, x_ph, x_sh, x_sh_
     f_ob_cool = -2.0 * r_in_r0**2 / jnp.maximum(scales.tau_csm_in * eta_ph, 1.0e-300)
     f_ob = jnp.where(in_cooling, f_ob_cool, f_ob_int)
     dx_bc = delta_x * dxi
-    lower_full = lower_full.at[-1].set(f_ob)
-    diag = diag.at[-1].set(dx_bc - f_ob)
-    rhs = rhs.at[-1].set(0.0)
+    xm=x_ph-0.5*dx_bc
+    voln=(x_ph**3-xm**3)/3.0
+    dn=x_ph**2/eta_ph*jnp.where(in_cooling,r_in_r0,1.0)
+    dm=xm**2/_eta_csm_x(params,scales,xm,in_cooling,x_out_cool,x_sh_se)*jnp.where(in_cooling,r_in_r0,1.0)
+    an=dm/(voln*dx_bc)
+    sink=-dn/(voln*f_ob)-v_ph_xi*delta_x/f_ob
+    lower_full = lower_full.at[-1].set(-theta*dy*an)
+    diag = diag.at[-1].set(1.0+theta*dy*(an+sink))
+    rhs = rhs.at[-1].set(e_old[-1]+omt*dy*(an*e_old[-2]-(an+sink)*e_old[-1]))
 
     lower = lower_full[1:]
     upper = upper_full[:-1]
     sol = _solve_tridiagonal(lower, diag, upper, rhs)
     sol = jnp.where(valid, sol, e_old)
-    return jnp.minimum(jnp.maximum(jnp.nan_to_num(sol, nan=0.0, posinf=0.0, neginf=0.0), 0.0), 1.0e6)
+    if not force_backward:
+        retry=(theta<1.0)&(jnp.min(sol)<-1e-12*jnp.maximum(jnp.max(jnp.abs(e_old)),1e-100))
+        sol=jax.lax.cond(retry,lambda _: _solve_diffusion_dimless(
+            params,scales,e_old,dy,x_min,x_ph,x_sh,x_sh_dot,x_ph_dot,lum_heat,in_cooling,
+            r_in_r0,x_out_cool,x_sh_se,rannacher_left,force_backward=True),lambda _:sol,operand=None)
+    return jnp.maximum(sol,0.0)
 
 
 def _shell_bin_centers(x_out, n):
@@ -607,8 +624,9 @@ def _dimless_energy_grid(e, x_min, x_ph):
     xi = jnp.linspace(0.0, 1.0, n, dtype=jnp.float64)
     x = x_min + xi * (x_ph - x_min)
     dx = (x_ph - x_min) / jnp.maximum(n - 1, 1)
-    integrand = x**2 * jnp.maximum(e, 0.0)
-    return jnp.maximum(jnp.sum(0.5 * (integrand[:-1] + integrand[1:]) * dx), 0.0)
+    left = jnp.maximum(x-0.5*dx, x_min)
+    right = jnp.minimum(x+0.5*dx, x_ph)
+    return jnp.sum(jnp.maximum(e, 0.0)*(right**3-left**3)/3.0)
 
 
 def _transition_to_cooling(params, scales, x, w, phi, zeta, x_ph, e_grid, shell_e, e_inj, e_rad, efs, ers, lum_pre):
@@ -681,17 +699,18 @@ def _advance_breakout_reservoir(e_bo, lum_in, dt, t_esc):
 def _solve_dimless_transport_static_bpl(time_days, params: StaticPowerlawBPLParams, n_steps: int, n_zones: int):
     scales = _dimless_scales(params)
     t_req = jnp.maximum(time_days * DAY, 1.0)
-    t_min = jnp.maximum(scales.t_in, 10.0)
+    t_min = jnp.maximum(scales.t_in*(1.0+1e-8), 10.0)
     t_max = jnp.maximum(jnp.max(t_req), 1.01 * t_min)
-    t_grid = jnp.geomspace(t_min, t_max, n_steps)
+    t_grid = scales.t_in*(1.0+jnp.geomspace(1e-8,jnp.maximum(t_max/scales.t_in-1.0,1e-7),n_steps))
     e0 = jnp.zeros(n_zones, dtype=jnp.float64)
     shell0 = jnp.zeros(n_zones, dtype=jnp.float64)
     x_ph0 = _photosphere_dimless(params, scales, 1.0, 0.0, False, 1.0, scales.x_out)
+    w0=1.0/(1.0+jnp.sqrt(scales.q))
     carry0 = (
-        jnp.array(1.0),
-        jnp.array(1.0),
-        jnp.array(1.0e-6),
-        jnp.array(1.0),
+        1.0+w0*1e-8,
+        w0,
+        ((1.0-w0)+scales.q*w0)*1e-8,
+        jnp.array(1.0+1e-8),
         x_ph0,
         e0,
         shell0,
@@ -933,19 +952,46 @@ def solve_static_powerlaw_bpl(
     params: StaticPowerlawBPLParams,
     mode: str = "transport",
     n_steps: int = 16384,
-    n_zones: int = 40,
+    n_zones: int = 160,
 ):
     """Evaluate a JAX-native static-power-law CSM light curve.
 
-    ``mode='simple'`` returns the instantaneous radiative shock luminosity.
+    ``mode='simple'`` returns the instantaneous radiative shock luminosity
+    eff * (L_fs + L_rs), as the Fortran simple mode without ``kappa``
+    (see ``jax_csm.simple_shock``).
+    ``radius``/``velocity`` are the thin-shell shock radius/velocity.  For the
+    simple path ``n_steps`` is the number of RK4 steps (2048 is converged to
+    ~1e-3 of peak; the historical default of 16384 is accepted but unnecessary).
+
+    ``mode='simple_legacy'`` is the original simple path, kept only to document
+    the corrections: it seeded the shell with u = 0.9 v_max and
+    m = 1e-4 (M_ej + M_csm) Msun (too massive; the shell decelerated too slowly
+    for ~days), and froze u, m after shock emergence (ballistic), which
+    overestimated the post-emergence reverse-shock luminosity by up to ~2x.
+
     ``mode='transport'`` evolves a finite-volume radiation grid over the full
     static shell, then homologously expands that grid after shock emergence.
-    The hydrodynamics and density normalizations are shared by both modes and
-    match the current static finite-shell convention.
     """
     time_days = jnp.asarray(time_days, dtype=jnp.float64)
     if mode == "transport":
         return _solve_dimless_transport_static_bpl(time_days, params, n_steps=n_steps, n_zones=n_zones)
+    if mode == "simple":
+        res = solve_simple_static_bpl(time_days, params, n_steps=n_steps)
+        rho_inner = _static_powerlaw_rho_inner(params)
+        tau = _tau_static_powerlaw(params, rho_inner, res.r_shock)
+        return StaticPowerlawBPLResult(
+            time=time_days * DAY,
+            lbol=res.lbol,
+            lbol_shock=res.lbol,
+            radius=res.r_shock,
+            velocity=res.v_shock,
+            shell_mass=res.shell_mass,
+            internal_energy=jnp.zeros_like(res.lbol),
+            optical_depth=tau,
+            t_leak=jnp.ones_like(res.lbol),
+        )
+    if mode != "simple_legacy":
+        raise ValueError(f"mode must be 'simple', 'transport' or 'simple_legacy', got {mode!r}")
 
     rho_inner = _static_powerlaw_rho_inner(params)
     v_t, v_max, rho0_4pi = _bpl_coefficients(params)
@@ -1074,7 +1120,7 @@ def static_powerlaw_csm_bpl_bolometric(time, **kwargs):
     """Convenience wrapper with the same static BPL parameter names as redback_csm.models."""
     mode = str(kwargs.pop("mode", "transport")).lower()
     n_steps = int(kwargs.pop("n_steps", kwargs.pop("n_grid", 16384)))
-    n_zones = int(kwargs.pop("n_zones", kwargs.pop("n_rad_zones", 40)))
+    n_zones = int(kwargs.pop("n_zones", kwargs.pop("n_rad_zones", 160)))
     params = StaticPowerlawBPLParams(
         eta=kwargs.pop("eta"),
         r_inner=kwargs.pop("r_inner"),

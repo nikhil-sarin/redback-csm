@@ -46,19 +46,40 @@ Shared Runtime Options
 All optical / bolometric model wrappers also accept a common set of runtime
 keywords controlling diffusion / transport:
 
+.. warning::
+
+   Transport is currently recommended only for finite, static power-law CSM
+   shells. Quantitative end-to-end accuracy tests cover the static power-law
+   CSM + broken-power-law ejecta benchmark, not all parameter combinations.
+   Check radiation-zone convergence for the chosen setup, especially during
+   the dark phase.
+
+   Static spline/arbitrary profiles, wind-derived snapshots, and homologously
+   expanding CSM may accept ``mode='transport'``, but these paths are experimental
+   and unvalidated, not recommended for inference. They remain callable for
+   development and future validation. Use ``mode='simple'`` with ``kappa`` for
+   the one-zone diffusion treatment of these configurations.
+
+The experimental wind transport wrappers truncate and sample the wind history
+into a finite **static snapshot**; they do not transport radiation through an
+evolving wind. Finite support alone does not establish validity for an arbitrary
+profile. See :doc:`numerical_accuracy` for the tested scope and limitations.
+
 .. list-table::
    :header-rows: 1
 
    * - Keyword
      - Meaning
    * - ``mode='simple'``
-     - Default thin-shell calculation. If ``kappa`` is supplied, this uses the legacy post-processed diffusion light curve.
+     - Default thin-shell calculation. If ``kappa`` is supplied, this uses the post-processed diffusion light curve on all accepted integration steps.
    * - ``mode='transport'``
-     - Use the newer transport solver for the observed luminosity while keeping the same shell dynamics.
+     - Evolve the radiation field with the transport solver, subject to the static power-law validation scope above.
    * - ``kappa``
      - Opacity in ``cm^2 g^-1``. Optional in simple mode. In transport mode it defaults to ``0.34`` if omitted.
    * - ``n_rad_zones``
-     - Number of transport zones used in transport mode. Python model calls promote values below 40 to 40 because the transport boundary layer is under-resolved below that. Larger values reduce numerical roughness at higher runtime cost.
+     - Transport resolution: default 160, minimum 40. Check convergence for the chosen parameters, especially during the dark phase. Larger values increase runtime.
+   * - ``diffusion_escape``
+     - Simple-mode kernel: ``'finite'`` (default) uses ``(1 + tau) R / c``; ``'legacy'`` uses ``tau R / c``. The finite prescription includes a light-crossing time and post-emergence reverse-shock heating. This is a physical closure change, not just a numerical correction; see :doc:`numerical_accuracy`.
    * - ``efficiency_mode``
      - Optional alternate shock-efficiency mode. Default ``0`` keeps the user-supplied constant ``eff`` for both shocks.
 
@@ -79,6 +100,11 @@ CSM shell plus broken-power-law ejecta model. This backend is intended for fast
 inference experiments and validation against the Fortran backend. It supports
 the same ``mode='simple'`` and ``mode='transport'`` terminology, but it is not
 yet a general replacement for the arbitrary-CSM Fortran implementation.
+
+The JAX simple-mode solver has independent end-to-end accuracy tests. JAX
+transport remains experimental: its cooling handoff does not yet reproduce
+the Fortran transport light curve. A shared mode name does not imply backend
+parity; use the Fortran backend for the validated transport benchmark below.
 
 .. code-block:: python
 
@@ -402,26 +428,28 @@ For example, ``wind_exponential`` means a steady wind CSM with an exponential SN
 Note some models are the other way round, e.g. ``exponential_wind`` means an exponential eruption
 followed by a steady wind, and ``bpl_exponential`` means a BPL eruption followed by an exponential eruption.
 
-Example with transport mode:
+Example with transport mode in its validated static power-law configuration:
 
 .. code-block:: python
 
    import numpy as np
-   from redback_csm.models import wind_bpl_bolometric
+   from redback_csm.models import static_powerlaw_csm_bpl_bolometric
 
    time = np.geomspace(1.0, 300.0, 200)
-   lbol = wind_bpl_bolometric(
+   lbol = static_powerlaw_csm_bpl_bolometric(
        time=time,
-       mdot=1e-3,
-       vwind=100,
-       delta=0.5,
-       nn=12,
-       mexp=10.0,
-       eexp=1.0,
+       eta=-2.0,
+       r_inner=1e14,  # cm
+       r_outer=1e15,  # cm
+       m_csm=0.5,    # solar masses
+       delta_sn=1.0,
+       nn_sn=10.0,
+       mej_sn=10.0,  # solar masses
+       esn=1.0,      # foe
        eff=0.5,
        mode='transport',
        kappa=0.34,
-       n_rad_zones=120,
+       n_rad_zones=160,
    )
 
 Exploration: Arbitrary Density Profile

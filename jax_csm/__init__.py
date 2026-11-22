@@ -6,6 +6,10 @@ from .model import (
     static_powerlaw_csm_bpl_bolometric,
     vmapped_static_powerlaw_csm_bpl,
 )
+from .simple_shock import SimpleShockResult, solve_simple_static_bpl
+from .nickel import nickel_diffused_luminosity, nickel_heating
+from .csm_nickel import CSMNickelResult, simple_csm_nickel_bolometric
+from .photosphere import photosphere_temperature
 
 __all__ = [
     "StaticPowerlawBPLParams",
@@ -14,4 +18,11 @@ __all__ = [
     "solve_static_powerlaw_bpl",
     "static_powerlaw_csm_bpl_bolometric",
     "vmapped_static_powerlaw_csm_bpl",
+    "SimpleShockResult",
+    "solve_simple_static_bpl",
+    "nickel_diffused_luminosity",
+    "nickel_heating",
+    "CSMNickelResult",
+    "simple_csm_nickel_bolometric",
+    "photosphere_temperature",
 ]

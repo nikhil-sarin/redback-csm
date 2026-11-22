@@ -21,7 +21,7 @@ def get_csm_lightcurve(params_dict):
     """
     mode = str(params_dict.get("mode", "transport")).lower()
     n_steps = int(params_dict.get("n_steps", params_dict.get("n_grid", 16384)))
-    n_zones = int(params_dict.get("n_zones", params_dict.get("n_rad_zones", 40)))
+    n_zones = int(params_dict.get("n_zones", params_dict.get("n_rad_zones", 160)))
 
     if "dyn" in params_dict:
         dyn = dict(params_dict["dyn"])
@@ -63,7 +63,7 @@ def get_static_powerlaw_csm_bpl_lightcurve(time, return_diagnostics=False, **kwa
     """Evaluate the JAX static finite-power-law CSM + BPL-ejecta model."""
     mode = str(kwargs.pop("mode", "transport")).lower()
     n_steps = int(kwargs.pop("n_steps", kwargs.pop("n_grid", 16384)))
-    n_zones = int(kwargs.pop("n_zones", kwargs.pop("n_rad_zones", 40)))
+    n_zones = int(kwargs.pop("n_zones", kwargs.pop("n_rad_zones", 160)))
     params = StaticPowerlawBPLParams(
         eta=kwargs.pop("eta"),
         r_inner=kwargs.pop("r_inner"),
@@ -85,7 +85,7 @@ def get_static_powerlaw_csm_bpl_lightcurve(time, return_diagnostics=False, **kwa
     return result.lbol
 
 
-def vmapped_static_powerlaw_csm_bpl(time, params_batch, mode="transport", n_steps=16384, n_zones=40):
+def vmapped_static_powerlaw_csm_bpl(time, params_batch, mode="transport", n_steps=16384, n_zones=160):
     """Vectorized static CSM evaluation for batches of StaticPowerlawBPLParams."""
     time = jnp.asarray(time, dtype=jnp.float64)
     return jax.vmap(lambda p: solve_static_powerlaw_bpl(time, p, mode=mode, n_steps=n_steps, n_zones=n_zones).lbol)(

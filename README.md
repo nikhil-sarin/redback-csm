@@ -60,6 +60,9 @@ emission. The nickel mass is always computed from the SN ejecta mass
 finite CSM shell mass when that mass is defined by the CSM constructor. There
 is no separate CSM-mass parameter for the nickel component; for unusual cases
 you can override only the total Arnett diffusion mass with `mej_arnett`.
+Note that redback's own `csm_nickel` uses only the optically thick part of the
+CSM (tau > 2/3) in the diffusion mass; for an optically thick shell the two
+agree closely.
 
 Priors are generated programmatically from the model signatures, so the package
 does not need a separate `.prior` file for every callable wrapper. This covers
@@ -70,24 +73,43 @@ all exported wrappers except the generic `csm_xray` convenience function.
 All optical / bolometric CSM wrappers also accept a common set of runtime
 keywords controlling the transport treatment:
 
+**Fortran transport scope:** use `mode='transport'` for finite, static power-law CSM
+shells. The quantitative end-to-end accuracy tests currently cover the
+static power-law CSM + broken-power-law ejecta benchmark; this is not a claim
+of convergence across all parameters. Check radiation-zone convergence for
+your chosen setup, particularly during the dark phase.
+
+Other wrappers may accept `mode='transport'`, but transport through static
+spline/arbitrary profiles, wind-derived snapshots, or homologously expanding
+CSM is **experimental and unvalidated**, not recommended for inference.
+Those entry points remain available for development and future validation;
+accepting the keyword does not establish physical or numerical validity.
+For these configurations, use `mode='simple'` with `kappa` for the one-zone
+diffusion treatment. The package's arbitrary-CSM capability does not imply
+validated arbitrary-CSM transport.
+
 | Keyword | Meaning |
 |---|---|
-| `mode='simple'` | Default thin-shell calculation. If `kappa` is provided, this uses the legacy post-processed diffusion light curve. |
-| `mode='transport'` | Use the newer transport solver for the observed luminosity while keeping the same shell dynamics. |
+| `mode='simple'` | Default thin-shell calculation. If `kappa` is provided, this applies the one-zone diffusion kernel. |
+| `mode='transport'` | Evolve the radiation field with the transport solver. Currently validated for the static power-law CSM benchmark described above. |
 | `kappa` | Opacity in `cm^2 g^-1`. Optional in simple mode. In transport mode, defaults to `0.34` if not supplied. |
-| `n_rad_zones` | Number of radiation/transport zones in transport mode. Python model calls promote values below 40 to 40 because the transport boundary layer is under-resolved below that. Higher values reduce numerical roughness but increase runtime. |
+| `n_rad_zones` | Transport resolution (default 160, minimum 40). Check convergence for your parameters; the dark phase can require substantially more zones than the bright phase. Higher resolution increases runtime. |
+| `diffusion_escape` | Simple-mode diffusion prescription: `"finite"` (default) uses `(1 + tau) R / c`; `"legacy"` uses `tau R / c`, which has an emergence singularity for a sharply truncated shell. |
 | `transport_wind_inner_age` | Effective inner wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use the larger of their first tabulated age and `1 yr`; one-point steady winds use `1 yr`. This creates the finite inner cavity needed by the nondimensional transport setup and is ignored in simple mode. |
 | `transport_wind_age` | Effective outer wind age in years for wind-history CSMs in transport mode. If omitted, generated wind histories use their last tabulated age; one-point steady winds use `100 yr`. This supplies the finite outer edge required by the transport solver and is ignored in simple mode. |
 | `transport_r_inner` / `r_inner` | Alternative direct inner cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_inner` takes precedence. |
 | `transport_r_outer` / `r_outer` | Alternative direct outer cutoff radius in cm for wind-history CSMs in transport mode. `transport_r_outer` takes precedence. |
+| `photosphere_mode` | Multiband wrappers only. `'legacy'` (default) or `'csm'`; see [Photosphere for multiband output](#photosphere-for-multiband-output). |
+| `temperature_floor` | Multiband wrappers only. Blackbody temperature floor in K; below it the photosphere shrinks so that L is preserved. Defaults: none for CSM-only legacy, 3000 K for `_nickel` and for `photosphere_mode='csm'`. |
 | `efficiency_mode` | Optional shock-efficiency mode. Default is `0`, which applies the user-supplied constant `eff` to both shocks; `1` applies the free-free-limited time-dependent efficiency to both forward and reverse shocks. |
 
-Transport mode requires a finite CSM support. Static CSM constructors already
-have this through their radial grid or explicit `r_outer`. In transport mode,
-wind-history constructors are first sampled into a finite static radial CSM grid
+Finite support is necessary for transport, but is not sufficient to make an
+arbitrary profile validated. The experimental wind transport path samples
+wind-history constructors into a finite **static snapshot** of the radial CSM grid
 using `transport_wind_inner_age` / `transport_wind_age` or direct
-`transport_r_inner` / `transport_r_outer` cutoffs. Simple mode keeps the older
-effectively steady wind extrapolation.
+`transport_r_inner` / `transport_r_outer` cutoffs. This does not evolve the wind
+velocity field during transport. Simple mode retains the wind dynamics and
+endpoint mass-loss-rate extrapolation.
 
 Current output convention:
 
@@ -97,6 +119,38 @@ Current output convention:
 - `rshock` is the forward-shock / shell radius
 - `rph` is retained for backwards compatibility; in one-zone mode it is the
   same as `rshock`, while in transport mode it is the radiation photosphere
+
+### Photosphere for multiband output
+
+The multiband (`{name}`, `{name}_nickel`) wrappers turn the bolometric
+luminosity into a blackbody, which needs a photospheric radius.
+
+- `photosphere_mode='legacy'` (default, unchanged): CSM-only wrappers use the
+  shell radius `rph` and the Fortran blackbody temperature; `_nickel` wrappers
+  use redback's `TemperatureFloor`, i.e. `R = vej * t` with
+  `vej = sqrt(2 E / M_ej)` until the temperature reaches the floor. Neither
+  follows the photosphere while the shock is still buried in optically thick
+  CSM, and `vej * t` ignores the deceleration of the shell.
+- `photosphere_mode='csm'`: the photosphere is the radius where the optical
+  depth through the CSM ahead of the shell reaches 2/3 (the fixed CSM
+  photosphere of Chatzopoulos, Wheeler & Vinko 2012), and becomes the shell
+  radius once the CSM ahead is optically thin (e.g. after the shock leaves a
+  finite shell). It is computed in the Fortran for every CSM density model,
+  with the same `kappa` and density profile as the diffusion, and is the same
+  for the CSM-only and `_nickel` wrappers. The temperature is
+  `(L / 4 pi sigma R^2)^(1/4)` with the total luminosity, and the
+  `temperature_floor` (default 3000 K) handles late-time recombination while
+  preserving L. Simple mode requires `kappa`; transport mode uses the transport
+  photosphere.
+
+```python
+mag = static_powerlaw_csm_bpl_nickel(
+    time=time_obs, redshift=0.05, eta=-2.0, r_inner=1e14, r_outer=1e15,
+    delta_sn=1.0, nn_sn=10.0, mej_sn=10.0, esn=2.0, eff=0.5, m_csm=3.0,
+    f_nickel=0.05, kappa=0.34, kappa_gamma=0.1,
+    photosphere_mode='csm', bands='lsstg', output_format='magnitude',
+)
+```
 
 ### Broken power-law ejecta cutoff
 
@@ -117,35 +171,44 @@ case the wrapper converts it to `vej_max_ratio`.
 
 ### JAX static CSM prototype
 
-This release includes a JAX-native prototype for fast inference with static
-finite power-law CSM shells and BPL ejecta:
+The `jax_csm` package provides JAX-native (JIT- and `vmap`-compatible) versions
+of the static finite power-law CSM shell with BPL ejecta.
 
 ```python
 import numpy as np
-from jax_csm.model import get_static_powerlaw_csm_bpl_lightcurve
+from jax_csm import StaticPowerlawBPLParams, solve_simple_static_bpl, simple_csm_nickel_bolometric
 
-time_days = np.geomspace(1.0, 300.0, 200)
-lbol = get_static_powerlaw_csm_bpl_lightcurve(
-    time=time_days,
-    eta=-2.0,
-    r_inner=5e2 * 6.957e10,
-    r_outer=5e3 * 6.957e10,
-    delta_sn=1.0,
-    nn_sn=10.0,
-    mej_sn=5.0,
-    esn=1.0,
-    eff=1.0,
-    m_csm=1.0,
-    mode="simple",
+params = StaticPowerlawBPLParams(
+    eta=-2.0, r_inner=1e14, r_outer=1e15, delta_sn=1.0, nn_sn=10.0,
+    mej_sn=10.0, esn=2.0, eff=0.5, m_csm=3.0, kappa=0.34,
 )
+time_days = np.geomspace(1.0, 300.0, 200)
+res = solve_simple_static_bpl(time_days, params, n_steps=4096, t_max_days=300.0, diffusion=True)
+res.lbol, res.lbol_shock, res.r_shock, res.v_shock, res.r_photosphere, res.t_emerge
+
+total = simple_csm_nickel_bolometric(time_days, params, f_nickel=0.05, kappa_gamma=0.1, n_steps=4096)
 ```
 
-`mode="simple"` shares the current static-shell mass normalization and finite
-BPL ejecta cutoff convention with the Fortran backend. `mode="transport"` uses
-the same dimensionless diffusion setup as the Fortran static power-law/BPL
-transport path, including breakout-reservoir leakage and homologous
-post-emergence cooling. It is still scoped to static finite power-law CSMs,
-not every arbitrary CSM constructor supported by the Fortran backend.
+- `solve_simple_static_bpl` integrates the same thin-shell equations as the
+  Fortran simple mode (RK4 in dimensionless variables). With `diffusion=False`
+  `lbol` is the shock luminosity `eff * (L_fs + L_rs)`; with `diffusion=True` it
+  is the diffused luminosity that the Fortran simple mode returns when `kappa`
+  is supplied. The default `diffusion_escape="finite"` retains a light-crossing
+  time at emergence. Only `diffusion_escape="legacy"` has the logarithmic
+  emergence singularity. About 2048 steps (no diffusion) or 4096 steps
+  (finite-escape diffusion) give sub-percent accuracy in the tested benchmark,
+  not a guarantee across all parameters. Fix `t_max_days` when results must not
+  depend on the latest requested epoch. See [the numerical accuracy audit](docs/numerical_accuracy.rst).
+- `nickel_diffused_luminosity` / `simple_csm_nickel_bolometric` reproduce the
+  `_nickel_bolometric` prescription (Arnett diffusion with gamma-ray leakage).
+- `r_photosphere` is the `photosphere_mode='csm'` radius;
+  `jax_csm.photosphere_temperature` applies the same temperature floor.
+- `solve_static_powerlaw_bpl(..., mode="simple")` uses the new solver;
+  `mode="simple_legacy"` keeps the previous implementation; `mode="transport"`
+  is the dimensionless transport solver for static power-law shells. JAX
+  transport remains experimental: post-emergence cooling is not yet in parity
+  with Fortran. The validated end-to-end JAX accuracy claims concern simple
+  mode, not transport cooling.
 
 ### Radio synchrotron model variants
 
@@ -406,7 +469,7 @@ result = problem.fit(starts, max_nfev=500)
 
 ### Requirements
 
-- Python >= 3.11
+- Python >= 3.10
 - `gfortran` (for Fortran compilation)
 - `redback >= 1.15.0`
 
@@ -417,7 +480,8 @@ result = problem.fit(starts, max_nfev=500)
 git clone https://github.com/nikhil-sarin/redback-csm
 cd redback-csm
 
-# 2. Compile the Fortran extension
+# 2. Install build tools and compile the Fortran extension
+python -m pip install 'numpy>=2,<3' meson ninja
 bash setup_fortran.sh
 
 # 3. Install
@@ -475,19 +539,23 @@ lbol = wind_bpl_bolometric(
     kappa=0.34,   # cm^2/g — enables photon diffusion (optional)
 )
 
-# Transport mode
-lbol_transport = wind_bpl_bolometric(
+# Transport: finite static power-law CSM, not an evolving wind
+from redback_csm.models import static_powerlaw_csm_bpl_bolometric
+
+lbol_transport = static_powerlaw_csm_bpl_bolometric(
     time=time,
-    mdot=1e-3,
-    vwind=100,
-    delta=0.5,
-    nn=12,
-    mexp=10.0,
-    eexp=1.0,
+    eta=-2.0,
+    r_inner=1e14,  # cm
+    r_outer=1e15,  # cm
+    m_csm=0.5,    # M_sun
+    delta_sn=1.0,
+    nn_sn=10.0,
+    mej_sn=10.0,  # M_sun
+    esn=1.0,      # foe
     eff=0.5,
     mode='transport',
     kappa=0.34,
-    n_rad_zones=20,
+    n_rad_zones=160,
 )
 
 # Multiband (per-band magnitudes)
