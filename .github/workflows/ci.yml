@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, master, jax-simple-mode]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
             python: '3.10'
           - os: ubuntu-24.04
             python: '3.12'
-          - os: macos-14
+          - os: macos-15
             python: '3.12'
     env:
       MPLBACKEND: Agg
